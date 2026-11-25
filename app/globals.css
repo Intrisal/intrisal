@@ -142,9 +142,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .topbar .right { justify-self: end; position: relative; }
       .wordmark {
         margin: 0;
-        font-family: inherit;
-        font-size: clamp(22px, 2.8vw, 28px);
-        font-weight: 600; line-height: 1.1; letter-spacing: -0.03em;
+        font-family: var(--font-display), "Outfit", sans-serif;
+        font-size: clamp(26px, 3.5vw, 36px);
+        font-weight: 500; line-height: 1; letter-spacing: -0.04em;
         text-align: center; white-space: nowrap;
       }
       .icon-btn {
@@ -182,7 +182,17 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
 
       /* ---------- Side nav ---------- */
-      .sidenav { position: sticky; top: 24px; padding-top: clamp(48px, 10vh, 96px); display: flex; justify-content: flex-start; z-index: 20; }
+      .sidenav {
+        position: sticky;
+        top: 50dvh;
+        transform: translateY(-50%);
+        padding-top: 0;
+        height: max-content;
+        align-self: start;
+        display: flex;
+        justify-content: flex-start;
+        z-index: 20;
+      }
       .sidenav-dock {
         position: relative;
         width: 64px;
@@ -626,7 +636,17 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       @media (max-width: 900px) {
         .layout { grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
-        .sidenav { position: static; padding-top: 0; order: 1; justify-content: center; margin-bottom: 8px; }
+        .sidenav {
+          position: static;
+          top: auto;
+          transform: none;
+          padding-top: 0;
+          height: auto;
+          align-self: auto;
+          order: 1;
+          justify-content: center;
+          margin-bottom: 8px;
+        }
         .sidenav-dock { width: auto; padding: 6px 10px; }
         .sidenav ul { flex-direction: row; flex-wrap: nowrap; gap: 6px; }
         .sidenav li { width: auto; }
