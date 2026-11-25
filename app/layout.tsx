@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
-import { Outfit } from "next/font/google";
+import { Instrument_Serif } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 
-const outfit = Outfit({
+const instrumentSerif = Instrument_Serif({
   subsets: ["latin"],
+  weight: "400",
   variable: "--font-display",
   display: "swap",
 });
@@ -25,7 +26,7 @@ const themeBoot = `(function(){try{var c=localStorage.getItem("intrisal-theme-ch
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark" className={outfit.variable} suppressHydrationWarning>
+    <html lang="en" data-theme="dark" className={instrumentSerif.variable} suppressHydrationWarning>
       <body>
         <Script id="intrisal-theme" strategy="beforeInteractive">
           {themeBoot}

@@ -142,10 +142,11 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .topbar .right { justify-self: end; position: relative; }
       .wordmark {
         margin: 0;
-        font-family: var(--font-display), "Outfit", sans-serif;
-        font-size: clamp(26px, 3.5vw, 36px);
-        font-weight: 500; line-height: 1; letter-spacing: -0.04em;
+        font-family: var(--font-display), "Instrument Serif", Georgia, serif;
+        font-size: clamp(30px, 4.2vw, 44px);
+        font-weight: 400; line-height: 1; letter-spacing: -0.02em;
         text-align: center; white-space: nowrap;
+        font-synthesis: none;
       }
       .icon-btn {
         width: 44px; height: 44px; border-radius: 50%;
