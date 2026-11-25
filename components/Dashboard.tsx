@@ -23,14 +23,25 @@ import { DEFAULT_WATCHLIST, SIM_DEFAULT, fmt, nameOf, sample, searchCatalog, typ
 type ThemeChoice = "auto" | "light" | "dark";
 type MenuId = "profile" | "help";
 
-const SECTIONS: Array<{ id: Section; label: string; icon: ReactNode }> = [
-  { id: "home", label: "Home", icon: <HomeIcon /> },
-  { id: "fundamental", label: "Fundamental", icon: <FundamentalIcon /> },
+type NavChild = { id: Section; label: string; icon: ReactNode };
+type NavItem = { id: Section; label: string; icon: ReactNode; children?: NavChild[] };
+
+const NAV_ITEMS: NavItem[] = [
+  {
+    id: "home",
+    label: "Home",
+    icon: <HomeIcon />,
+    children: [
+      { id: "fundamental", label: "Fundamental", icon: <FundamentalIcon /> },
+      { id: "valuation", label: "Valuation", icon: <ValuationIcon /> },
+    ],
+  },
   { id: "learn", label: "Learn", icon: <LearnIcon /> },
   { id: "simulation", label: "Simulation", icon: <SimulationIcon /> },
-  { id: "valuation", label: "Valuation", icon: <ValuationIcon /> },
   { id: "watchlist", label: "Watchlist", icon: <WatchlistIcon /> },
 ];
+
+const HOME_BRANCH: Section[] = ["home", "fundamental", "valuation"];
 
 function readThemeChoice(): ThemeChoice {
   try {
@@ -60,6 +71,7 @@ export function Dashboard() {
   const [sim, setSim] = useState<SimInput>(SIM_DEFAULT);
   const [toastMsg, setToastMsg] = useState("");
   const [toastOn, setToastOn] = useState(false);
+  const [homeMenuOpen, setHomeMenuOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const searchDockRef = useRef<HTMLDivElement>(null);
@@ -152,7 +164,12 @@ export function Dashboard() {
     }
     setSection(name);
     if (name === "simulation") setSim({ ...SIM_DEFAULT });
+    if (HOME_BRANCH.includes(name)) setHomeMenuOpen(true);
+    else setHomeMenuOpen(false);
   }
+
+  const homeBranchActive = HOME_BRANCH.includes(section as Section);
+  const showHomeMenu = homeMenuOpen || homeBranchActive;
 
   function bumpWatchlist(tk: string, list = watchlist) {
     return [tk, ...list.filter((x) => x !== tk)];
@@ -276,24 +293,58 @@ export function Dashboard() {
                 <strong>Watchlist</strong> — watched stocks sit under search, newest on the left. Open or search one and it moves left; older ones slide right and can leave the strip. <strong>List</strong> shows everything.
               </p>
               <p style={{ marginBottom: 0 }}>
-                <strong>Sections</strong> — use the menu on the left to switch between Home (search bar with your watchlist under it), Fundamental, Learn, Simulation, Valuation and Watchlist.
+                <strong>Sections</strong> — Home opens Fundamental and Valuation to the right. Learn, Simulation, and Watchlist stay on the main dock.
               </p>
             </div>
           </div></header>
 
         <div className={"layout" + (section === "home" || section === "stock" ? " " + section : "")} id="layout"><nav className="sidenav" aria-label="Sections">
             <div className="sidenav-dock" id="navDock">
-              <ul id="navList">{SECTIONS.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      data-section={item.id}
-                      aria-current={section === item.id ? "page" : undefined}
-                      aria-label={item.label}
-                      onClick={() => changeSection(item.id)}
-                    ><span className="nav-icon" aria-hidden="true">{item.icon}</span><span className="nav-label">{item.label}</span></button>
-                  </li>
-                ))}</ul>
+              <ul id="navList">{NAV_ITEMS.map((item) => {
+                  const isHome = item.id === "home";
+                  const childActive = item.children?.some((child) => child.id === section);
+                  const current = section === item.id || !!childActive;
+                  return (
+                    <li
+                      key={item.id}
+                      className={"nav-item" + (item.children ? " has-kids" : "") + (isHome && showHomeMenu ? " open" : "")}
+                      onMouseEnter={() => {
+                        if (isHome) setHomeMenuOpen(true);
+                      }}
+                      onMouseLeave={() => {
+                        if (isHome && !HOME_BRANCH.includes(section as Section)) setHomeMenuOpen(false);
+                      }}
+                    >
+                      <button
+                        type="button"
+                        data-section={item.id}
+                        aria-current={current ? "page" : undefined}
+                        aria-label={item.label}
+                        aria-expanded={item.children ? showHomeMenu : undefined}
+                        aria-haspopup={item.children ? "menu" : undefined}
+                        onClick={() => changeSection(item.id)}
+                        onFocus={() => {
+                          if (isHome) setHomeMenuOpen(true);
+                        }}
+                      ><span className="nav-icon" aria-hidden="true">{item.icon}</span><span className="nav-label">{item.label}</span></button>
+                      {item.children ? (
+                        <div className={"nav-flyout" + (showHomeMenu ? " open" : "")} role="menu" aria-label="Home sections">
+                          {item.children.map((child, index) => (
+                            <button
+                              type="button"
+                              key={child.id}
+                              role="menuitem"
+                              data-section={child.id}
+                              aria-current={section === child.id ? "page" : undefined}
+                              style={{ ["--fly-i" as string]: index }}
+                              onClick={() => changeSection(child.id)}
+                            ><span className="nav-icon" aria-hidden="true">{child.icon}</span><span className="nav-fly-label">{child.label}</span></button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}</ul>
             </div>
           </nav><main className="center"><div className="search-dock" ref={searchDockRef}><h1 className="wordmark">Intrisal</h1><div className="search-wrap" ref={searchRef}>
               <div className="search-bar"><SearchIcon /><input
@@ -342,7 +393,7 @@ export function Dashboard() {
                   <button type="button" key={tk} onClick={() => openStock(tk)}><span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span><span className="mono"><AnimatedPrice price={s.price} /></span><span className="mono"><span className={up ? "chg-up" : "chg-dn"}>{up ? "▲" : "▼"} {up ? "+" : ""}{fmt(s.change, 2)}%</span></span></button>
                 );
               })}
-            </div></div>{section === "stock" ? <StockDetail key={selected} ticker={selected} /> : <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />}<footer className="note">Landing page preview — prices and figures shown are sample data for layout only.</footer></main></div>
+            </div></div><div key={section === "stock" ? "stock:" + selected : section} className="section-stage">{section === "stock" ? <StockDetail ticker={selected} /> : <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />}</div><footer className="note">Landing page preview — prices and figures shown are sample data for layout only.</footer></main></div>
       </div>
       <div className={"toast" + (toastOn ? " show" : "")} id="toast" role="status">
         {toastMsg}
