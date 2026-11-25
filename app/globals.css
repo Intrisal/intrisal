@@ -374,9 +374,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         font-size: clamp(28px, 4vw, 36px);
         margin-bottom: 16px;
       }
-      .search-dock .search-wrap,
-      .search-dock .watch-strip,
-      .search-dock .watch-list { width: 100%; }
+      .search-dock .search-wrap { width: 100%; }
+      .layout.home .watch-dock { position: relative; z-index: 2; width: min(100%, 680px); margin-inline: auto; }
+      .layout.home .search-dock:has(.results.open) { z-index: 32; }
       .search-wrap { position: relative; }
       .search-bar {
         display: flex; align-items: center; gap: 12px;
@@ -484,6 +484,56 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         display: none; margin: 16px auto 0; max-width: 660px; width: 100%; border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
       }
       .watch-list.open { display: block; }
+      .watch-tooltip { display: none; }
+      .layout:not(.home) .watch-dock {
+        position: fixed; z-index: 29;
+        --watch-button-size: clamp(24px, calc((100dvh - 150px) / 10), 40px);
+      }
+      .layout:not(.home) .watch-strip {
+        margin: 0; padding: 8px; border: 1px solid var(--line);
+        border-radius: 999px; background: var(--panel); box-shadow: var(--shadow);
+      }
+      .layout:not(.home) .watch-chip { width: var(--watch-button-size); position: relative; }
+      .layout:not(.home) .watch-chip :is(.coin, .coin-wrap),
+      .layout:not(.home) .list-tile {
+        width: var(--watch-button-size); height: var(--watch-button-size); min-height: var(--watch-button-size);
+      }
+      .layout:not(.home) .watch-chip .brand-logo:not(.brand-asml) { width: 58%; height: 58%; }
+      .layout:not(.home) .watch-chip .coin-wrap:hover,
+      .layout:not(.home) .watch-chip .coin:hover { transform: none; }
+      .layout:not(.home) .watch-chip .brand-logo { transition: transform 0.22s ease-out; }
+      .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo { transform: scale(1.1); }
+      .layout:not(.home) :is(.watch-chip .ticker, .list-tile > span) { display: none; }
+      .layout:not(.home) .list-tile { padding: 0; }
+      .layout:not(.home) .watch-list {
+        position: absolute; margin: 0; max-height: min(64dvh, 480px); overflow: auto;
+      }
+      @media (min-width: 901px) {
+        .layout.home .watch-row { overflow: visible; }
+        .layout:not(.home) .watch-dock {
+          top: 50%; right: clamp(16px, 1.75vw, 30px); transform: translateY(-50%);
+        }
+        .layout:not(.home) :is(.watch-strip, .watch-row) {
+          flex-direction: column; align-items: center; gap: 6px; overflow: visible;
+        }
+        .layout:not(.home) .watch-row { padding: 0; }
+        .layout:not(.home) .watch-tooltip {
+          display: block; position: absolute; top: 50%; right: calc(100% + 14px);
+          border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px;
+          background: var(--panel); color: var(--ink); box-shadow: var(--shadow);
+          font-size: 13px; font-weight: 600; white-space: nowrap; pointer-events: none;
+          opacity: 0; transform: translate(5px, -50%);
+          transition: opacity 0.18s ease, transform 0.22s ease-out;
+        }
+        .layout:not(.home) .watch-chip:is(:hover, :focus-within) { z-index: 1; }
+        .layout:not(.home) .watch-chip:is(:hover, :focus-within) .watch-tooltip {
+          opacity: 1; transform: translate(0, -50%);
+        }
+        .layout:not(.home) .watch-list {
+          top: 50%; right: calc(100% + 12px); transform: translateY(-50%);
+          width: min(500px, calc(100vw - 180px));
+        }
+      }
       .watch-list button {
         width: 100%; display: grid; grid-template-columns: 76px 1fr auto auto; gap: 14px; align-items: center;
         background: var(--panel); border: 0; border-bottom: 1px solid var(--line); color: var(--ink);
@@ -600,7 +650,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         color: #fff2e6;
         text-shadow: none;
       }
-      [data-theme="dark"] :is(.panel, .search-bar, .sidenav-dock, .watch-list, .icon-btn, .list-tile) {
+      [data-theme="dark"] :is(.panel, .search-bar, .sidenav-dock, .layout:not(.home) .watch-strip, .watch-list, .icon-btn, .list-tile) {
         background: var(--glass-fill);
         border: 1px solid var(--glass-stroke);
         box-shadow: var(--glass-shadow);
@@ -646,14 +696,6 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .layout.stock .search-bar { padding: 3px 8px 3px 16px; gap: 8px; }
       .layout.stock .search-bar input { height: 36px; font-size: 16px; }
       .layout.stock .search-bar svg { width: 16px; height: 16px; }
-      .layout.stock .watch-strip { margin-top: 8px; gap: 8px; }
-      .layout.stock .watch-row { gap: 6px; overflow-x: auto; scrollbar-width: thin; }
-      .layout.stock .watch-chip { width: 39px; gap: 3px; }
-      .layout.stock .watch-chip :is(.coin, .coin-wrap) { width: 34px; height: 34px; }
-      .layout.stock .watch-chip .coin { min-height: 34px; flex-basis: 34px; }
-      .layout.stock .watch-chip .brand-logo:not(.brand-asml) { width: 20px; height: 20px; }
-      .layout.stock .watch-chip .ticker { font-size: 9px; }
-      .layout.stock .list-tile { min-height: 32px; padding: 5px 10px; font-size: 12px; }
 
       .stock-analysis-switch {
         position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -752,6 +794,15 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .stock-chart text { font-size: 20px; }
       }
       @media (max-width: 900px) {
+        .shell:has(.layout:not(.home)) { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+        .layout:not(.home) .watch-dock {
+          --watch-button-size: 40px;
+          width: min(440px, calc(100% - 24px));
+          inset: auto 0 calc(12px + env(safe-area-inset-bottom)) 0;
+          margin-inline: auto;
+        }
+        .layout:not(.home) .watch-row { overflow-x: auto; scrollbar-width: thin; align-items: center; }
+        .layout:not(.home) .watch-list { bottom: calc(100% + 8px); }
         .layout { grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
         .sidenav {
           position: static;

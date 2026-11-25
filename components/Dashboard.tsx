@@ -43,6 +43,13 @@ function autoTheme() {
   return h >= 7 && h < 19 ? "light" : "dark";
 }
 
+function watchMotionItems(dock: HTMLDivElement) {
+  const selector = window.matchMedia("(max-width: 900px)").matches
+    ? ".watch-strip[data-watch-motion]"
+    : ".watch-strip [data-watch-motion]";
+  return Array.from(dock.querySelectorAll<HTMLElement>(selector));
+}
+
 export function Dashboard() {
   const [themeChoice, setThemeChoice] = useState<ThemeChoice>("dark");
   const [themeReady, setThemeReady] = useState(false);
@@ -63,7 +70,27 @@ export function Dashboard() {
   const searchRef = useRef<HTMLDivElement>(null);
   const searchDockRef = useRef<HTMLDivElement>(null);
   const searchDockStart = useRef<DOMRect | null>(null);
+  const watchDockRef = useRef<HTMLDivElement>(null);
+  const watchDockStart = useRef<Map<string, DOMRect> | null>(null);
   const toastTimer = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    const dock = watchDockRef.current;
+    const start = watchDockStart.current;
+    watchDockStart.current = null;
+    if (!dock || !start || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const animations = watchMotionItems(dock).flatMap((item) => {
+      const before = start.get(item.dataset.watchMotion!);
+      if (!before) return [];
+      const after = item.getBoundingClientRect();
+      return [item.animate(
+        [{ transform: `translate(${before.left - after.left}px, ${before.top - after.top}px)` }, { transform: "none" }],
+        { duration: 460, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+      )];
+    });
+    return () => animations.forEach((animation) => animation.cancel());
+  }, [section]);
 
   useLayoutEffect(() => {
     const dock = searchDockRef.current;
@@ -146,8 +173,17 @@ export function Dashboard() {
     setMenu((open) => (open === id ? null : id));
   }
 
-  function changeSection(name: Section) {
+  function moveToSection(name: Section | "stock") {
+    if ((section === "home") !== (name === "home") && watchDockRef.current) {
+      const items = watchMotionItems(watchDockRef.current);
+      watchDockStart.current = new Map(items.map((item) => [item.dataset.watchMotion!, item.getBoundingClientRect()]));
+    }
+    if (name !== section) setListOpen(false);
     setSection(name);
+  }
+
+  function changeSection(name: Section) {
+    moveToSection(name);
     if (name === "simulation") setSim({ ...SIM_DEFAULT });
   }
 
@@ -155,7 +191,7 @@ export function Dashboard() {
     if (section !== "home") {
       searchDockStart.current = searchRef.current?.getBoundingClientRect() ?? null;
     }
-    setSection("home");
+    moveToSection("home");
     setResultsOpen(false);
     setActiveIdx(-1);
     setQuery("");
@@ -179,11 +215,12 @@ export function Dashboard() {
     }
     setAnalysis("graph");
     setSelected(tk);
-    setSection("stock");
+    moveToSection("stock");
   }
 
   function openStock(tk: string) {
     setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : list));
+    setListOpen(false);
     showStock(tk);
   }
 
@@ -286,7 +323,7 @@ export function Dashboard() {
                 <strong>Search</strong> — type a ticker or company name (or press <span className="mono">/</span>) and pick a result to add it to your watchlist and open it below.
               </p>
               <p>
-                <strong>Watchlist</strong> — watched stocks sit under search, newest on the left. Open or search one and it moves left; older ones slide right and can leave the strip. <strong>List</strong> shows everything.
+                <strong>Watchlist</strong> — recent stocks sit under search on Home and move to the stock dock in other sections. <strong>List</strong> shows everything.
               </p>
               <p style={{ marginBottom: 0 }}>
                 <strong>Sections</strong> — use the dock to open Home, Learn, Simulation, or Watchlist. Open a stock to see its Graph Analysis, Fundamental, and Valuation views.
@@ -350,17 +387,33 @@ export function Dashboard() {
                     );
                   })}
               </div>
-            </div><div className="watch-strip"><div className="watch-row" id="watchRow" aria-label="Recently viewed from watchlist">{watchlist.map((tk) => (
-                <div key={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}><span className="coin-wrap"><button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button><button type="button" className="rm" aria-label={"Remove " + tk + " from watchlist"} onClick={(ev) => removeStock(tk, ev)}>×</button></span><div className="ticker">{tk}</div></div>
-              ))}</div><button type="button" className="list-tile" aria-expanded={listOpen} onClick={() => setListOpen((open) => !open)}><ListIcon />List</button></div><div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Full watchlist">
-              {listOpen && watchlist.map((tk) => {
-                const s = sample(tk);
-                const up = s.change >= 0;
-                return (
-                  <button type="button" key={tk} onClick={() => openStock(tk)}><span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span><span className="mono"><AnimatedPrice price={s.price} /></span><span className="mono"><span className={up ? "chg-up" : "chg-dn"}>{up ? "▲" : "▼"} {up ? "+" : ""}{fmt(s.change, 2)}%</span></span></button>
-                );
-              })}
             </div></div>
+            <div className="watch-dock" ref={watchDockRef}>
+              <div className="watch-strip" data-watch-motion="strip" role="group" aria-label="Stock shortcuts">
+                <div className="watch-row" id="watchRow">
+                  {watchlist.slice(0, 8).map((tk) => (
+                    <div key={tk} data-watch-motion={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}>
+                      <span className="coin-wrap">
+                        <button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button>
+                        <button type="button" className="rm" aria-label={"Remove " + tk + " from watchlist"} onClick={(ev) => removeStock(tk, ev)}>×</button>
+                        <span className="watch-tooltip" aria-hidden="true">{nameOf(tk)}</span>
+                      </span>
+                      <div className="ticker">{tk}</div>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className="list-tile" data-watch-motion="list" aria-label="List" aria-expanded={listOpen} aria-controls="watchList" onClick={() => setListOpen((open) => !open)}><ListIcon /><span>List</span></button>
+              </div>
+              <div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Full watchlist">
+                {listOpen && watchlist.map((tk) => {
+                  const s = sample(tk);
+                  const up = s.change >= 0;
+                  return (
+                    <button type="button" key={tk} onClick={() => openStock(tk)}><span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span><span className="mono"><AnimatedPrice price={s.price} /></span><span className="mono"><span className={up ? "chg-up" : "chg-dn"}>{up ? "▲" : "▼"} {up ? "+" : ""}{fmt(s.change, 2)}%</span></span></button>
+                  );
+                })}
+              </div>
+            </div>
             {isStock && (
               <div className="stock-analysis-switch" role="group" aria-label="Stock analysis" data-analysis={analysis}>
                 <button type="button" aria-pressed={analysis === "graph"} onClick={() => setAnalysis("graph")}>Graph Analysis</button>
