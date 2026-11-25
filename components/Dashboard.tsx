@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { AnimatedPrice } from "@/components/AnimatedPrice";
 import { BrandLogo } from "@/components/BrandLogo";
 import {
-  DownloadIcon,
   FundamentalIcon,
   HelpIcon,
   HomeIcon,
@@ -16,6 +16,7 @@ import {
   WatchlistIcon,
 } from "@/components/Icons";
 import { Panels, type Section } from "@/components/Panels";
+import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
 import { DEFAULT_WATCHLIST, SIM_DEFAULT, fmt, nameOf, sample, searchCatalog, type SimInput } from "@/lib/market";
 
@@ -49,7 +50,7 @@ export function Dashboard() {
   const [themeReady, setThemeReady] = useState(false);
   const [watchlist, setWatchlist] = useState<string[]>(DEFAULT_WATCHLIST);
   const [selected, setSelected] = useState("NVDA");
-  const [section, setSection] = useState<Section>("home");
+  const [section, setSection] = useState<Section | "stock">("home");
   const [range, setRange] = useState("1Y");
   const [listOpen, setListOpen] = useState(false);
   const [menu, setMenu] = useState<MenuId | null>(null);
@@ -61,7 +62,29 @@ export function Dashboard() {
   const [toastOn, setToastOn] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
+  const searchDockRef = useRef<HTMLDivElement>(null);
+  const searchDockStart = useRef<DOMRect | null>(null);
   const toastTimer = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    const dock = searchDockRef.current;
+    const start = searchDockStart.current;
+    searchDockStart.current = null;
+    if (!dock || !start || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const end = dock.getBoundingClientRect();
+    if (!end.width) return;
+
+    // Animate between the measured positions so the same motion works on narrow screens.
+    const offsetX = start.left + start.width / 2 - end.left - end.width / 2;
+    const offsetY = start.top - end.top;
+    const scale = start.width / end.width;
+    const animation = dock.animate(
+      [{ transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})` }, { transform: "none" }],
+      { duration: 460, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+    );
+    return () => animation.cancel();
+  }, [section]);
 
   useEffect(() => {
     setThemeChoice(readThemeChoice());
@@ -124,6 +147,9 @@ export function Dashboard() {
   }
 
   function changeSection(name: Section) {
+    if (name === "home" && section !== "home") {
+      searchDockStart.current = searchDockRef.current?.getBoundingClientRect() ?? null;
+    }
     setSection(name);
     if (name === "simulation") setSim({ ...SIM_DEFAULT });
   }
@@ -131,6 +157,14 @@ export function Dashboard() {
   function selectStock(tk: string) {
     setSelected(tk);
     if (section === "simulation") setSim({ ...SIM_DEFAULT });
+  }
+
+  function openStock(tk: string) {
+    if (section === "home") {
+      searchDockStart.current = searchDockRef.current?.getBoundingClientRect() ?? null;
+    }
+    setSelected(tk);
+    setSection("stock");
   }
 
   function removeStock(tk: string, ev: React.MouseEvent) {
@@ -166,9 +200,7 @@ export function Dashboard() {
     if (added) setWatchlist(watchlist.concat(tk));
     setQuery("");
     closeResults();
-    if (section === "home") setSection("watchlist");
-    setSelected(tk);
-    if (section === "simulation") setSim({ ...SIM_DEFAULT });
+    openStock(tk);
     toast(added ? tk + " added to your watchlist" : tk + " — " + nameOf(tk));
   }
 
@@ -183,22 +215,6 @@ export function Dashboard() {
       closeResults();
       ev.currentTarget.blur();
     }
-  }
-
-  function downloadPreview() {
-    const html = "<!doctype html>\n" + document.documentElement.outerHTML;
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "index.html";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.setTimeout(function () {
-      URL.revokeObjectURL(url);
-    }, 1500);
-    toast("Preview downloaded as index.html");
   }
 
   const themePressed = (choice: ThemeChoice) => (themeReady ? themeChoice === choice : choice === "dark");
@@ -230,10 +246,7 @@ export function Dashboard() {
                 ))}</div>
               <p style={{ margin: "12px 0 0" }}>Auto follows the time of day — light in the day, dark at night.</p>
             </div>
-          </div><div className="wordmark">intrisal.com<small>Preview</small></div><div className="right">
-            <button className="icon-btn" id="downloadBtn" aria-label="Download this preview as index.html" title="Download preview" aria-expanded={false} onClick={downloadPreview}>
-              <DownloadIcon />
-            </button>
+          </div><h1 className="wordmark">Intrisal</h1><div className="right">
             <button className="icon-btn" id="helpBtn" aria-label="Help" aria-haspopup="true" aria-expanded={menu === "help"} onClick={(ev) => toggleMenu("help", ev)}>
               <HelpIcon />
             </button>
@@ -258,7 +271,7 @@ export function Dashboard() {
             </div>
           </div></header>
 
-        <div className={"layout" + (section === "home" ? " home" : "")} id="layout"><nav className="sidenav" aria-label="Sections">
+        <div className={"layout" + (section === "home" || section === "stock" ? " " + section : "")} id="layout"><nav className="sidenav" aria-label="Sections">
             <div className="sidenav-dock" id="navDock">
               <ul id="navList">{SECTIONS.map((item) => (
                   <li key={item.id}>
@@ -272,7 +285,7 @@ export function Dashboard() {
                   </li>
                 ))}</ul>
             </div>
-          </nav><main className="center"><div className="search-wrap" ref={searchRef}>
+          </nav><main className="center"><div className="search-dock" ref={searchDockRef}><div className="search-wrap" ref={searchRef}>
               <div className="search-bar"><SearchIcon /><input
                   ref={inputRef}
                   id="searchInput"
@@ -310,16 +323,16 @@ export function Dashboard() {
                   })}
               </div>
             </div><div className="watch-row" id="watchRow" aria-label="Watchlist">{watchlist.map((tk) => (
-                <div key={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}><span className="coin-wrap"><button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => selectStock(tk)}><BrandLogo tk={tk} /></button><button type="button" className="rm" aria-label={"Remove " + tk + " from watchlist"} onClick={(ev) => removeStock(tk, ev)}>×</button></span><div className="ticker mono">{tk}</div></div>
+                <div key={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}><span className="coin-wrap"><button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button><button type="button" className="rm" aria-label={"Remove " + tk + " from watchlist"} onClick={(ev) => removeStock(tk, ev)}>×</button></span><div className="ticker mono">{tk}</div></div>
               ))}<button type="button" className="list-tile" aria-expanded={listOpen} onClick={() => setListOpen((open) => !open)}><ListIcon />list</button></div><div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Watchlist as list">
-              {watchlist.map((tk) => {
+              {listOpen && watchlist.map((tk) => {
                 const s = sample(tk);
                 const up = s.change >= 0;
                 return (
-                  <button type="button" key={tk} onClick={() => selectStock(tk)}><span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span><span className="mono">${fmt(s.price, 2)}</span><span className="mono"><span className={up ? "chg-up" : "chg-dn"}>{up ? "▲" : "▼"} {up ? "+" : ""}{fmt(s.change, 2)}%</span></span></button>
+                  <button type="button" key={tk} onClick={() => openStock(tk)}><span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span><span className="mono"><AnimatedPrice price={s.price} /></span><span className="mono"><span className={up ? "chg-up" : "chg-dn"}>{up ? "▲" : "▼"} {up ? "+" : ""}{fmt(s.change, 2)}%</span></span></button>
                 );
               })}
-            </div><Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} /><footer className="note">Landing page preview — prices and figures shown are sample data for layout only.</footer></main></div>
+            </div></div>{section === "stock" ? <StockDetail key={selected} ticker={selected} /> : <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />}<footer className="note">Landing page preview — prices and figures shown are sample data for layout only.</footer></main></div>
       </div>
       <div className={"toast" + (toastOn ? " show" : "")} id="toast" role="status">
         {toastMsg}

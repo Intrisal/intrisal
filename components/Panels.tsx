@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AnimatedPrice } from "@/components/AnimatedPrice";
 import { fmt, hashStr, nameOf, projectSim, rng, sample, series, type SimInput } from "@/lib/market";
 
 export type Section = "home" | "fundamental" | "learn" | "simulation" | "valuation" | "watchlist";
@@ -66,7 +67,7 @@ function ChartPanel({ selected, range, onRange }: { selected: string; range: str
       <PanelHead title="Chart" sub={selected} />
       <div className="big-ticker">{selected}</div>
       <div className="big-name">{nameOf(selected)}</div>
-      <div className="big-price mono">${fmt(s.price, 2)}<span className="chg"><Chg c={s.change} /></span></div>
+      <div className="big-price mono"><AnimatedPrice key={selected} price={s.price} /><span className="chg"><Chg c={s.change} /></span></div>
       <div className="chart-box">
         <LineChart data={series(selected, range, pts)} w={560} h={210} pad={8} label="Price chart" />
       </div>
@@ -99,7 +100,7 @@ function WatchPanel({ watchlist, selected, onSelect }: { watchlist: string[]; se
             const s = sample(tk);
             return (
               <tr key={tk} data-tk={tk} className={tk === selected ? "sel" : undefined} onClick={() => onSelect(tk)}>
-                <td className="tk">{tk}</td><td className="num mono">${fmt(s.price, 2)}</td><td className="num mono"><Chg c={s.change} /></td>
+                <td className="tk">{tk}</td><td className="num mono"><AnimatedPrice price={s.price} /></td><td className="num mono"><Chg c={s.change} /></td>
               </tr>
             );
           })}

@@ -31,7 +31,7 @@ export const CATALOG: ReadonlyArray<readonly [string, string]> = [
   ["COIN", "Coinbase"],
 ];
 
-export const DEFAULT_WATCHLIST = ["VFV", "META", "GOOG", "MSFT", "AMZN", "NFLX", "NVDA", "ASML", "MA", "ISRG"];
+export const DEFAULT_WATCHLIST = ["VFV", "META", "GOOG", "MSFT", "AMZN", "NFLX", "NVDA", "ASML"];
 
 export type Sample = {
   price: number;
