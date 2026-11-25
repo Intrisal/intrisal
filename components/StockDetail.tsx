@@ -58,6 +58,8 @@ export function StockDetail({ ticker }: { ticker: string }) {
   const short = shortSma[shortSma.length - 1];
   const long = longSma[longSma.length - 1];
   const above = price >= long;
+  const signal = price < long ? "Strong Buy" : price < short ? "Buy" : "Hold";
+  const signalClass = signal === "Hold" ? "stock-neutral" : "stock-positive";
   const year = closes.slice(-RANGES["1Y"]);
   const yearReturn = (price / year[0] - 1) * 100;
   const low = Math.min(...year);
@@ -67,12 +69,11 @@ export function StockDetail({ ticker }: { ticker: string }) {
   for (let i = shortSma.length - 1; i > 0; i--) {
     const up = shortSma[i] >= longSma[i];
     if (up !== (shortSma[i - 1] >= longSma[i - 1])) {
-      cross = { name: up ? "Golden cross" : "Death cross", daysAgo: shortSma.length - 1 - i, up };
+      cross = { name: up ? "Bullish Trend" : "Bearish Trend", daysAgo: shortSma.length - 1 - i, up };
       break;
     }
   }
   const days = RANGES[range];
-  const trend = above ? "Above 200-day SMA" : "Below 200-day SMA";
 
   return (
     <section className="stock-detail" aria-label={ticker + " stock details"}>
@@ -80,7 +81,7 @@ export function StockDetail({ ticker }: { ticker: string }) {
         <div className="stock-chart-header">
           <div>
             <h2>{ticker} <span>{nameOf(ticker)}</span></h2>
-            <p className={above ? "stock-positive" : "stock-negative"}>{trend}</p>
+            <p className={signalClass}>{signal}</p>
           </div>
           <div className="stock-ranges" role="group" aria-label="Chart range">
             {(Object.keys(RANGES) as Range[]).map((item) => (
@@ -100,9 +101,7 @@ export function StockDetail({ ticker }: { ticker: string }) {
         <div className="stock-snapshot-price"><AnimatedPrice price={price} /></div>
         <p className="stock-caption">Sample closing price</p>
         <dl>
-          <div><dt>Trend</dt><dd className={above ? "stock-positive" : "stock-negative"}>{trend}</dd></div>
-          <div><dt>50-day SMA</dt><dd>${fmt(short, 2)}</dd></div>
-          <div><dt>200-day SMA</dt><dd>${fmt(long, 2)}</dd></div>
+          <div><dt>Signal</dt><dd className={signalClass}>{signal}</dd></div>
           <div><dt>1Y return</dt><dd className={yearReturn >= 0 ? "stock-positive" : "stock-negative"}>{yearReturn >= 0 ? "+" : ""}{fmt(yearReturn, 1)}%</dd></div>
           <div>
             <dt>52-week closing range</dt>
@@ -113,7 +112,7 @@ export function StockDetail({ ticker }: { ticker: string }) {
             </dd>
           </div>
           <div>
-            <dt>Latest 50D / 200D cross</dt>
+            <dt>Market trend</dt>
             <dd className={cross ? (cross.up ? "stock-positive" : "stock-negative") : undefined}>{cross?.name ?? "No crossover in sample"}</dd>
             {cross && <dd className="stock-caption">{cross.daysAgo ? `${cross.daysAgo} trading days ago` : "Latest close"}</dd>}
           </div>

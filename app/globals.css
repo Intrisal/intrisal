@@ -225,17 +225,17 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
 
       /* ---------- Side nav ---------- */
-      /* Sticky viewport-tall column keeps the dock centered while content scrolls. */
+      /* Pin the desktop dock to the viewport so section content cannot move it. */
       .sidenav {
-        position: sticky;
-        top: 0;
-        height: 100vh;
-        height: 100dvh;
-        align-self: start;
+        position: fixed;
+        top: 50%;
+        left: clamp(16px, 1.75vw, 30px);
+        height: auto;
         display: flex;
         align-items: center;
         justify-content: center;
-        z-index: 20;
+        transform: translateY(-50%);
+        z-index: 30;
       }
       .sidenav-dock {
         position: relative;
@@ -340,6 +340,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
 
       /* ---------- Center column ---------- */
       .center { min-width: 0; max-width: 820px; margin: 0 auto; width: 100%; }
+      .layout > .center { grid-column: 2; }
 
       /* ---------- Home: search + watchlist, one viewport, no idle scroll ---------- */
       .layout.home {
@@ -347,14 +348,6 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         min-height: 0;
         margin-top: 0;
         align-items: stretch;
-      }
-      /* Home is viewport-locked — size the nav to the layout pane (not 100dvh)
-         so the tall sticky column cannot force idle page scroll. */
-      .layout.home .sidenav {
-        position: relative;
-        top: auto;
-        height: auto;
-        align-self: stretch;
       }
       .layout.home .center {
         display: flex;
@@ -748,6 +741,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .stock-snapshot dd { margin-inline-start: 0; margin-top: 5px; font-weight: 700; font-variant-numeric: tabular-nums; }
       .stock-positive { color: var(--stock-green); }
       .stock-negative { color: var(--stock-red); }
+      .stock-neutral { color: var(--stock-neutral); }
       .stock-range { font-size: 12px; }
       .stock-range-track { position: relative; height: 5px; border-radius: 99px; margin: 10px 5px; background: linear-gradient(90deg, var(--stock-red), var(--stock-gold), var(--stock-green)); }
       .stock-range-track span { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: var(--ink); border: 2px solid var(--panel); transform: translate(-50%, -50%); }
@@ -764,6 +758,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
           top: auto;
           height: auto;
           align-self: auto;
+          transform: none;
           order: 1;
           margin-bottom: 8px;
           display: flex;
@@ -786,7 +781,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .sidenav button:focus-visible .nav-label {
           transform: translate(-50%, 0);
         }
-        .center { order: 2; }
+        .center { order: 2; grid-column: auto; }
         .layout.stock .center { display: contents; }
         .layout.stock .search-dock { grid-row: 1; }
         .layout.stock .stock-analysis-switch { grid-row: 2; margin-top: 4px; }
