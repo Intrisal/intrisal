@@ -286,25 +286,26 @@
       .watch-chip { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 42px; }
       .watch-chip .coin {
         width: 34px; height: 34px; border-radius: 50%; position: relative;
-        border: 1.5px solid var(--line-strong); background: var(--panel); color: var(--ink);
+        border: 1.5px solid #111111; background: #000000; color: #ffffff;
         display: flex; align-items: center; justify-content: center; cursor: pointer;
         transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
       }
+      [data-theme="dark"] .watch-chip .coin { border-color: #4a4a4a; }
       .watch-chip .coin:hover { transform: translateY(-2px); }
-      .watch-chip .coin:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-      .watch-chip.selected .coin { background: var(--chip-bg); color: var(--chip-ink); }
+      .watch-chip .coin:focus-visible { outline: 2px solid #69b9ff; outline-offset: 3px; }
+      .watch-chip.selected .coin { background: #000000; color: #ffffff; border-color: #8a8a8a; box-shadow: 0 0 0 1px rgba(127, 127, 127, 0.3); }
       .watch-chip .brand-logo { width: 20px; height: 20px; display: grid; place-items: center; pointer-events: none; }
       .watch-chip .brand-logo svg { display: block; width: 100%; height: 100%; fill: currentColor; }
       .watch-chip .ticker { font-size: 9px; font-weight: 700; letter-spacing: 0.03em; color: var(--ink-2); }
-      .brand-vfv { color: #c41230; }
+      .brand-vfv { color: #ff4058; }
       .brand-meta { color: #0866ff; }
       .brand-google { color: #4285f4; }
       .brand-amzn { color: #ff9900; }
-      .brand-nflx { color: #e50914; }
+      .brand-nflx { color: #ff3547; }
       .brand-nvda { color: #76b900; }
-      .brand-asml { color: #0066a1; }
+      .brand-asml { color: #43b7ff; }
       .brand-ma { color: #eb001b; }
-      .brand-isrg { color: #007a8e; }
+      .brand-isrg { color: #38d9e9; }
       .brand-msft rect:nth-child(1) { fill: #f25022; }
       .brand-msft rect:nth-child(2) { fill: #7fba00; }
       .brand-msft rect:nth-child(3) { fill: #00a4ef; }
@@ -475,9 +476,9 @@
             <p>Signed-in accounts arrive with the full v2 build. Appearance lives here for now.</p>
             <div class="row-label">Appearance</div>
             <div class="seg" role="group" aria-label="Theme">
-              <button type="button" data-theme-choice="auto" aria-pressed="true">Auto</button>
+              <button type="button" data-theme-choice="auto" aria-pressed="false">Auto</button>
               <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
-              <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+              <button type="button" data-theme-choice="dark" aria-pressed="true">Dark</button>
             </div>
             <p style="margin:12px 0 0;">Auto follows the time of day â€” light in the day, dark at night.</p>
           </div>
@@ -2163,7 +2164,11 @@ ${v}`;
 
 ;
 "use strict";
-var themeChoice = "auto";
+var themeChoice = "dark";
+try {
+  var savedThemeChoice = localStorage.getItem("intrisal-theme-choice");
+  if (savedThemeChoice === "auto" || savedThemeChoice === "light" || savedThemeChoice === "dark") themeChoice = savedThemeChoice;
+} catch (e) {}
 function autoTheme() {
   var h = new Date().getHours();
   return h >= 7 && h < 19 ? "light" : "dark";
@@ -2708,6 +2713,7 @@ document.addEventListener("click", function () {
 document.querySelectorAll("[data-theme-choice]").forEach(function (b) {
   b.addEventListener("click", function () {
     themeChoice = b.getAttribute("data-theme-choice");
+    try { localStorage.setItem("intrisal-theme-choice", themeChoice); } catch (e) {}
     applyTheme();
   });
 });
