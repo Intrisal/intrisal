@@ -166,12 +166,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .topbar .left { position: relative; }
       .topbar .right { position: relative; }
       .stock-topbar {
-        display: grid; grid-template-columns: 1fr auto 1fr;
-        align-items: center; padding-bottom: 0;
+        display: flex; align-items: center; justify-content: space-between;
+        padding-bottom: 0;
       }
-      .stock-topbar .left { justify-self: start; }
-      .stock-topbar .right { justify-self: end; }
-      .stock-topbar .wordmark { margin: 0; font-size: clamp(28px, 5vw, 36px); }
       .wordmark {
         margin: 0 0 22px;
         font-family: var(--font-display), "Outfit", sans-serif;
@@ -194,6 +191,12 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         outline: 2px solid var(--focus);
         outline-offset: 6px;
         border-radius: 8px;
+      }
+      .stock-topbar .wordmark button {
+        text-shadow: 0 0 6px rgb(35 24 23 / 12%), 0 0 14px rgb(35 24 23 / 7%);
+      }
+      [data-theme="dark"] .stock-topbar .wordmark button {
+        text-shadow: 0 0 7px rgb(255 242 230 / 26%), 0 0 15px rgb(255 227 206 / 14%);
       }
       .icon-btn {
         width: 44px; height: 44px; border-radius: 50%;
@@ -374,8 +377,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         height: 100%;
         padding-bottom: clamp(18px, 5dvh, 52px);
       }
-      .layout.home .panels,
-      .layout.home footer.note { display: none; }
+      .layout.home .panels { display: none; }
 
       .search-dock {
         position: relative; z-index: 1;
@@ -393,6 +395,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .search-dock .search-wrap { width: 100%; }
       .layout.home .watch-dock { position: relative; z-index: 2; width: min(100%, 680px); margin-inline: auto; }
+      .layout.home .watch-strip { flex-direction: column; gap: 10px; }
+      .layout.home .watch-row { width: 100%; justify-content: center; flex: none; overflow: visible; }
+      .layout.home .list-tile { display: none; }
       .layout.home .search-dock:has(.results.open) { z-index: 32; }
       .search-wrap { position: relative; }
       .search-bar {
@@ -499,28 +504,13 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         max-width: none;
         max-height: none;
         display: block;
+        visibility: hidden;
         object-position: center;
         border-radius: 50%;
-      }
-      /* Background tile fills the coin edge-to-edge. */
-      .watch-chip .brand-logo.brand-cdn-fill {
-        z-index: 0;
         object-fit: cover;
-        transform: scale(1.12);
-      }
-      /* Solo icon: milder crop so built-in mark padding stays readable. */
-      .watch-chip .brand-logo.brand-cdn-fill-solo {
         transform: scale(1.02);
       }
-      /* Foreground symbol sits inset so the glyph never kisses the rim. */
-      .watch-chip .brand-logo.brand-cdn-mark {
-        z-index: 1;
-        padding: 22%;
-        box-sizing: border-box;
-        object-fit: contain;
-        transform: none;
-        border-radius: 0;
-      }
+      .watch-chip .brand-logo.brand-cdn[data-loaded="true"] { visibility: visible; }
       .watch-chip .brand-logo.brand-monogram {
         width: 58%;
         height: 58%;
@@ -573,11 +563,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .layout:not(.home) .watch-chip .coin-wrap:hover,
       .layout:not(.home) .watch-chip .coin:hover { transform: none; }
-      .layout:not(.home) .watch-chip .brand-logo.brand-cdn-fill { transition: transform 0.22s ease-out; }
+      .layout:not(.home) .watch-chip .brand-logo.brand-cdn { transition: transform 0.22s ease-out; }
       .layout:not(.home) .watch-chip .brand-logo.brand-monogram { width: 58%; height: 58%; }
-      .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo.brand-cdn-fill { transform: scale(1.16); }
-      .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo.brand-cdn-fill-solo { transform: scale(1.06); }
-      .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo.brand-cdn-mark { transform: scale(1.04); }
+      .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo.brand-cdn { transform: scale(1.06); }
       .layout:not(.home) :is(.watch-chip .ticker, .list-tile > span) { display: none; }
       .layout:not(.home) .list-tile { padding: 0; }
       .layout:not(.home) .watch-list {
@@ -699,7 +687,6 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-      footer.note { margin-top: 28px; text-align: center; font-size: 12px; font-weight: 400; color: var(--ink-3); letter-spacing: -0.01em; }
 
       /* Dark glass surfaces use a warm highlight and a darker lower edge. */
       [data-theme="dark"] {
@@ -831,20 +818,33 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .stock-analysis-switch button[aria-pressed="true"] { color: var(--btn-ink); }
       .stock-analysis-switch button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-      .stock-analysis-panels { animation: stock-analysis-appear 0.24s ease both; }
+      html:has(.layout.stock) { scrollbar-gutter: stable; }
+      .stock-overview {
+        display: grid; grid-template-columns: minmax(0, 1fr);
+        gap: 14px; margin-top: 22px;
+      }
+      .stock-identity {
+        display: flex; flex-direction: column; align-items: center; text-align: center;
+        gap: 3px; justify-self: center; margin: 0; max-width: 100%;
+        padding: 4px 16px; overflow-wrap: anywhere;
+        font-family: var(--font-display), "Outfit", sans-serif;
+      }
+      .stock-identity strong { font-size: clamp(21px, 2.6vw, 32px); line-height: 1.1; }
+      .stock-identity span { color: var(--ink-2); font-size: 12px; font-weight: 650; letter-spacing: 0.08em; }
+      .layout.stock .section-stage { padding-top: 16px; }
+      .stock-analysis-panels { margin-top: 0; animation: stock-analysis-appear 0.24s ease both; }
       .stock-analysis-panels[data-analysis="fundamental"] { display: block; }
       .stock-analysis-panels[data-analysis="valuation"] { grid-template-columns: minmax(0, 1fr); width: min(100%, 760px); margin-inline: auto; }
-      .fundamental-sample { margin: 0 0 12px; color: var(--ink-2); font-size: 13px; }
       .fundamental-summary {
         display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-        padding: 0; min-height: 0; margin: 0 0 18px;
+        padding: 0; min-height: 0; margin: 0;
       }
-      .fundamental-summary > div { padding: 14px 18px; }
+      .fundamental-summary > div { padding: 10px clamp(8px, 1vw, 16px); }
       .fundamental-summary > div + div { border-left: 1px solid var(--line); }
       .fundamental-summary dt { color: var(--ink-2); font-size: 12px; }
       .fundamental-summary dd { margin: 3px 0 0; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
-      .fundamental-summary dd + dt { margin-top: 8px; }
-      .fundamental-summary dt:last-of-type + dd { font-size: 14px; }
+      .fundamental-summary .fundamental-cagr-label { display: inline; font-size: 11px; }
+      .fundamental-summary .fundamental-cagr { display: inline; margin-inline-start: 5px; font-size: 12px; white-space: nowrap; }
       .fundamental-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
       .fundamental-card {
         --fundamental-bar: #a3670b;
@@ -876,9 +876,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .fundamental-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
       @media (max-width: 640px) {
-        .fundamental-grid, .fundamental-summary { grid-template-columns: 1fr; }
-        .fundamental-summary > div { padding: 11px 14px; }
-        .fundamental-summary > div + div { border-left: 0; border-top: 1px solid var(--line); }
+        .fundamental-grid { grid-template-columns: 1fr; }
       }
       @keyframes stock-analysis-appear {
         from { opacity: 0; }
@@ -889,6 +887,11 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .stock-analysis-switch::before { transition: none; }
       }
       @media (min-width: 901px) {
+        .layout.stock .search-dock {
+          position: fixed; top: 18px; left: 50%; z-index: 21;
+          width: min(545px, calc(100vw - 160px)); margin: 0;
+          transform: translateX(-50%);
+        }
         .layout.stock { grid-template-columns: 64px minmax(0, 1fr) 64px; gap: clamp(14px, 2vw, 32px); }
       }
       .stock-detail {
@@ -897,7 +900,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         --stock-red: #b33529;
         --stock-neutral: #626b78;
         display: grid; grid-template-columns: minmax(0, 1fr) minmax(225px, 25%);
-        gap: clamp(14px, 2vw, 24px); align-items: start; margin-top: 28px;
+        gap: clamp(14px, 2vw, 24px); align-items: start;
       }
       [data-theme="dark"] .stock-detail {
         --stock-gold: #f6b644;
@@ -907,17 +910,18 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .stock-detail .panel { min-height: 0; padding: clamp(15px, 2vw, 26px); }
       .stock-detail .stock-chart-panel { border-top: 4px solid var(--stock-gold); }
-      .stock-chart-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; }
-      .stock-chart-header h2 { margin: 0; font-size: clamp(28px, 4vw, 42px); font-weight: 650; }
-      .stock-chart-header h2 span { font-size: 15px; color: var(--ink-2); }
-      .stock-chart-header p { margin: 7px 0 0; font-size: 13px; font-weight: 700; }
+      .stock-chart-panel { position: relative; }
+      .stock-chart-header { position: absolute; top: 18px; left: 18px; z-index: 1; }
+      .stock-chart-return { position: absolute; top: 18px; right: 18px; z-index: 1; display: grid; justify-items: end; gap: 3px; padding: 4px 8px; text-align: right; }
+      .stock-chart-return span { color: var(--ink-2); font-size: 12px; font-weight: 600; }
+      .stock-chart-return strong { font-size: 15px; font-variant-numeric: tabular-nums; }
       .stock-ranges { display: flex; padding: 4px; gap: 4px; background: var(--hover); border-radius: 12px; }
       .stock-ranges button {
         min-width: 40px; min-height: 38px; padding: 0 8px; border: 0; border-radius: 8px;
         background: transparent; color: var(--ink-2); cursor: pointer; font: inherit; font-size: 13px; font-weight: 700;
       }
       .stock-ranges button[aria-pressed="true"] { background: var(--stock-gold); color: var(--panel); }
-      .stock-chart { display: block; width: 100%; height: auto; margin-top: 20px; }
+      .stock-chart { display: block; width: 100%; height: auto; margin-top: 40px; }
       .stock-chart line { stroke: var(--line); }
       .stock-chart text { fill: var(--ink-2); font-size: 13px; }
       .stock-close { color: var(--stock-gold); }
@@ -949,6 +953,8 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       @media (max-width: 760px) {
         .stock-detail { grid-template-columns: minmax(0, 1fr); }
         .stock-chart text { font-size: 20px; }
+        .stock-chart-header { top: 12px; left: 12px; }
+        .stock-chart-return { top: 12px; right: 12px; }
       }
       @media (max-width: 900px) {
         .shell:has(.layout:not(.home)) { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
@@ -994,8 +1000,8 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .layout.stock .search-dock { grid-row: 1; }
         .layout.stock .stock-analysis-switch { grid-row: 2; margin-top: 4px; }
         .layout.stock .sidenav { grid-row: 3; margin: 4px 0 0; }
-        .layout.stock .section-stage { grid-row: 4; min-width: 0; }
-        .layout.stock footer.note { grid-row: 5; }
+        .layout.stock .stock-overview { grid-row: 4; margin-top: 8px; }
+        .layout.stock .section-stage { grid-row: 5; min-width: 0; padding-top: 4px; }
         .layout.home .center {
           justify-content: center;
         }

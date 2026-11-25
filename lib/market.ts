@@ -1,34 +1,37 @@
-export const CATALOG: ReadonlyArray<readonly [string, string]> = [
-  ["VFV", "Vanguard S&P 500 Index ETF"],
-  ["META", "Meta Platforms"],
-  ["GOOG", "Alphabet (Google)"],
-  ["MSFT", "Microsoft"],
-  ["AMZN", "Amazon"],
-  ["NFLX", "Netflix"],
-  ["NVDA", "NVIDIA"],
-  ["ASML", "ASML Holding"],
-  ["MA", "Mastercard"],
-  ["ISRG", "Intuitive Surgical"],
-  ["AAPL", "Apple"],
-  ["TSLA", "Tesla"],
-  ["V", "Visa"],
-  ["UNH", "UnitedHealth"],
-  ["JPM", "JPMorgan Chase"],
-  ["BRK.B", "Berkshire Hathaway"],
-  ["LLY", "Eli Lilly"],
-  ["AVGO", "Broadcom"],
-  ["COST", "Costco"],
-  ["HD", "Home Depot"],
-  ["WMT", "Walmart"],
-  ["XOM", "Exxon Mobil"],
-  ["AMD", "Advanced Micro Devices"],
-  ["CRM", "Salesforce"],
-  ["SHOP", "Shopify"],
-  ["QQQ", "Invesco QQQ Trust"],
-  ["SPY", "SPDR S&P 500 ETF"],
-  ["UBER", "Uber Technologies"],
-  ["PLTR", "Palantir"],
-  ["COIN", "Coinbase"],
+type Exchange = "NASDAQ" | "NYSE" | "NYSE Arca" | "TSX";
+type CatalogEntry = readonly [ticker: string, name: string, exchange: Exchange];
+
+export const CATALOG: readonly CatalogEntry[] = [
+  ["VFV", "Vanguard S&P 500 Index ETF", "TSX"],
+  ["META", "Meta Platforms", "NASDAQ"],
+  ["GOOG", "Alphabet (Google)", "NASDAQ"],
+  ["MSFT", "Microsoft", "NASDAQ"],
+  ["AMZN", "Amazon", "NASDAQ"],
+  ["NFLX", "Netflix", "NASDAQ"],
+  ["NVDA", "NVIDIA", "NASDAQ"],
+  ["ASML", "ASML Holding", "NASDAQ"],
+  ["MA", "Mastercard", "NYSE"],
+  ["ISRG", "Intuitive Surgical", "NASDAQ"],
+  ["AAPL", "Apple", "NASDAQ"],
+  ["TSLA", "Tesla", "NASDAQ"],
+  ["V", "Visa", "NYSE"],
+  ["UNH", "UnitedHealth", "NYSE"],
+  ["JPM", "JPMorgan Chase", "NYSE"],
+  ["BRK.B", "Berkshire Hathaway", "NYSE"],
+  ["LLY", "Eli Lilly", "NYSE"],
+  ["AVGO", "Broadcom", "NASDAQ"],
+  ["COST", "Costco", "NASDAQ"],
+  ["HD", "Home Depot", "NYSE"],
+  ["WMT", "Walmart", "NASDAQ"],
+  ["XOM", "Exxon Mobil", "NYSE"],
+  ["AMD", "Advanced Micro Devices", "NASDAQ"],
+  ["CRM", "Salesforce", "NYSE"],
+  ["SHOP", "Shopify", "NASDAQ"],
+  ["QQQ", "Invesco QQQ Trust", "NASDAQ"],
+  ["SPY", "SPDR S&P 500 ETF", "NYSE Arca"],
+  ["UBER", "Uber Technologies", "NYSE"],
+  ["PLTR", "Palantir", "NASDAQ"],
+  ["COIN", "Coinbase", "NASDAQ"],
 ];
 
 export const DEFAULT_WATCHLIST = ["VFV", "META", "GOOG", "MSFT", "AMZN", "NFLX", "NVDA", "ASML"];
@@ -70,6 +73,10 @@ export function rng(seed: number): () => number {
 export function nameOf(tk: string): string {
   for (let i = 0; i < CATALOG.length; i++) if (CATALOG[i][0] === tk) return CATALOG[i][1];
   return tk;
+}
+
+export function exchangeOf(tk: string): Exchange | undefined {
+  return CATALOG.find(([ticker]) => ticker === tk)?.[2];
 }
 
 export function sample(tk: string): Sample {
@@ -119,7 +126,7 @@ export function fmt(n: number, d: number): string {
   });
 }
 
-export function searchCatalog(query: string): Array<readonly [string, string]> {
+export function searchCatalog(query: string): CatalogEntry[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   return CATALOG.filter(function (e) {

@@ -2,22 +2,10 @@
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_BRANDFETCH_CLIENT_ID ?? "";
 
-type LogoKind = "icon" | "symbol";
-type Fallback = "lettermark" | "404";
-
-/**
- * Logo CDN URL by ticker.
- * `icon` = filled brand tile (background + mark). `symbol` = mark only when available.
- */
-export function brandLogoUrl(
-  ticker: string,
-  size = 256,
-  kind: LogoKind = "icon",
-  fallback: Fallback = "lettermark",
-): string | null {
-  if (!CLIENT_ID || !ticker) return null;
-  const id = encodeURIComponent(ticker.trim().toUpperCase());
-  return `https://cdn.brandfetch.io/ticker/${id}/w/${size}/h/${size}/theme/light/${kind}.png/fallback/${fallback}?c=${encodeURIComponent(CLIENT_ID)}`;
+export function brandLogoUrl(ticker: string, size = 256): string | null {
+  const id = ticker.trim().toUpperCase();
+  if (!CLIENT_ID || !id) return null;
+  return `https://cdn.brandfetch.io/ticker/${encodeURIComponent(id)}/w/${size}/h/${size}/theme/light/icon.png/fallback/lettermark?c=${encodeURIComponent(CLIENT_ID)}`;
 }
 
 export function hasBrandfetchClientId() {

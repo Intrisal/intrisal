@@ -16,7 +16,7 @@ import {
 import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
-import { DEFAULT_WATCHLIST, SIM_DEFAULT, fmt, nameOf, sample, searchCatalog, type SimInput } from "@/lib/market";
+import { DEFAULT_WATCHLIST, SIM_DEFAULT, exchangeOf, fmt, nameOf, sample, searchCatalog, type SimInput } from "@/lib/market";
 
 type ThemeChoice = "auto" | "light" | "dark";
 type MenuId = "profile" | "help";
@@ -306,7 +306,7 @@ export function Dashboard() {
                 ))}</div>
               <p style={{ margin: "12px 0 0" }}>Auto follows the time of day — light in the day, dark at night.</p>
             </div>
-          </div>{isStock && wordmark}<div className="right">
+          </div><div className="right">
             <button className="icon-btn" id="helpBtn" aria-label="Help" aria-haspopup="true" aria-expanded={menu === "help"} onClick={(ev) => toggleMenu("help", ev)}>
               <HelpIcon />
             </button>
@@ -402,7 +402,7 @@ export function Dashboard() {
                     </div>
                   ))}
                 </div>
-                <button type="button" className="list-tile" data-watch-motion="list" aria-label="List" aria-expanded={listOpen} aria-controls="watchList" onClick={() => setListOpen((open) => !open)}><ListIcon /><span>List</span></button>
+                <button type="button" className="list-tile" data-watch-motion="list" aria-label="Watchlist" aria-expanded={listOpen} aria-controls="watchList" onClick={() => setListOpen((open) => !open)}><ListIcon /><span>Watchlist</span></button>
               </div>
               <div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Full watchlist">
                 {listOpen && watchlist.map((tk) => {
@@ -414,6 +414,14 @@ export function Dashboard() {
                 })}
               </div>
             </div>
+            {isStock && (
+              <div className="stock-overview">
+                <h2 className="stock-identity">
+                  <strong>{nameOf(selected)}</strong>
+                  <span>{[selected, exchangeOf(selected)].filter(Boolean).join(" | ")}</span>
+                </h2>
+              </div>
+            )}
             {isStock && (
               <div className="stock-analysis-switch" role="group" aria-label="Stock analysis" data-analysis={analysis}>
                 <button type="button" aria-pressed={analysis === "graph"} onClick={() => setAnalysis("graph")}>Graph Analysis</button>
@@ -433,7 +441,6 @@ export function Dashboard() {
                 <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />
               )}
             </div>
-            <footer className="note">Landing page preview — prices and figures shown are sample data for layout only.</footer>
           </main></div>
       </div>
       <div className={"toast" + (toastOn ? " show" : "")} id="toast" role="status">

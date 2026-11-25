@@ -79,14 +79,14 @@ function MetricCard({ label, values, unit }: { label: string; values: number[]; 
   return (
     <article className="panel fundamental-card" data-expanded={expanded}>
       <header className="fundamental-card-header">
-        <div><h3>{label}</h3><p>{quarterLabel(LATEST_QUARTER)} · Latest quarter</p></div>
+        <div><h3>{label.replace(/^TTM\s+/, "")}</h3><p>{quarterLabel(LATEST_QUARTER)} · TTM · Sample</p></div>
         <button type="button" aria-expanded={expanded} aria-label={(expanded ? "Shrink " : "Expand ") + label} onClick={() => setExpanded(!expanded)}>
           {expanded ? "Shrink" : "Expand"}
         </button>
       </header>
       <strong className="fundamental-value">{formatValue(values[values.length - 1], unit)}</strong>
       <MetricChart label={label} values={values.slice(-(period * 4 + 1))} unit={unit} />
-      <p className="fundamental-range-label">{unit === "percent" ? "Margin change" : "Compound annual growth"}</p>
+      {unit === "percent" && <p className="fundamental-range-label">Margin change</p>}
       <div className="fundamental-ranges" role="group" aria-label={label + " chart period"}>
         {PERIODS.map((years) => {
           const change = periodChange(values, years, unit);
@@ -100,37 +100,45 @@ function MetricCard({ label, values, unit }: { label: string; values: number[]; 
   );
 }
 
+function primaryMetrics(ticker: string, s = sample(ticker)) {
+  return [
+    { label: "TTM Revenue", values: history(ticker, "revenue", s.rev, s.growth), unit: "billions" },
+    { label: "TTM Diluted EPS", values: history(ticker, "diluted-eps", s.eps, s.growth * 1.12), unit: "perShare" },
+    { label: "TTM Operating Income", values: history(ticker, "operating-income", s.opinc, s.growth * 1.08), unit: "billions" },
+  ] as const;
+}
+
+export function FundamentalSummary({ ticker }: { ticker: string }) {
+  return (
+    <dl className="panel fundamental-summary" aria-label={quarterLabel(LATEST_QUARTER) + " sample fundamentals"}>
+      {primaryMetrics(ticker).map(({ label, values, unit }) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{formatValue(values[values.length - 1], unit)}</dd>
+          <dt className="fundamental-cagr-label">10Y CAGR</dt>
+          <dd className="fundamental-cagr">{formatChange(periodChange(values, 10, unit), unit)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function Fundamentals({ ticker }: { ticker: string }) {
   const s = sample(ticker);
-  const revenue = history(ticker, "revenue", s.rev, s.growth);
-  const eps = history(ticker, "diluted-eps", s.eps, s.growth * 1.12);
-  const operatingIncome = history(ticker, "operating-income", s.opinc, s.growth * 1.08);
+  const primary = primaryMetrics(ticker, s);
+  const revenue = primary[0].values;
+  const operatingIncome = primary[2].values;
   const cashFlow = history(ticker, "free-cash-flow", s.fcf, s.growth * 0.94);
   const metrics = [
-    { label: "TTM Revenue", values: revenue, unit: "billions" },
-    { label: "TTM Diluted EPS", values: eps, unit: "perShare" },
-    { label: "TTM Operating Income", values: operatingIncome, unit: "billions" },
+    ...primary,
     { label: "TTM Free Cash Flow", values: cashFlow, unit: "billions" },
     { label: "TTM Operating Margin", values: operatingIncome.map((value, index) => value / revenue[index] * 100), unit: "percent" },
     { label: "TTM Free Cash Flow Margin", values: cashFlow.map((value, index) => value / revenue[index] * 100), unit: "percent" },
   ] satisfies { label: string; values: number[]; unit: Unit }[];
 
   return (
-    <div className="stock-fundamentals">
-      <p className="fundamental-sample">{ticker} · Quarterly trailing 12 months · Sample data</p>
-      <dl className="panel fundamental-summary">
-        {metrics.slice(0, 3).map(({ label, values, unit }) => (
-          <div key={label}>
-            <dt>{label} · {quarterLabel(LATEST_QUARTER)}</dt>
-            <dd>{formatValue(values[values.length - 1], unit)}</dd>
-            <dt>10Y CAGR</dt>
-            <dd>{formatChange(periodChange(values, 10, unit), unit)}</dd>
-          </div>
-        ))}
-      </dl>
-      <div className="fundamental-grid">
-        {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
-      </div>
+    <div className="fundamental-grid">
+      {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
     </div>
   );
 }

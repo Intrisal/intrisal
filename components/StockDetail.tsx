@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { AnimatedPrice } from "@/components/AnimatedPrice";
-import { fmt, nameOf, sample, series } from "@/lib/market";
+import { fmt, sample, series } from "@/lib/market";
 
-const RANGES = { "3M": 63, "6M": 126, "1Y": 252, "All": 1260 };
+const RANGES = { "3M": 63, "6M": 126, "1Y": 252, "5Y": 1050, "All": 1260 };
 type Range = keyof typeof RANGES;
 
 function average(prices: number[], end: number, days: number) {
@@ -79,15 +79,15 @@ export function StockDetail({ ticker }: { ticker: string }) {
     <section className="stock-detail" aria-label={ticker + " stock details"}>
       <article className="panel stock-chart-panel">
         <div className="stock-chart-header">
-          <div>
-            <h2>{ticker} <span>{nameOf(ticker)}</span></h2>
-            <p className={signalClass}>{signal}</p>
-          </div>
           <div className="stock-ranges" role="group" aria-label="Chart range">
             {(Object.keys(RANGES) as Range[]).map((item) => (
               <button type="button" key={item} aria-pressed={item === range} onClick={() => setRange(item)}>{item}</button>
             ))}
           </div>
+        </div>
+        <div className="stock-chart-return">
+          <span>1Y return</span>
+          <strong className={yearReturn >= 0 ? "stock-positive" : "stock-negative"}>{yearReturn >= 0 ? "+" : ""}{fmt(yearReturn, 1)}%</strong>
         </div>
         <PriceChart ticker={ticker} days={days} lines={[closes, shortSma, longSma].map((line) => line.slice(-days))} />
         <ul className="stock-legend" aria-label="Chart legend">
@@ -102,11 +102,9 @@ export function StockDetail({ ticker }: { ticker: string }) {
         <p className="stock-caption">Sample closing price</p>
         <dl>
           <div><dt>Signal</dt><dd className={signalClass}>{signal}</dd></div>
-          <div><dt>1Y return</dt><dd className={yearReturn >= 0 ? "stock-positive" : "stock-negative"}>{yearReturn >= 0 ? "+" : ""}{fmt(yearReturn, 1)}%</dd></div>
           <div>
-            <dt>52-week closing range</dt>
+            <dt>52-Week Range</dt>
             <dd className="stock-range">
-              <span>{fmt(position, 0)}% of range</span>
               <div className="stock-range-track" aria-hidden="true"><span style={{ left: position + "%" }} /></div>
               <div className="stock-range-labels"><span>${fmt(low, 2)}</span><span>${fmt(high, 2)}</span></div>
             </dd>

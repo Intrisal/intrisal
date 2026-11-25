@@ -153,7 +153,7 @@ function BarRow({ label, val, max, suffix }: { label: string; val: number; max: 
   );
 }
 
-function ValuationDetailPanel({ selected, watchlist }: { selected: string; watchlist: string[] }) {
+function ValuationDetailPanel({ selected, watchlist, showStockName = true }: { selected: string; watchlist: string[]; showStockName?: boolean }) {
   const s = sample(selected);
   const evs = watchlist.map(function (tk) {
     return sample(tk).evn;
@@ -166,7 +166,7 @@ function ValuationDetailPanel({ selected, watchlist }: { selected: string; watch
   const verdict = s.evn < med ? "Trading below the watchlist median EV/NOPAT." : "Trading above the watchlist median EV/NOPAT.";
   return (
     <article className="panel">
-      <PanelHead title={"Valuation — " + selected} sub={nameOf(selected)} />
+      <PanelHead title={showStockName ? "Valuation — " + selected : "Valuation"} sub={showStockName ? nameOf(selected) : undefined} />
       <BarRow label="Fwd P/E" val={s.fpe} max={50} suffix="x" />
       <BarRow label="EV/NOPAT" val={s.evn} max={55} suffix="x" />
       <BarRow label="10Y Avg" val={s.avg} max={55} suffix="x" />
@@ -342,7 +342,7 @@ export function StockAnalysis({ mode, selected, watchlist }: {
       {mode === "fundamental" ? (
         <Fundamentals ticker={selected} />
       ) : (
-        <ValuationDetailPanel selected={selected} watchlist={watchlist} />
+        <ValuationDetailPanel selected={selected} watchlist={watchlist} showStockName={false} />
       )}
     </section>
   );
