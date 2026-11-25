@@ -133,6 +133,26 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
 
       .shell { position: relative; z-index: 1; padding: 0 clamp(16px, 3vw, 28px) 40px; }
 
+      /* Home idle fits the viewport — no page scroll unless search results need the page. */
+      html:has(.layout.home):not(:has(.results.open)),
+      body:has(.layout.home):not(:has(.results.open)) {
+        overflow: hidden;
+        height: 100%;
+        max-height: 100dvh;
+      }
+      .shell:has(.layout.home) {
+        height: 100dvh;
+        max-height: 100dvh;
+        padding-bottom: 0;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        overflow: hidden;
+      }
+      .shell:has(.layout.home):has(.results.open) {
+        overflow: visible;
+      }
+
       /* ---------- Top bar ---------- */
       .topbar {
         display: flex; align-items: center; justify-content: space-between;
@@ -146,6 +166,22 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         font-size: clamp(42px, 7vw, 68px);
         font-weight: 500; line-height: 1; letter-spacing: -0.045em;
         text-align: center; white-space: nowrap;
+      }
+      .wordmark button {
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        letter-spacing: inherit;
+        cursor: pointer;
+        min-height: 0;
+      }
+      .wordmark button:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 6px;
+        border-radius: 8px;
       }
       .icon-btn {
         width: 44px; height: 44px; border-radius: 50%;
@@ -178,19 +214,20 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       /* ---------- Layout ---------- */
       .layout {
         display: grid; grid-template-columns: 88px minmax(0, 1fr) 88px; gap: clamp(12px, 2.5vw, 36px);
-        margin-top: clamp(12px, 3vh, 28px); align-items: start;
+        margin-top: clamp(12px, 3vh, 28px); align-items: stretch;
       }
 
       /* ---------- Side nav ---------- */
+      /* Sticky viewport-tall column keeps the dock centered while content scrolls. */
       .sidenav {
         position: sticky;
-        top: 50dvh;
-        transform: translateY(-50%);
-        padding-top: 0;
-        height: max-content;
+        top: 0;
+        height: 100vh;
+        height: 100dvh;
         align-self: start;
         display: flex;
-        justify-content: flex-start;
+        align-items: center;
+        justify-content: center;
         z-index: 20;
       }
       .sidenav-dock {
@@ -291,73 +328,122 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         transform: scale(1.22) rotate(-6deg);
       }
 
-      .nav-item.has-kids { z-index: 3; }
+      .nav-item.has-kids {
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+      }
+      .nav-item.has-kids > button {
+        flex-direction: column;
+        gap: 7px;
+        height: auto;
+        min-height: 60px;
+        padding: 8px 0 7px;
+        border-radius: 20px;
+      }
+      .nav-item.has-kids > button .nav-icon {
+        width: 20px;
+        height: 20px;
+      }
+      .nav-item.has-kids > button .nav-icon svg {
+        width: 19px;
+        height: 19px;
+      }
+      .nav-caret {
+        display: grid;
+        place-items: center;
+        width: 12px;
+        height: 8px;
+        margin-top: 1px;
+        color: currentColor;
+        opacity: 0.62;
+        transform: translateY(0);
+        transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
+      }
+      .nav-caret svg {
+        width: 10px;
+        height: 6px;
+        display: block;
+      }
+      .nav-item.open .nav-caret {
+        opacity: 0.95;
+        transform: rotate(180deg);
+      }
+      .nav-item.has-kids > button:hover .nav-caret,
+      .nav-item.has-kids > button:focus-visible .nav-caret {
+        opacity: 0.9;
+      }
       .nav-flyout {
-        position: absolute;
-        left: calc(100% + 12px);
-        top: 50%;
+        position: static;
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        padding: 8px;
-        min-width: 168px;
-        border-radius: 22px;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.14);
+        align-items: center;
+        gap: 4px;
+        width: 100%;
+        max-height: 0;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
         opacity: 0;
         pointer-events: none;
-        transform: translateY(-50%) translateX(-14px) scale(0.92);
-        transform-origin: left center;
-        filter: blur(8px);
+        transform: none;
+        filter: none;
         transition:
-          opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-          transform 0.38s cubic-bezier(0.22, 1, 0.36, 1),
-          filter 0.28s ease;
+          max-height 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+          opacity 0.24s ease,
+          padding 0.28s ease,
+          margin 0.28s ease;
       }
       .nav-item.open .nav-flyout,
       .nav-flyout.open {
+        max-height: 120px;
+        margin: 2px 0 4px;
+        padding: 6px 0 2px;
+        overflow: visible;
         opacity: 1;
         pointer-events: auto;
-        transform: translateY(-50%) translateX(0) scale(1);
-        filter: blur(0);
+        border-top: 1px solid var(--line);
       }
       .nav-flyout button {
-        width: auto;
-        min-width: 152px;
-        height: 42px;
-        min-height: 42px;
-        justify-content: flex-start;
-        gap: 10px;
-        padding: 0 12px;
-        border-radius: 999px;
-        color: var(--ink-2);
+        position: relative;
+        width: 40px;
+        height: 40px;
+        min-height: 40px;
+        border-radius: 50%;
+        color: var(--ink-3);
         opacity: 0;
-        transform: translateX(-10px);
+        transform: translateY(-8px) scale(0.92);
       }
       .nav-item.open .nav-flyout button,
       .nav-flyout.open button {
-        animation: nav-fly-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
-        animation-delay: calc(var(--fly-i, 0) * 55ms + 40ms);
+        animation: nav-drop-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+        animation-delay: calc(var(--fly-i, 0) * 50ms + 30ms);
       }
       .nav-flyout button .nav-icon {
-        width: 20px;
-        height: 20px;
-        flex: none;
+        width: 18px;
+        height: 18px;
       }
-      .nav-fly-label {
-        font-size: 13px;
-        font-weight: 650;
-        letter-spacing: -0.01em;
-        white-space: nowrap;
+      .nav-flyout button .nav-icon svg {
+        width: 17px;
+        height: 17px;
+      }
+      .nav-flyout button .nav-label {
+        left: calc(100% + 10px);
+        font-size: 12px;
+        font-weight: 600;
+        padding: 4px 10px;
       }
       .nav-flyout button[aria-current="page"] {
         color: var(--ink);
         background: var(--hover);
       }
-      @keyframes nav-fly-in {
-        from { opacity: 0; transform: translateX(-12px) scale(0.96); }
-        to { opacity: 1; transform: translateX(0) scale(1); }
+      @keyframes nav-drop-in {
+        from { opacity: 0; transform: translateY(-10px) scale(0.9); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
       }
 
       .section-stage {
@@ -380,11 +466,28 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       /* ---------- Center column ---------- */
       .center { min-width: 0; max-width: 820px; margin: 0 auto; width: 100%; }
 
-      /* ---------- Home: search bar + watchlist row, centered a touch high ---------- */
+      /* ---------- Home: search + watchlist, one viewport, no idle scroll ---------- */
+      .layout.home {
+        flex: 1;
+        min-height: 0;
+        margin-top: 0;
+        align-items: stretch;
+      }
+      /* Home is viewport-locked — size the nav to the layout pane (not 100dvh)
+         so the tall sticky column cannot force idle page scroll. */
+      .layout.home .sidenav {
+        position: relative;
+        top: auto;
+        height: auto;
+        align-self: stretch;
+      }
       .layout.home .center {
-        display: flex; flex-direction: column; justify-content: center;
-        min-height: calc(100vh - 168px); min-height: calc(100dvh - 168px);
-        padding-bottom: clamp(28px, 8vh, 80px);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 0;
+        height: 100%;
+        padding-bottom: 0;
       }
       .layout.home .panels,
       .layout.home footer.note { display: none; }
@@ -629,7 +732,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         color: #fff2e6;
         text-shadow: none;
       }
-      [data-theme="dark"] :is(.panel, .search-bar, .sidenav-dock, .watch-list, .icon-btn, .list-tile, .nav-flyout) {
+      [data-theme="dark"] :is(.panel, .search-bar, .sidenav-dock, .watch-list, .icon-btn, .list-tile) {
         background: var(--glass-fill);
         border: 1px solid var(--glass-stroke);
         box-shadow: var(--glass-shadow);
@@ -640,6 +743,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         border-color: var(--glass-stroke);
         box-shadow: var(--glass-shadow);
         backdrop-filter: blur(18px);
+      }
+      [data-theme="dark"] .nav-item.open .nav-flyout {
+        border-top-color: var(--glass-stroke);
       }
       [data-theme="dark"] .nav-flyout button[aria-current="page"] {
         background: rgba(246, 215, 195, 0.14);
@@ -739,15 +845,18 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .sidenav {
           position: static;
           top: auto;
-          transform: none;
-          padding-top: 0;
           height: auto;
           align-self: auto;
           order: 1;
-          justify-content: center;
           margin-bottom: 8px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
         }
-        .sidenav-dock { width: auto; padding: 6px 10px; }
+        .sidenav-dock {
+          width: auto;
+          padding: 6px 10px;
+        }
         .sidenav ul { flex-direction: row; flex-wrap: nowrap; gap: 6px; }
         .sidenav li { width: auto; }
         .sidenav button { width: 42px; height: 42px; min-height: 42px; }
@@ -760,28 +869,22 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .sidenav button:focus-visible .nav-label {
           transform: translateX(-50%) translateY(0) scale(1);
         }
-        .nav-flyout {
-          left: 50%;
-          top: calc(100% + 10px);
-          transform: translateX(-50%) translateY(-8px) scale(0.94);
-          transform-origin: top center;
-          flex-direction: row;
-          min-width: 0;
-          padding: 6px;
+        .nav-item.has-kids {
+          width: auto;
         }
         .nav-item.open .nav-flyout,
         .nav-flyout.open {
-          transform: translateX(-50%) translateY(0) scale(1);
+          max-height: 96px;
         }
         .nav-flyout button {
-          min-width: 0;
-          width: 42px;
-          padding: 0;
+          width: 36px;
+          height: 36px;
+          min-height: 36px;
+        }
+        .center { order: 2; }
+        .layout.home .center {
           justify-content: center;
         }
-        .nav-fly-label { display: none; }
-        .center { order: 2; }
-        .layout.home .center { min-height: calc(100vh - 170px); min-height: calc(100dvh - 170px); }
         .panels { grid-template-columns: 1fr; }
         .panel { min-height: 0; }
         .search-bar kbd { display: none; }
@@ -804,4 +907,5 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .section-stage, .nav-item.open .nav-flyout button, .nav-flyout.open button {
           animation: none !important;
         }
+        .nav-flyout { transition: none !important; }
       }

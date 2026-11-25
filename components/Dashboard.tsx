@@ -168,8 +168,20 @@ export function Dashboard() {
     else setHomeMenuOpen(false);
   }
 
-  const homeBranchActive = HOME_BRANCH.includes(section as Section);
-  const showHomeMenu = homeMenuOpen || homeBranchActive;
+  function goHome() {
+    if (section !== "home") {
+      searchDockStart.current = searchDockRef.current?.getBoundingClientRect() ?? null;
+    }
+    setSection("home");
+    setHomeMenuOpen(false);
+    setResultsOpen(false);
+    setActiveIdx(-1);
+    setQuery("");
+    setListOpen(false);
+    setMenu(null);
+  }
+
+  const showHomeMenu = homeMenuOpen;
 
   function bumpWatchlist(tk: string, list = watchlist) {
     return [tk, ...list.filter((x) => x !== tk)];
@@ -293,7 +305,7 @@ export function Dashboard() {
                 <strong>Watchlist</strong> — watched stocks sit under search, newest on the left. Open or search one and it moves left; older ones slide right and can leave the strip. <strong>List</strong> shows everything.
               </p>
               <p style={{ marginBottom: 0 }}>
-                <strong>Sections</strong> — Home opens Fundamental and Valuation to the right. Learn, Simulation, and Watchlist stay on the main dock.
+                <strong>Sections</strong> — tap Home to drop down Fundamental and Valuation under it. Learn, Simulation, and Watchlist stay on the main dock.
               </p>
             </div>
           </div></header>
@@ -308,12 +320,6 @@ export function Dashboard() {
                     <li
                       key={item.id}
                       className={"nav-item" + (item.children ? " has-kids" : "") + (isHome && showHomeMenu ? " open" : "")}
-                      onMouseEnter={() => {
-                        if (isHome) setHomeMenuOpen(true);
-                      }}
-                      onMouseLeave={() => {
-                        if (isHome && !HOME_BRANCH.includes(section as Section)) setHomeMenuOpen(false);
-                      }}
                     >
                       <button
                         type="button"
@@ -322,11 +328,28 @@ export function Dashboard() {
                         aria-label={item.label}
                         aria-expanded={item.children ? showHomeMenu : undefined}
                         aria-haspopup={item.children ? "menu" : undefined}
-                        onClick={() => changeSection(item.id)}
-                        onFocus={() => {
-                          if (isHome) setHomeMenuOpen(true);
+                        onClick={() => {
+                          if (!isHome) {
+                            changeSection(item.id);
+                            return;
+                          }
+                          if (homeMenuOpen) {
+                            setHomeMenuOpen(false);
+                            return;
+                          }
+                          changeSection("home");
                         }}
-                      ><span className="nav-icon" aria-hidden="true">{item.icon}</span><span className="nav-label">{item.label}</span></button>
+                      >
+                        <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+                        {item.children ? (
+                          <span className="nav-caret" aria-hidden="true">
+                            <svg viewBox="0 0 12 8" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M1.5 1.75L6 6.25L10.5 1.75" />
+                            </svg>
+                          </span>
+                        ) : null}
+                        <span className="nav-label">{item.label}</span>
+                      </button>
                       {item.children ? (
                         <div className={"nav-flyout" + (showHomeMenu ? " open" : "")} role="menu" aria-label="Home sections">
                           {item.children.map((child, index) => (
@@ -336,9 +359,13 @@ export function Dashboard() {
                               role="menuitem"
                               data-section={child.id}
                               aria-current={section === child.id ? "page" : undefined}
+                              aria-label={child.label}
                               style={{ ["--fly-i" as string]: index }}
                               onClick={() => changeSection(child.id)}
-                            ><span className="nav-icon" aria-hidden="true">{child.icon}</span><span className="nav-fly-label">{child.label}</span></button>
+                            >
+                              <span className="nav-icon" aria-hidden="true">{child.icon}</span>
+                              <span className="nav-label">{child.label}</span>
+                            </button>
                           ))}
                         </div>
                       ) : null}
@@ -346,7 +373,7 @@ export function Dashboard() {
                   );
                 })}</ul>
             </div>
-          </nav><main className="center"><div className="search-dock" ref={searchDockRef}><h1 className="wordmark">Intrisal</h1><div className="search-wrap" ref={searchRef}>
+          </nav><main className="center"><div className="search-dock" ref={searchDockRef}><h1 className="wordmark"><button type="button" onClick={goHome} aria-label="Intrisal home">Intrisal</button></h1><div className="search-wrap" ref={searchRef}>
               <div className="search-bar"><SearchIcon /><input
                   ref={inputRef}
                   id="searchInput"
