@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { fmt, hashStr, rng, sample } from "@/lib/market";
 
 const PERIODS = [1, 2, 5, 10, 15] as const;
@@ -35,7 +35,17 @@ function formatChange(value: number, unit: Unit) {
   return (value > 0 ? "+" : "") + fmt(value, 1) + (unit === "percent" ? " pp" : "%");
 }
 
-function MetricChart({ label, values, unit }: { label: string; values: number[]; unit: Unit }) {
+function MetricChart({ label, values, unit, activeIndex, previewIndex, onPreview, onSelect }: {
+  label: string;
+  values: number[];
+  unit: Unit;
+  activeIndex: number;
+  previewIndex: number | null;
+  onPreview: (index: number | null) => void;
+  onSelect: (index: number) => void;
+}) {
+  const [keyboardActive, setKeyboardActive] = useState(false);
+  const highlightedIndex = previewIndex ?? (keyboardActive ? activeIndex : null);
   const left = 53;
   const right = 373;
   const top = 14;
@@ -47,8 +57,27 @@ function MetricChart({ label, values, unit }: { label: string; values: number[];
   const max = interval * 4;
   const firstQuarter = LATEST_QUARTER - values.length + 1;
   const axisDecimals = Math.max(0, -Math.floor(Math.log10(interval)));
+
+  function browseQuarters(event: KeyboardEvent<SVGSVGElement>) {
+    const last = values.length - 1;
+    let next: number;
+    switch (event.key) {
+      case "ArrowLeft": next = Math.max(0, activeIndex - 1); break;
+      case "ArrowRight": next = Math.min(last, activeIndex + 1); break;
+      case "Home": next = 0; break;
+      case "End": next = last; break;
+      default: return;
+    }
+    event.preventDefault();
+    setKeyboardActive(true);
+    onPreview(null);
+    onSelect(next);
+  }
+
   return (
-    <svg className="fundamental-plot" viewBox="0 0 384 220" role="img" aria-label={label + " by quarter, sample data"}>
+    <svg className="fundamental-plot" viewBox="0 0 384 220" role="group" tabIndex={0}
+      aria-label={label + " by quarter, sample data. Use the arrow keys to select a quarter."}
+      onKeyDown={browseQuarters} onBlur={() => setKeyboardActive(false)}>
       {[0, 1, 2, 3, 4].map((tick) => {
         const y = bottom - tick * (bottom - top) / 4;
         return <g key={tick}>
@@ -56,12 +85,19 @@ function MetricChart({ label, values, unit }: { label: string; values: number[];
           <text x={left - 5} y={y} textAnchor="end" dominantBaseline="middle">{formatValue(tick * interval, unit, axisDecimals)}</text>
         </g>;
       })}
-      {values.map((value, index) => {
-        const height = value / max * (bottom - top);
-        return <rect key={index} x={left + index * step} y={bottom - height} width={step * 0.8} height={height} rx={Math.min(2, step / 4)}>
-          <title>{quarterLabel(firstQuarter + index)} · {formatValue(value, unit)}</title>
-        </rect>;
-      })}
+      <g onPointerLeave={() => onPreview(null)}>
+        {values.map((value, index) => {
+          const height = value / max * (bottom - top);
+          const x = left + index * step;
+          return (
+            <g key={index} onPointerEnter={() => { setKeyboardActive(false); onPreview(index); }} onClick={() => onSelect(index)}>
+              <rect className="fundamental-bar" data-active={index === highlightedIndex}
+                x={x} y={bottom - height} width={step * 0.8} height={height} rx={Math.min(2, step / 4)} />
+              <rect className="fundamental-bar-target" x={x} y={top} width={step} height={bottom - top} />
+            </g>
+          );
+        })}
+      </g>
       {[0, 1, 2, 3].map((tick) => {
         const index = Math.round(tick * (values.length - 1) / 3);
         const x = tick === 3 ? right : left + index * step;
@@ -76,21 +112,39 @@ function MetricChart({ label, values, unit }: { label: string; values: number[];
 function MetricCard({ label, values, unit }: { label: string; values: number[]; unit: Unit }) {
   const [period, setPeriod] = useState<Period>(15);
   const [expanded, setExpanded] = useState(false);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [preview, setPreview] = useState<number | null>(null);
+  const displayedValues = values.slice(-(period * 4 + 1));
+  const last = displayedValues.length - 1;
+  const activeIndex = preview ?? selected ?? last;
+  const activeQuarter = LATEST_QUARTER - (last - activeIndex);
+
+  function selectQuarter(index: number) {
+    setSelected(index);
+  }
+
+  function selectPeriod(years: Period) {
+    if (years === period) return;
+    setPeriod(years);
+    setPreview(null);
+    setSelected(null);
+  }
   return (
     <article className="panel fundamental-card" data-expanded={expanded}>
       <header className="fundamental-card-header">
-        <div><h3>{label.replace(/^TTM\s+/, "")}</h3><p>{quarterLabel(LATEST_QUARTER)} · TTM · Sample</p></div>
+        <div><h3>{label.replace(/^TTM\s+/, "")}</h3><p>{quarterLabel(activeQuarter)} · TTM</p></div>
         <button type="button" aria-expanded={expanded} aria-label={(expanded ? "Shrink " : "Expand ") + label} onClick={() => setExpanded(!expanded)}>
           {expanded ? "Shrink" : "Expand"}
         </button>
       </header>
-      <strong className="fundamental-value">{formatValue(values[values.length - 1], unit)}</strong>
-      <MetricChart label={label} values={values.slice(-(period * 4 + 1))} unit={unit} />
+      <strong className="fundamental-value">{formatValue(displayedValues[activeIndex], unit)}</strong>
+      <MetricChart label={label} values={displayedValues} unit={unit} activeIndex={activeIndex} previewIndex={preview}
+        onPreview={setPreview} onSelect={selectQuarter} />
       {unit === "percent" && <p className="fundamental-range-label">Margin change</p>}
       <div className="fundamental-ranges" role="group" aria-label={label + " chart period"}>
         {PERIODS.map((years) => {
           const change = periodChange(values, years, unit);
-          return <button key={years} type="button" aria-pressed={years === period} onClick={() => setPeriod(years)}>
+          return <button key={years} type="button" aria-pressed={years === period} onClick={() => selectPeriod(years)}>
             <span>{years}Y</span>
             <strong className={change < 0 ? "chg-dn" : "chg-up"}>{formatChange(change, unit)}</strong>
           </button>;

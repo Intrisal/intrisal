@@ -68,7 +68,6 @@ export function Dashboard() {
   const [toastOn, setToastOn] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
-  const searchDockRef = useRef<HTMLDivElement>(null);
   const searchDockStart = useRef<DOMRect | null>(null);
   const watchDockRef = useRef<HTMLDivElement>(null);
   const watchDockStart = useRef<Map<string, DOMRect> | null>(null);
@@ -93,29 +92,34 @@ export function Dashboard() {
   }, [section]);
 
   useLayoutEffect(() => {
-    const dock = searchDockRef.current;
     const search = searchRef.current;
     const start = searchDockStart.current;
     searchDockStart.current = null;
-    if (!dock || !search || !start || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!search || !start || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     const end = search.getBoundingClientRect();
-    if (!end.width) return;
+    if (!end.width || !end.height) return;
 
-    // Animate between the measured positions so the same motion works on narrow screens.
-    const offsetX = start.left + start.width / 2 - end.left - end.width / 2;
-    const scale = start.width / end.width;
-    const offsetY = start.top - end.top - (end.top - dock.getBoundingClientRect().top) * (scale - 1);
-    const animation = dock.animate(
-      [{ transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})` }, { transform: "none" }],
+    // Animate the search wrapper so the outer dock keeps its centering transform.
+    const offsetX = start.left - end.left;
+    const offsetY = start.top - end.top;
+    const scaleX = start.width / end.width;
+    const scaleY = start.height / end.height;
+    const animation = search.animate(
+      [
+        { transformOrigin: "top left", transform: `translate(${offsetX}px, ${offsetY}px) scale(${scaleX}, ${scaleY})` },
+        { transformOrigin: "top left", transform: "none" },
+      ],
       { duration: 460, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
     );
     return () => animation.cancel();
   }, [section]);
 
-  useEffect(() => {
-    setThemeChoice(readThemeChoice());
+  useLayoutEffect(() => {
+    const choice = readThemeChoice();
+    setThemeChoice(choice);
     setThemeReady(true);
+    document.documentElement.setAttribute("data-theme", choice === "auto" ? autoTheme() : choice);
   }, []);
 
   useEffect(() => {
@@ -222,15 +226,6 @@ export function Dashboard() {
     setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : list));
     setListOpen(false);
     showStock(tk);
-  }
-
-  function removeStock(tk: string, ev: React.MouseEvent) {
-    ev.stopPropagation();
-    const next = watchlist.filter((x) => x !== tk);
-    setWatchlist(next);
-    if (selected === tk && next.length) setSelected(next[0]);
-    if (section === "simulation") setSim({ ...SIM_DEFAULT });
-    toast(tk + " removed from your watchlist");
   }
 
   function runSearch(value: string) {
@@ -357,7 +352,7 @@ export function Dashboard() {
                 ))}
               </ul>
             </div>
-          </nav><main className="center"><div className="search-dock" ref={searchDockRef}>{!isStock && wordmark}<div className="search-wrap" ref={searchRef}>
+          </nav><main className="center"><div className="search-dock">{!isStock && wordmark}<div className="search-wrap" ref={searchRef}>
               <div className="search-bar"><SearchIcon /><input
                   ref={inputRef}
                   id="searchInput"
@@ -402,7 +397,6 @@ export function Dashboard() {
                     <div key={tk} data-watch-motion={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}>
                       <span className="coin-wrap">
                         <button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button>
-                        <button type="button" className="rm" aria-label={"Remove " + tk + " from watchlist"} onClick={(ev) => removeStock(tk, ev)}>×</button>
                         <span className="watch-tooltip" aria-hidden="true">{nameOf(tk)}</span>
                       </span>
                       <div className="ticker">{tk}</div>
@@ -424,8 +418,11 @@ export function Dashboard() {
             {isStock && (
               <div className="stock-overview">
                 <h2 className="stock-identity">
-                  <strong>{nameOf(selected)}</strong>
-                  <span>{[selected, exchangeOf(selected)].filter(Boolean).join(" | ")}</span>
+                  <span className="stock-identity-logo" aria-hidden="true"><BrandLogo tk={selected} /></span>
+                  <span className="stock-identity-text">
+                    <strong>{nameOf(selected)}</strong>
+                    <span>{[selected, exchangeOf(selected)].filter(Boolean).join(" | ")}</span>
+                  </span>
                 </h2>
               </div>
             )}
@@ -442,7 +439,7 @@ export function Dashboard() {
                   <div hidden={analysis !== "graph"}>
                     <StockDetail ticker={selected} />
                   </div>
-                  {analysis !== "graph" && <StockAnalysis key={analysis} mode={analysis} selected={selected} watchlist={watchlist} />}
+                  {analysis !== "graph" && <StockAnalysis key={analysis} mode={analysis} selected={selected} />}
                 </>
               ) : (
                 <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />
