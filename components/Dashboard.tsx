@@ -256,7 +256,7 @@ export function Dashboard() {
                 ))}</div>
               <p style={{ margin: "12px 0 0" }}>Auto follows the time of day — light in the day, dark at night.</p>
             </div>
-          </div><h1 className="wordmark">Intrisal</h1><div className="right">
+          </div><div className="right">
             <button className="icon-btn" id="helpBtn" aria-label="Help" aria-haspopup="true" aria-expanded={menu === "help"} onClick={(ev) => toggleMenu("help", ev)}>
               <HelpIcon />
             </button>
@@ -295,7 +295,7 @@ export function Dashboard() {
                   </li>
                 ))}</ul>
             </div>
-          </nav><main className="center"><div className="search-dock" ref={searchDockRef}><div className="search-wrap" ref={searchRef}>
+          </nav><main className="center"><div className="search-dock" ref={searchDockRef}><h1 className="wordmark">Intrisal</h1><div className="search-wrap" ref={searchRef}>
               <div className="search-bar"><SearchIcon /><input
                   ref={inputRef}
                   id="searchInput"
