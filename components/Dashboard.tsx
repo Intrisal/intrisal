@@ -4,7 +4,6 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { AnimatedPrice } from "@/components/AnimatedPrice";
 import { BrandLogo } from "@/components/BrandLogo";
 import {
-  FundamentalIcon,
   HelpIcon,
   HomeIcon,
   LearnIcon,
@@ -12,10 +11,9 @@ import {
   ProfileIcon,
   SearchIcon,
   SimulationIcon,
-  ValuationIcon,
   WatchlistIcon,
 } from "@/components/Icons";
-import { Panels, type Section } from "@/components/Panels";
+import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
 import { DEFAULT_WATCHLIST, SIM_DEFAULT, fmt, nameOf, sample, searchCatalog, type SimInput } from "@/lib/market";
@@ -23,25 +21,14 @@ import { DEFAULT_WATCHLIST, SIM_DEFAULT, fmt, nameOf, sample, searchCatalog, typ
 type ThemeChoice = "auto" | "light" | "dark";
 type MenuId = "profile" | "help";
 
-type NavChild = { id: Section; label: string; icon: ReactNode };
-type NavItem = { id: Section; label: string; icon: ReactNode; children?: NavChild[] };
+type NavItem = { id: Section; label: string; icon: ReactNode };
 
 const NAV_ITEMS: NavItem[] = [
-  {
-    id: "home",
-    label: "Home",
-    icon: <HomeIcon />,
-    children: [
-      { id: "fundamental", label: "Fundamental", icon: <FundamentalIcon /> },
-      { id: "valuation", label: "Valuation", icon: <ValuationIcon /> },
-    ],
-  },
+  { id: "home", label: "Home", icon: <HomeIcon /> },
   { id: "learn", label: "Learn", icon: <LearnIcon /> },
   { id: "simulation", label: "Simulation", icon: <SimulationIcon /> },
   { id: "watchlist", label: "Watchlist", icon: <WatchlistIcon /> },
 ];
-
-const HOME_BRANCH: Section[] = ["home", "fundamental", "valuation"];
 
 function readThemeChoice(): ThemeChoice {
   try {
@@ -62,6 +49,7 @@ export function Dashboard() {
   const [watchlist, setWatchlist] = useState<string[]>(DEFAULT_WATCHLIST);
   const [selected, setSelected] = useState("NVDA");
   const [section, setSection] = useState<Section | "stock">("home");
+  const [analysis, setAnalysis] = useState<"graph" | "fundamental" | "valuation">("graph");
   const [range, setRange] = useState("1Y");
   const [listOpen, setListOpen] = useState(false);
   const [menu, setMenu] = useState<MenuId | null>(null);
@@ -71,7 +59,6 @@ export function Dashboard() {
   const [sim, setSim] = useState<SimInput>(SIM_DEFAULT);
   const [toastMsg, setToastMsg] = useState("");
   const [toastOn, setToastOn] = useState(false);
-  const [homeMenuOpen, setHomeMenuOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const searchDockRef = useRef<HTMLDivElement>(null);
@@ -80,17 +67,18 @@ export function Dashboard() {
 
   useLayoutEffect(() => {
     const dock = searchDockRef.current;
+    const search = searchRef.current;
     const start = searchDockStart.current;
     searchDockStart.current = null;
-    if (!dock || !start || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!dock || !search || !start || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
-    const end = dock.getBoundingClientRect();
+    const end = search.getBoundingClientRect();
     if (!end.width) return;
 
     // Animate between the measured positions so the same motion works on narrow screens.
     const offsetX = start.left + start.width / 2 - end.left - end.width / 2;
-    const offsetY = start.top - end.top;
     const scale = start.width / end.width;
+    const offsetY = start.top - end.top - (end.top - dock.getBoundingClientRect().top) * (scale - 1);
     const animation = dock.animate(
       [{ transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})` }, { transform: "none" }],
       { duration: 460, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
@@ -159,29 +147,21 @@ export function Dashboard() {
   }
 
   function changeSection(name: Section) {
-    if (name === "home" && section !== "home") {
-      searchDockStart.current = searchDockRef.current?.getBoundingClientRect() ?? null;
-    }
     setSection(name);
     if (name === "simulation") setSim({ ...SIM_DEFAULT });
-    if (HOME_BRANCH.includes(name)) setHomeMenuOpen(true);
-    else setHomeMenuOpen(false);
   }
 
   function goHome() {
     if (section !== "home") {
-      searchDockStart.current = searchDockRef.current?.getBoundingClientRect() ?? null;
+      searchDockStart.current = searchRef.current?.getBoundingClientRect() ?? null;
     }
     setSection("home");
-    setHomeMenuOpen(false);
     setResultsOpen(false);
     setActiveIdx(-1);
     setQuery("");
     setListOpen(false);
     setMenu(null);
   }
-
-  const showHomeMenu = homeMenuOpen;
 
   function bumpWatchlist(tk: string, list = watchlist) {
     return [tk, ...list.filter((x) => x !== tk)];
@@ -193,13 +173,18 @@ export function Dashboard() {
     if (section === "simulation") setSim({ ...SIM_DEFAULT });
   }
 
-  function openStock(tk: string) {
-    if (section === "home") {
-      searchDockStart.current = searchDockRef.current?.getBoundingClientRect() ?? null;
+  function showStock(tk: string) {
+    if (section !== "stock") {
+      searchDockStart.current = searchRef.current?.getBoundingClientRect() ?? null;
     }
-    setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : list));
+    setAnalysis("graph");
     setSelected(tk);
     setSection("stock");
+  }
+
+  function openStock(tk: string) {
+    setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : list));
+    showStock(tk);
   }
 
   function removeStock(tk: string, ev: React.MouseEvent) {
@@ -235,13 +220,12 @@ export function Dashboard() {
     setWatchlist((list) => bumpWatchlist(tk, list.includes(tk) ? list : list.concat(tk)));
     setQuery("");
     closeResults();
-    if (section === "home") {
-      searchDockStart.current = searchDockRef.current?.getBoundingClientRect() ?? null;
-    }
-    setSelected(tk);
-    setSection("stock");
+    showStock(tk);
     toast(added ? tk + " added to your watchlist" : tk + " — " + nameOf(tk));
   }
+
+  const isStock = section === "stock";
+  const wordmark = <h1 className="wordmark"><button type="button" onClick={goHome} aria-label="Intrisal home">Intrisal</button></h1>;
 
   function onSearchKey(ev: React.KeyboardEvent<HTMLInputElement>) {
     if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
@@ -263,7 +247,7 @@ export function Dashboard() {
       <Stars />
       <div className="aurora" aria-hidden="true" />
       <div className="shell">
-        <header className="topbar"><div className="left">
+        <header className={isStock ? "topbar stock-topbar" : "topbar"}><div className="left">
             <button
               className="icon-btn"
               id="profileBtn"
@@ -285,7 +269,7 @@ export function Dashboard() {
                 ))}</div>
               <p style={{ margin: "12px 0 0" }}>Auto follows the time of day — light in the day, dark at night.</p>
             </div>
-          </div><div className="right">
+          </div>{isStock && wordmark}<div className="right">
             <button className="icon-btn" id="helpBtn" aria-label="Help" aria-haspopup="true" aria-expanded={menu === "help"} onClick={(ev) => toggleMenu("help", ev)}>
               <HelpIcon />
             </button>
@@ -305,75 +289,31 @@ export function Dashboard() {
                 <strong>Watchlist</strong> — watched stocks sit under search, newest on the left. Open or search one and it moves left; older ones slide right and can leave the strip. <strong>List</strong> shows everything.
               </p>
               <p style={{ marginBottom: 0 }}>
-                <strong>Sections</strong> — tap Home to drop down Fundamental and Valuation under it. Learn, Simulation, and Watchlist stay on the main dock.
+                <strong>Sections</strong> — use the dock to open Home, Learn, Simulation, or Watchlist. Open a stock to see its Graph Analysis, Fundamental, and Valuation views.
               </p>
             </div>
           </div></header>
 
-        <div className={"layout" + (section === "home" || section === "stock" ? " " + section : "")} id="layout"><nav className="sidenav" aria-label="Sections">
+        <div className={"layout" + (section === "home" || isStock ? " " + section : "")} id="layout"><nav className="sidenav" aria-label="Sections">
             <div className="sidenav-dock" id="navDock">
-              <ul id="navList">{NAV_ITEMS.map((item) => {
-                  const isHome = item.id === "home";
-                  const childActive = item.children?.some((child) => child.id === section);
-                  const current = section === item.id || !!childActive;
-                  return (
-                    <li
-                      key={item.id}
-                      className={"nav-item" + (item.children ? " has-kids" : "") + (isHome && showHomeMenu ? " open" : "")}
+              <ul id="navList">
+                {NAV_ITEMS.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      data-section={item.id}
+                      aria-current={section === item.id ? "page" : undefined}
+                      aria-label={item.label}
+                      onClick={item.id === "home" ? goHome : () => changeSection(item.id)}
                     >
-                      <button
-                        type="button"
-                        data-section={item.id}
-                        aria-current={current ? "page" : undefined}
-                        aria-label={item.label}
-                        aria-expanded={item.children ? showHomeMenu : undefined}
-                        aria-haspopup={item.children ? "menu" : undefined}
-                        onClick={() => {
-                          if (!isHome) {
-                            changeSection(item.id);
-                            return;
-                          }
-                          if (homeMenuOpen) {
-                            setHomeMenuOpen(false);
-                            return;
-                          }
-                          changeSection("home");
-                        }}
-                      >
-                        <span className="nav-icon" aria-hidden="true">{item.icon}</span>
-                        {item.children ? (
-                          <span className="nav-caret" aria-hidden="true">
-                            <svg viewBox="0 0 12 8" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M1.5 1.75L6 6.25L10.5 1.75" />
-                            </svg>
-                          </span>
-                        ) : null}
-                        <span className="nav-label">{item.label}</span>
-                      </button>
-                      {item.children ? (
-                        <div className={"nav-flyout" + (showHomeMenu ? " open" : "")} role="menu" aria-label="Home sections">
-                          {item.children.map((child, index) => (
-                            <button
-                              type="button"
-                              key={child.id}
-                              role="menuitem"
-                              data-section={child.id}
-                              aria-current={section === child.id ? "page" : undefined}
-                              aria-label={child.label}
-                              style={{ ["--fly-i" as string]: index }}
-                              onClick={() => changeSection(child.id)}
-                            >
-                              <span className="nav-icon" aria-hidden="true">{child.icon}</span>
-                              <span className="nav-label">{child.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </li>
-                  );
-                })}</ul>
+                      <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+                      <span className="nav-label">{item.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </div>
-          </nav><main className="center"><div className="search-dock" ref={searchDockRef}><h1 className="wordmark"><button type="button" onClick={goHome} aria-label="Intrisal home">Intrisal</button></h1><div className="search-wrap" ref={searchRef}>
+          </nav><main className="center"><div className="search-dock" ref={searchDockRef}>{!isStock && wordmark}<div className="search-wrap" ref={searchRef}>
               <div className="search-bar"><SearchIcon /><input
                   ref={inputRef}
                   id="searchInput"
@@ -420,7 +360,28 @@ export function Dashboard() {
                   <button type="button" key={tk} onClick={() => openStock(tk)}><span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span><span className="mono"><AnimatedPrice price={s.price} /></span><span className="mono"><span className={up ? "chg-up" : "chg-dn"}>{up ? "▲" : "▼"} {up ? "+" : ""}{fmt(s.change, 2)}%</span></span></button>
                 );
               })}
-            </div></div><div key={section === "stock" ? "stock:" + selected : section} className="section-stage">{section === "stock" ? <StockDetail ticker={selected} /> : <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />}</div><footer className="note">Landing page preview — prices and figures shown are sample data for layout only.</footer></main></div>
+            </div></div>
+            {isStock && (
+              <div className="stock-analysis-switch" role="group" aria-label="Stock analysis" data-analysis={analysis}>
+                <button type="button" aria-pressed={analysis === "graph"} onClick={() => setAnalysis("graph")}>Graph Analysis</button>
+                <button type="button" aria-pressed={analysis === "fundamental"} onClick={() => setAnalysis("fundamental")}>Fundamental</button>
+                <button type="button" aria-pressed={analysis === "valuation"} onClick={() => setAnalysis("valuation")}>Valuation</button>
+              </div>
+            )}
+            <div key={section === "stock" ? "stock:" + selected : section} className="section-stage">
+              {section === "stock" ? (
+                <>
+                  <div hidden={analysis !== "graph"}>
+                    <StockDetail ticker={selected} />
+                  </div>
+                  {analysis !== "graph" && <StockAnalysis key={analysis} mode={analysis} selected={selected} watchlist={watchlist} />}
+                </>
+              ) : (
+                <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />
+              )}
+            </div>
+            <footer className="note">Landing page preview — prices and figures shown are sample data for layout only.</footer>
+          </main></div>
       </div>
       <div className={"toast" + (toastOn ? " show" : "")} id="toast" role="status">
         {toastMsg}

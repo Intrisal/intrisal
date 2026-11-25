@@ -331,6 +331,22 @@ function LearnPanels() {
   ];
 }
 
+export function StockAnalysis({ mode, selected, watchlist }: {
+  mode: "fundamental" | "valuation";
+  selected: string;
+  watchlist: string[];
+}) {
+  return (
+    <section className="panels stock-analysis-panels" data-analysis={mode} aria-label={mode === "fundamental" ? "Stock fundamentals" : "Stock valuation"}>
+      {mode === "fundamental" ? (
+        <><FundamentalPanel selected={selected} /><StatsPanel selected={selected} /></>
+      ) : (
+        <ValuationDetailPanel selected={selected} watchlist={watchlist} />
+      )}
+    </section>
+  );
+}
+
 export function Panels({
   section,
   selected,
