@@ -1,5 +1,6 @@
-import { Dashboard } from "@/components/Dashboard";
+import { LandingPage } from "@/components/landing/LandingPage";
 
-export default function HomePage() {
-  return <Dashboard />;
+/** Public entry — landing / login. Product dashboard lives at /home. */
+export default function RootPage() {
+  return <LandingPage />;
 }

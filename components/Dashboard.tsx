@@ -298,6 +298,13 @@ export function Dashboard() {
             <div className={"menu left-menu" + (menu === "profile" ? " open" : "")} id="profileMenu" role="menu" aria-label="Profile menu" onClick={(ev) => ev.stopPropagation()}>
               <h3>Profile</h3>
               <p>Signed-in accounts arrive with the full v2 build. Appearance lives here for now.</p>
+              <div className="row-label">Pages</div>
+              <a className="menu-link" href="/" role="menuitem">
+                Landing page
+              </a>
+              <a className="menu-link" href="/home" role="menuitem" aria-current="page">
+                Platform
+              </a>
               <div className="row-label">Appearance</div>
               <div className="seg" role="group" aria-label="Theme">{(["auto", "light", "dark"] as const).map((choice) => (
                   <button key={choice} type="button" data-theme-choice={choice} aria-pressed={themePressed(choice)} onClick={() => chooseTheme(choice)}>
