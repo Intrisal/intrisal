@@ -154,7 +154,12 @@ export function Dashboard() {
     if (name === "simulation") setSim({ ...SIM_DEFAULT });
   }
 
+  function bumpWatchlist(tk: string, list = watchlist) {
+    return [tk, ...list.filter((x) => x !== tk)];
+  }
+
   function selectStock(tk: string) {
+    setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : list));
     setSelected(tk);
     if (section === "simulation") setSim({ ...SIM_DEFAULT });
   }
@@ -163,6 +168,7 @@ export function Dashboard() {
     if (section === "home") {
       searchDockStart.current = searchDockRef.current?.getBoundingClientRect() ?? null;
     }
+    setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : list));
     setSelected(tk);
     setSection("stock");
   }
@@ -197,10 +203,14 @@ export function Dashboard() {
 
   function pickResult(tk: string) {
     const added = watchlist.indexOf(tk) === -1;
-    if (added) setWatchlist(watchlist.concat(tk));
+    setWatchlist((list) => bumpWatchlist(tk, list.includes(tk) ? list : list.concat(tk)));
     setQuery("");
     closeResults();
-    openStock(tk);
+    if (section === "home") {
+      searchDockStart.current = searchDockRef.current?.getBoundingClientRect() ?? null;
+    }
+    setSelected(tk);
+    setSection("stock");
     toast(added ? tk + " added to your watchlist" : tk + " — " + nameOf(tk));
   }
 
@@ -263,7 +273,7 @@ export function Dashboard() {
                 <strong>Search</strong> — type a ticker or company name (or press <span className="mono">/</span>) and pick a result to add it to your watchlist and open it below.
               </p>
               <p>
-                <strong>Watchlist</strong> — the circles under the search bar are your watched stocks. Tap one to view it; the <strong>list</strong> tile switches to a full list.
+                <strong>Watchlist</strong> — watched stocks sit under search, newest on the left. Open or search one and it moves left; older ones slide right and can leave the strip. <strong>List</strong> shows everything.
               </p>
               <p style={{ marginBottom: 0 }}>
                 <strong>Sections</strong> — use the menu on the left to switch between Home (search bar with your watchlist under it), Fundamental, Learn, Simulation, Valuation and Watchlist.
@@ -322,9 +332,9 @@ export function Dashboard() {
                     );
                   })}
               </div>
-            </div><div className="watch-row" id="watchRow" aria-label="Watchlist">{watchlist.map((tk) => (
-                <div key={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}><span className="coin-wrap"><button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button><button type="button" className="rm" aria-label={"Remove " + tk + " from watchlist"} onClick={(ev) => removeStock(tk, ev)}>×</button></span><div className="ticker mono">{tk}</div></div>
-              ))}<button type="button" className="list-tile" aria-expanded={listOpen} onClick={() => setListOpen((open) => !open)}><ListIcon />list</button></div><div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Watchlist as list">
+            </div><div className="watch-strip"><div className="watch-row" id="watchRow" aria-label="Recently viewed from watchlist">{watchlist.map((tk) => (
+                <div key={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}><span className="coin-wrap"><button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button><button type="button" className="rm" aria-label={"Remove " + tk + " from watchlist"} onClick={(ev) => removeStock(tk, ev)}>×</button></span><div className="ticker">{tk}</div></div>
+              ))}</div><button type="button" className="list-tile" aria-expanded={listOpen} onClick={() => setListOpen((open) => !open)}><ListIcon />List</button></div><div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Full watchlist">
               {listOpen && watchlist.map((tk) => {
                 const s = sample(tk);
                 const up = s.change >= 0;
