@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
-/** Login panel for the public landing page. */
+/** Hero call to action: one email field with its button, and a quiet way straight in. */
 export function LandingAuth() {
   const [email, setEmail] = useState("");
 
@@ -14,9 +14,11 @@ export function LandingAuth() {
   }
 
   return (
-    <form className="landing-auth" onSubmit={onSubmit}>
-      <div>
-        <label htmlFor="landing-email">Email</label>
+    <div className="landing-auth">
+      <form className="landing-auth-field" onSubmit={onSubmit}>
+        <label className="landing-sr" htmlFor="landing-email">
+          Email
+        </label>
         <input
           id="landing-email"
           name="email"
@@ -28,15 +30,16 @@ export function LandingAuth() {
           onChange={(ev) => setEmail(ev.target.value)}
           required
         />
-      </div>
-      <div className="landing-actions">
         <button type="submit" className="landing-btn landing-btn-primary">
           Sign in
         </button>
-        <Link href="/home" className="landing-btn landing-btn-ghost" style={{ display: "grid", placeItems: "center", textDecoration: "none" }}>
-          Continue to Intrisal
-        </Link>
-      </div>
-    </form>
+      </form>
+      <Link href="/home" className="landing-auth-alt">
+        Continue to Intrisal
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 8h10M9 4l4 4-4 4" />
+        </svg>
+      </Link>
+    </div>
   );
 }

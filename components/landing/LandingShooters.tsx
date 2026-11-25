@@ -3,11 +3,12 @@
 /** One slow dot that streaks in from the side and continues into the landing. */
 const STAR = {
   left: "-4%",
-  top: "18%",
+  top: "16%",
+  // Both offsets are in vw, so the path angle is the same on every screen shape.
   dx: "118vw",
-  dy: "48vh",
-  // atan2(48, 118) rounded — keep fixed so SSR/client styles match.
-  angle: "22.14deg",
+  dy: "26vw",
+  // atan2(26, 118) rounded — keep fixed so SSR/client styles match.
+  angle: "12.43deg",
   dur: "4.2s",
   delay: "0.4s",
 } as const;

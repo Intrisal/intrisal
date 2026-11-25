@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { LandingAuth } from "@/components/landing/LandingAuth";
-import { LandingDemos } from "@/components/landing/LandingDemos";
+import { LandingClose, LandingDemos } from "@/components/landing/LandingDemos";
 import { LandingTopbar } from "@/components/landing/LandingTopbar";
 import { LandingShooters } from "@/components/landing/LandingShooters";
 import { WordmarkIntro } from "@/components/landing/WordmarkIntro";
@@ -12,8 +12,8 @@ import "@/components/landing/landing.css";
 const INTRO_MS = 1350;
 
 /**
- * Public Intrisal landing — same space theme as the product, fire intro, thesis demos.
- * Product dashboard files stay untouched; app lives at /home.
+ * Public Intrisal landing — the product's night sky, a brand-first hero, then
+ * demos sampled from the platform. Product dashboard files stay untouched; app lives at /home.
  */
 export function LandingPage() {
   const [ready, setReady] = useState(false);
@@ -37,21 +37,27 @@ export function LandingPage() {
       </div>
       <LandingShooters />
       <LandingTopbar />
-      <WordmarkIntro />
       <div className="landing-scroll">
-        <main className="landing-stage">
-          <div className="landing-main">
-            <p className="landing-brand">Intrisal</p>
-            <h2 className="landing-headline">Know if a stock is worth buying — and why.</h2>
-            <p className="landing-support">
-              Clear buy signals from trend and business quality, for every investor from beginner to advanced. As easy as
-              checking the weather.
-            </p>
-            <LandingAuth />
-            <p className="landing-note">SMA trend + company performance, under the same night sky.</p>
-          </div>
+        <main>
+          <section className="landing-hero" aria-label="Intrisal">
+            <div className="landing-hero-inner">
+              <WordmarkIntro ready={ready} />
+              <div className="landing-hero-rest">
+                <h2 className="landing-headline">Know if a stock is worth buying — and why.</h2>
+                <p className="landing-support">
+                  One clear signal for every stock, with the trend, fundamentals and valuation behind it.
+                </p>
+                <LandingAuth />
+              </div>
+            </div>
+            <a className="landing-scroll-cue" href="#graph-analysis">
+              <span>See it work</span>
+              <i aria-hidden="true" />
+            </a>
+          </section>
+          <LandingDemos />
         </main>
-        <LandingDemos />
+        <LandingClose />
       </div>
     </div>
   );
