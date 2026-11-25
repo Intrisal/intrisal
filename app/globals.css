@@ -82,13 +82,12 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         top: -3vh; left: -3vw; width: 106vw; height: 106vh; height: 106lvh;
       }
       [data-theme="dark"] #stars-deep {
-        will-change: transform;
         animation: sky-drift 180s ease-in-out infinite alternate;
       }
 
       .aurora { overflow: hidden; }
       .aurora::before, .aurora::after {
-        content: ""; position: absolute; border-radius: 50%; will-change: transform, opacity;
+        content: ""; position: absolute; border-radius: 50%;
       }
       .aurora::before {
         --w: clamp(520px, 86vmax, 1500px);
@@ -106,11 +105,17 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         background: radial-gradient(closest-side, rgba(0, 0, 0, 0.036) 0%, rgba(0, 0, 0, 0.024) 28%, rgba(0, 0, 0, 0.012) 54%, rgba(0, 0, 0, 0.004) 78%, transparent 100%);
         animation: aurora-veil-b 46s ease-in-out infinite alternate;
       }
-      /* Dark: fine film grain and a vignette over the stars, and the veils turn to warm starlight. */
+      /* Dark: soft vignette over the stars; veils turn to warm starlight. Grain is desktop-only. */
       [data-theme="dark"] .aurora {
         background:
-          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.99 0 0 0 0 0.94 0 0 0 0 0.89 0.12 0 0 0 -0.06'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E") 0 0 / 200px 200px,
           radial-gradient(ellipse 115% 92% at 50% 40%, transparent 50%, rgba(8, 6, 9, 0.16) 76%, rgba(8, 6, 9, 0.4) 100%);
+      }
+      @media (min-width: 901px) and (hover: hover) and (pointer: fine) {
+        [data-theme="dark"] .aurora {
+          background:
+            url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='1' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.99 0 0 0 0 0.94 0 0 0 0 0.89 0.1 0 0 0 -0.05'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E") 0 0 / 160px 160px,
+            radial-gradient(ellipse 115% 92% at 50% 40%, transparent 50%, rgba(8, 6, 9, 0.16) 76%, rgba(8, 6, 9, 0.4) 100%);
+        }
       }
       [data-theme="dark"] .aurora::before {
         background: radial-gradient(closest-side, rgba(255, 236, 220, 0.052) 0%, rgba(246, 214, 196, 0.035) 26%, rgba(206, 164, 160, 0.018) 52%, rgba(206, 164, 160, 0.006) 76%, transparent 100%);
@@ -192,12 +197,26 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .icon-btn {
         width: 44px; height: 44px; border-radius: 50%;
-        border: 1.5px solid var(--line-strong); background: transparent; color: var(--ink);
+        border: 0; outline: 0; color: var(--ink);
+        background:
+          linear-gradient(155deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 45%, rgba(0, 0, 0, 0.06) 100%),
+          var(--panel);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.28),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.12),
+          0 1px 2px rgba(0, 0, 0, 0.08),
+          0 8px 18px rgba(0, 0, 0, 0.12);
         display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
-        transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+        transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
       }
       .icon-btn:hover { background: var(--btn-bg); color: var(--btn-ink); }
-      .icon-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+      .icon-btn:focus-visible {
+        outline: none;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.34),
+          0 0 0 2px var(--bg),
+          0 0 0 4px var(--focus);
+      }
       .icon-btn svg { width: 21px; height: 21px; }
 
       .menu {
@@ -323,18 +342,16 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
 
       .section-stage {
         width: 100%;
-        animation: section-swap 0.48s cubic-bezier(0.22, 1, 0.36, 1);
+        animation: section-swap 0.36s cubic-bezier(0.22, 1, 0.36, 1);
       }
       @keyframes section-swap {
         from {
           opacity: 0;
-          transform: translateY(16px) scale(0.985);
-          filter: blur(6px);
+          transform: translateY(10px);
         }
         to {
           opacity: 1;
           transform: none;
-          filter: none;
         }
       }
 
@@ -428,37 +445,93 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .watch-chip { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 48px; flex: 0 0 auto; }
       .watch-chip .coin {
         width: 42px; height: 42px; min-height: 42px; flex: 0 0 42px; overflow: hidden; border-radius: 50%; position: relative;
-        border: 1.5px solid #111111; background: #000000; color: #ffffff;
+        border: 0; outline: 0; color: #ffffff;
+        background:
+          linear-gradient(155deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.04) 42%, rgba(0, 0, 0, 0.12) 100%),
+          radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.28), transparent 42%),
+          #0a0a0a;
+        box-shadow:
+          inset 0 1.5px 1px rgba(255, 255, 255, 0.28),
+          inset 0 -2px 3px rgba(0, 0, 0, 0.22),
+          0 8px 18px rgba(0, 0, 0, 0.2);
         display: flex; align-items: center; justify-content: center; cursor: pointer;
-        transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+        isolation: isolate;
+        transition: box-shadow 0.18s ease, transform 0.15s ease, filter 0.15s ease;
       }
-      [data-theme="dark"] .watch-chip .coin { border-color: #4a4a4a; }
+      .watch-chip .coin::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        border-radius: inherit;
+        pointer-events: none;
+        background:
+          linear-gradient(160deg, rgba(255, 255, 255, 0.38) 0%, rgba(255, 255, 255, 0.1) 26%, transparent 52%),
+          radial-gradient(circle at 70% 120%, rgba(255, 255, 255, 0.12), transparent 46%);
+      }
       .watch-chip .coin:hover { transform: translateY(-2px); }
       .watch-chip .coin-wrap { position: relative; width: 42px; height: 42px; display: block; }
       .watch-chip .coin-wrap:hover { transform: translateY(-2px); }
       .watch-chip .coin-wrap:hover .coin { transform: none; }
-      .watch-chip .coin:focus-visible { outline: 2px solid #69b9ff; outline-offset: 3px; }
-      .watch-chip.selected .coin { background: #000000; color: #ffffff; border-color: #8a8a8a; box-shadow: 0 0 0 1px rgba(127, 127, 127, 0.3); }
-      .watch-chip .brand-logo { width: 24px; height: 24px; max-width: 100%; max-height: 100%; display: grid; place-items: center; pointer-events: none; }
-      .watch-chip .brand-asml { width: 100%; font-size: 9px; letter-spacing: -0.07em; white-space: nowrap; text-align: center; justify-content: center; }
+      .watch-chip .coin:focus-visible {
+        outline: none;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.4),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+          0 0 0 2px var(--bg),
+          0 0 0 4px var(--focus);
+      }
+      .watch-chip.selected .coin {
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.4),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+          0 0 0 1.5px rgba(255, 255, 255, 0.28),
+          0 10px 22px rgba(0, 0, 0, 0.28);
+      }
+      .watch-chip .brand-logo {
+        pointer-events: none;
+      }
+      .watch-chip .brand-logo.brand-cdn {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        max-height: none;
+        display: block;
+        object-position: center;
+        border-radius: 50%;
+      }
+      /* Background tile fills the coin edge-to-edge. */
+      .watch-chip .brand-logo.brand-cdn-fill {
+        z-index: 0;
+        object-fit: cover;
+        transform: scale(1.12);
+      }
+      /* Solo icon: milder crop so built-in mark padding stays readable. */
+      .watch-chip .brand-logo.brand-cdn-fill-solo {
+        transform: scale(1.02);
+      }
+      /* Foreground symbol sits inset so the glyph never kisses the rim. */
+      .watch-chip .brand-logo.brand-cdn-mark {
+        z-index: 1;
+        padding: 22%;
+        box-sizing: border-box;
+        object-fit: contain;
+        transform: none;
+        border-radius: 0;
+      }
+      .watch-chip .brand-logo.brand-monogram {
+        width: 58%;
+        height: 58%;
+        display: grid;
+        place-items: center;
+      }
       .watch-chip .brand-logo svg { display: block; width: 100%; height: 100%; fill: currentColor; }
       .watch-chip .ticker {
         font-size: 10px; font-weight: 590; letter-spacing: -0.01em; color: var(--ink-2);
         max-width: 48px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
-      .brand-vfv { color: #ff4058; }
-      .brand-meta { color: #0866ff; }
-      .brand-google { color: #4285f4; }
-      .brand-amzn { color: #ff9900; }
-      .brand-nflx { color: #ff3547; }
-      .brand-nvda { color: #76b900; }
-      .brand-asml { color: #43b7ff; }
-      .brand-ma { color: #eb001b; }
-      .brand-isrg { color: #38d9e9; }
-      .brand-msft rect:nth-child(1) { fill: #f25022; }
-      .brand-msft rect:nth-child(2) { fill: #7fba00; }
-      .brand-msft rect:nth-child(3) { fill: #00a4ef; }
-      .brand-msft rect:nth-child(4) { fill: #ffb900; }
       .brand-monogram { font: 700 12px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; letter-spacing: -0.04em; }
       .watch-chip .chg { font-size: 9.5px; color: var(--ink-2); }
       .watch-chip .rm {
@@ -498,11 +571,13 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .layout:not(.home) .list-tile {
         width: var(--watch-button-size); height: var(--watch-button-size); min-height: var(--watch-button-size);
       }
-      .layout:not(.home) .watch-chip .brand-logo:not(.brand-asml) { width: 58%; height: 58%; }
       .layout:not(.home) .watch-chip .coin-wrap:hover,
       .layout:not(.home) .watch-chip .coin:hover { transform: none; }
-      .layout:not(.home) .watch-chip .brand-logo { transition: transform 0.22s ease-out; }
-      .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo { transform: scale(1.1); }
+      .layout:not(.home) .watch-chip .brand-logo.brand-cdn-fill { transition: transform 0.22s ease-out; }
+      .layout:not(.home) .watch-chip .brand-logo.brand-monogram { width: 58%; height: 58%; }
+      .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo.brand-cdn-fill { transform: scale(1.16); }
+      .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo.brand-cdn-fill-solo { transform: scale(1.06); }
+      .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo.brand-cdn-mark { transform: scale(1.04); }
       .layout:not(.home) :is(.watch-chip .ticker, .list-tile > span) { display: none; }
       .layout:not(.home) .list-tile { padding: 0; }
       .layout:not(.home) .watch-list {
@@ -654,13 +729,20 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         background: var(--glass-fill);
         border: 1px solid var(--glass-stroke);
         box-shadow: var(--glass-shadow);
-        backdrop-filter: blur(16px);
       }
       [data-theme="dark"] :is(.menu, .results, .nav-label) {
         background: linear-gradient(155deg, rgba(63, 49, 49, 0.97), rgba(36, 28, 36, 0.94));
         border-color: var(--glass-stroke);
         box-shadow: var(--glass-shadow);
-        backdrop-filter: blur(18px);
+      }
+      /* Backdrop blur only on capable desktop pointers — it is a common phone compositor tax. */
+      @media (min-width: 901px) and (hover: hover) and (pointer: fine) {
+        [data-theme="dark"] :is(.panel, .search-bar, .sidenav-dock, .layout:not(.home) .watch-strip, .watch-list, .icon-btn, .list-tile) {
+          backdrop-filter: blur(8px);
+        }
+        [data-theme="dark"] :is(.menu, .results, .nav-label) {
+          backdrop-filter: blur(10px);
+        }
       }
       [data-theme="dark"] .search-bar:focus-within {
         border-color: var(--focus);
@@ -680,11 +762,36 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       [data-theme="dark"] .watch-list button { background: transparent; }
       [data-theme="dark"] .watch-list button:hover { background: var(--hover); }
       [data-theme="dark"] .watch-chip .coin {
-        background: radial-gradient(ellipse at top, #262126, #09080a 70%);
-        border-color: var(--glass-stroke);
-        box-shadow: var(--glass-edge);
+        background:
+          linear-gradient(155deg, rgba(255, 236, 220, 0.18), rgba(255, 236, 220, 0.03) 40%, rgba(0, 0, 0, 0.22) 100%),
+          radial-gradient(circle at 28% 20%, rgba(255, 232, 215, 0.22), transparent 44%),
+          radial-gradient(ellipse at top, #2a2328, #0c0a0c 72%);
+        border: 0;
+        box-shadow:
+          inset 0 1.5px 1px rgba(255, 232, 215, 0.26),
+          inset 0 -2px 4px rgba(0, 0, 0, 0.35),
+          0 10px 22px rgba(0, 0, 0, 0.32);
       }
-      [data-theme="dark"] .watch-chip.selected .coin { border-color: var(--focus); }
+      [data-theme="dark"] .watch-chip .coin::after {
+        background:
+          linear-gradient(160deg, rgba(255, 236, 220, 0.32) 0%, rgba(255, 236, 220, 0.08) 26%, transparent 52%),
+          radial-gradient(circle at 70% 120%, rgba(246, 215, 195, 0.14), transparent 48%);
+      }
+      [data-theme="dark"] .watch-chip.selected .coin {
+        border: 0;
+        box-shadow:
+          inset 0 1.5px 1px rgba(255, 232, 215, 0.34),
+          inset 0 -2px 4px rgba(0, 0, 0, 0.35),
+          0 0 0 2px rgba(244, 207, 180, 0.35),
+          0 12px 26px rgba(0, 0, 0, 0.4);
+      }
+      [data-theme="dark"] .icon-btn {
+        background:
+          linear-gradient(155deg, rgba(255, 236, 220, 0.14), rgba(255, 236, 220, 0.03) 42%, rgba(0, 0, 0, 0.18) 100%),
+          var(--glass-fill);
+        border: 0;
+        box-shadow: var(--glass-shadow);
+      }
       [data-theme="dark"] .chg-up { color: #9cdec9; }
       [data-theme="dark"] .chg-dn { color: #efaea4; }
 
@@ -705,7 +812,10 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       [data-theme="dark"] .stock-analysis-switch {
         background: var(--glass-fill); border-color: var(--glass-stroke);
-        box-shadow: var(--glass-shadow); backdrop-filter: blur(16px);
+        box-shadow: var(--glass-shadow);
+      }
+      @media (min-width: 901px) and (hover: hover) and (pointer: fine) {
+        [data-theme="dark"] .stock-analysis-switch { backdrop-filter: blur(8px); }
       }
       .stock-analysis-switch::before {
         content: ""; position: absolute; z-index: -1; inset: 4px auto 4px 4px;
@@ -905,10 +1015,22 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .sidenav ul { gap: 3px; }
         .sidenav button { width: 40px; }
       }
+      /* Phones / coarse pointers: freeze large atmosphere motion; keep short UI transitions. */
+      @media (max-width: 900px), (pointer: coarse) {
+        #stars-deep, .aurora::before, .aurora::after {
+          animation: none !important;
+        }
+      }
       @media (prefers-reduced-motion: reduce) {
         * { transition: none !important; }
         #stars-deep, .aurora::before, .aurora::after,
-        .section-stage {
+        .section-stage, .stock-analysis-switch, .stock-analysis-panels {
           animation: none !important;
+        }
+      }
+      @media (prefers-reduced-transparency: reduce) {
+        [data-theme="dark"] :is(.panel, .search-bar, .sidenav-dock, .layout:not(.home) .watch-strip, .watch-list, .icon-btn, .list-tile, .menu, .results, .nav-label, .stock-analysis-switch) {
+          backdrop-filter: none !important;
+          background: var(--panel);
         }
       }

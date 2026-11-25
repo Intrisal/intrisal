@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "brandfetch": {
+      "url": "https://mcp.brandfetch.io/mcp"
+    },
+    "brandfetch-docs": {
+      "url": "https://docs.brandfetch.com/mcp"
+    }
+  }
+}

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { fmt } from "@/lib/market";
 
-const COUNT_DURATION_MS = 800;
+const COUNT_DURATION_MS = 420;
 
 export function AnimatedPrice({ price }: { price: number }) {
   const [shownPrice, setShownPrice] = useState(price);
