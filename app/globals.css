@@ -722,7 +722,54 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .stock-analysis-switch button[aria-pressed="true"] { color: var(--btn-ink); }
       .stock-analysis-switch button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
       .stock-analysis-panels { animation: stock-analysis-appear 0.24s ease both; }
+      .stock-analysis-panels[data-analysis="fundamental"] { display: block; }
       .stock-analysis-panels[data-analysis="valuation"] { grid-template-columns: minmax(0, 1fr); width: min(100%, 760px); margin-inline: auto; }
+      .fundamental-sample { margin: 0 0 12px; color: var(--ink-2); font-size: 13px; }
+      .fundamental-summary {
+        display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+        padding: 0; min-height: 0; margin: 0 0 18px;
+      }
+      .fundamental-summary > div { padding: 14px 18px; }
+      .fundamental-summary > div + div { border-left: 1px solid var(--line); }
+      .fundamental-summary dt { color: var(--ink-2); font-size: 12px; }
+      .fundamental-summary dd { margin: 3px 0 0; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .fundamental-summary dd + dt { margin-top: 8px; }
+      .fundamental-summary dt:last-of-type + dd { font-size: 14px; }
+      .fundamental-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+      .fundamental-card {
+        --fundamental-bar: #a3670b;
+        min-height: 0; padding: clamp(13px, 1.5vw, 22px);
+      }
+      [data-theme="dark"] .fundamental-card { --fundamental-bar: #f6b644; }
+      .fundamental-card[data-expanded="true"] { grid-column: 1 / -1; }
+      .fundamental-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+      .fundamental-card-header h3 { margin: 0; font-size: 16px; line-height: 1.25; }
+      .fundamental-card-header p,
+      .fundamental-range-label { margin: 5px 0 0; color: var(--ink-2); font-size: 12px; }
+      .fundamental-value { margin-top: 8px; font-size: 24px; font-variant-numeric: tabular-nums; }
+      .fundamental-card button {
+        border: 1px solid var(--line); border-radius: 9px; background: var(--hover);
+        color: var(--ink); font: inherit; font-size: 11px; cursor: pointer;
+      }
+      .fundamental-card-header button { padding: 6px 8px; min-height: 32px; }
+      .fundamental-card button:is(:hover, :focus-visible, [aria-pressed="true"]) { border-color: var(--focus); }
+      .fundamental-plot { display: block; width: 100%; height: auto; margin: 12px auto; }
+      .fundamental-card[data-expanded="true"] .fundamental-plot { max-width: 850px; }
+      .fundamental-plot line { stroke: var(--line); }
+      .fundamental-plot text { fill: var(--ink-2); font-size: 13px; }
+      .fundamental-plot rect { fill: var(--fundamental-bar); opacity: 0.86; }
+      .fundamental-plot rect:hover { opacity: 1; }
+      .fundamental-range-label { margin-top: auto; padding-top: 2px; }
+      .fundamental-ranges { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-top: 8px; }
+      .fundamental-ranges button { display: grid; gap: 3px; padding: 5px 1px; min-height: 42px; font-variant-numeric: tabular-nums; }
+      @media (max-width: 1050px) {
+        .fundamental-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 640px) {
+        .fundamental-grid, .fundamental-summary { grid-template-columns: 1fr; }
+        .fundamental-summary > div { padding: 11px 14px; }
+        .fundamental-summary > div + div { border-left: 0; border-top: 1px solid var(--line); }
+      }
       @keyframes stock-analysis-appear {
         from { opacity: 0; }
         to { opacity: 1; }

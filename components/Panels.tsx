@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { AnimatedPrice } from "@/components/AnimatedPrice";
+import { Fundamentals } from "@/components/Fundamentals";
 import { fmt, hashStr, nameOf, projectSim, rng, sample, series, type SimInput } from "@/lib/market";
 
 export type Section = "home" | "fundamental" | "learn" | "simulation" | "valuation" | "watchlist";
@@ -339,7 +340,7 @@ export function StockAnalysis({ mode, selected, watchlist }: {
   return (
     <section className="panels stock-analysis-panels" data-analysis={mode} aria-label={mode === "fundamental" ? "Stock fundamentals" : "Stock valuation"}>
       {mode === "fundamental" ? (
-        <><FundamentalPanel selected={selected} /><StatsPanel selected={selected} /></>
+        <Fundamentals ticker={selected} />
       ) : (
         <ValuationDetailPanel selected={selected} watchlist={watchlist} />
       )}
