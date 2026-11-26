@@ -363,7 +363,7 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
             ) : (
               <>
                 <span className="stock-chart-return-label">{range} return</span>
-                {rangeCloses.length > 1 ? <AnimatedReturn value={rangeReturn} /> : <strong>—</strong>}
+                {rangeCloses.length > 1 ? <AnimatedReturn value={rangeReturn} /> : <span className="stock-chart-return-label">Data unavailable</span>}
               </>
             )}
           </div>
@@ -380,7 +380,7 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
             onScrub={setScrubIndex}
           />
         ) : (
-          <p className="stock-chart-status">{error || "No price history available yet."}</p>
+          <p className="stock-chart-status">Data unavailable. {error || "No price history available yet."}</p>
         )}
         <ul className="stock-legend" aria-label="Chart legend">
           <li className="stock-close">Closing price</li>
@@ -390,8 +390,8 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
       </article>
       <aside className="stock-snapshot" aria-label="Stock Price">
         <h2>Stock Price</h2>
-        <div className="stock-snapshot-price">
-          {price === null ? "—" : <AnimatedPrice price={price} />}
+        <div className={price === null ? "stock-snapshot-unavailable" : "stock-snapshot-price"}>
+          {price === null ? "Data unavailable" : <AnimatedPrice price={price} />}
         </div>
         {priceDate && <time className="stock-snapshot-date" dateTime={priceDate}>
           Close as of {CLOSE_DATE_FORMAT.format(new Date(priceDate + "T00:00:00Z"))}
@@ -399,19 +399,19 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
         <dl>
           <div>
             <dt>Signal</dt>
-            <dd className={signal ? signalClass : undefined}>{signal === null ? "—" : signal === "Hold" ? signal : <SnapshotGlow label={signal} />}</dd>
+            <dd className={signal ? signalClass : undefined}>{signal === null ? "Data unavailable" : signal === "Hold" ? signal : <SnapshotGlow label={signal} />}</dd>
           </div>
           <div>
             <dt>Market trend</dt>
             <dd className={cross ? (cross.up ? "stock-positive" : "stock-negative") : undefined}>
-              {cross?.up ? <SnapshotGlow label={cross.name} /> : (cross?.name ?? (chart.closes.length ? "No crossover yet" : "—"))}
+              {cross?.up ? <SnapshotGlow label={cross.name} /> : (cross?.name ?? (chart.closes.length ? "No crossover yet" : "Data unavailable"))}
             </dd>
           </div>
           <div>
             <dt>Market cap</dt>
             <dd>
               {marketCapBillions == null
-                ? "—"
+                ? "Data unavailable"
                 : marketCapBillions >= 1000
                   ? "$" + fmt(marketCapBillions / 1000, 2) + "T"
                   : "$" + fmt(marketCapBillions, 2) + "B"}
@@ -419,7 +419,7 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
           </div>
           <div>
             <dt>Dividend Yield</dt>
-            <dd>{dividendYieldPercent == null ? "—" : fmt(dividendYieldPercent, 2) + "%"}</dd>
+            <dd>{dividendYieldPercent == null ? "Data unavailable" : fmt(dividendYieldPercent, 2) + "%"}</dd>
           </div>
           <div>
             <dt>52-Week Range</dt>
@@ -431,7 +431,7 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
                 <span>${fmt(low, 2)}</span>
                 <span>${fmt(high, 2)}</span>
               </div>
-            </dd> : <dd>—</dd>}
+            </dd> : <dd>Data unavailable</dd>}
           </div>
         </dl>
       </aside>

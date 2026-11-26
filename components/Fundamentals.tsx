@@ -275,7 +275,7 @@ export function FundamentalSummary({ ticker }: { ticker: string }) {
       {items.map(({ label, value, unit }) => (
         <div key={label}>
           <dt>{label}</dt>
-          <dd>{loading && value == null ? "…" : value == null ? "—" : formatValue(value, unit, 2, s?.reportingCurrency)}</dd>
+          <dd>{loading && value == null ? "…" : value == null ? "Data unavailable" : formatValue(value, unit, 2, s?.reportingCurrency)}</dd>
         </div>
       ))}
     </dl>
@@ -288,7 +288,7 @@ export function Fundamentals({ ticker, snapshot, loading }: {
   loading: boolean;
 }) {
   if (loading && !snapshot) return <p className="panel" role="status">Loading quarterly filings…</p>;
-  if (snapshot?.sources.fundamentals !== "edgar") return <p className="panel">Quarterly filings are unavailable for {ticker}.</p>;
+  if (snapshot?.sources.fundamentals !== "edgar") return <p className="panel">Data unavailable. No quarterly filings for {ticker}.</p>;
   const sourceNote = "SEC filings";
   const revenue = snapshot.revenueHistory;
   const operatingIncome = snapshot.operatingIncomeHistory;

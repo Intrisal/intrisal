@@ -24,7 +24,7 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   const count = quarters.length;
   const average = snapshot?.evNopatAvg;
   const benchmarkQuarters = snapshot?.evNopatAverageQuarters;
-  if (count < 2 || average == null) return <p className="panel">{loading ? "Loading valuation history…" : "Not enough reported financials and historical prices to calculate valuation history."}</p>;
+  if (count < 2 || average == null) return <p className="panel">{loading ? "Loading valuation history…" : "Data unavailable. More reported financials and historical prices are needed to chart valuation history."}</p>;
   const active = Math.min(hovered ?? count - 1, count - 1);
   const values = quarters.map(({ value }) => value);
   const low = Math.min(...values);

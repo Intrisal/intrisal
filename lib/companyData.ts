@@ -4,15 +4,15 @@
  */
 
 import { EPS_SPLIT_BASIS_VERSION, fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries, type ReportingCurrency } from "@/lib/edgar";
-import { isKnownFund, sample, type Sample } from "@/lib/market";
+import { isKnownFund } from "@/lib/market";
 import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuations, saveFundamentals, saveValuations, type ValuationPoint } from "@/lib/stockStore";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 
 export type CompanySnapshot = {
   ticker: string;
-  price: number;
-  change: number;
+  price: number | null;
+  change: number | null;
   priceAsOf?: string;
   reportingCurrency?: ReportingCurrency;
   isFund?: boolean;
@@ -39,8 +39,8 @@ export type CompanySnapshot = {
   evNopatHistory: number[];
   valuationPoints?: ValuationPoint[];
   sources: {
-    prices: "marketstack" | "sample";
-    fundamentals: "edgar" | "sample";
+    prices: "marketstack" | "unavailable";
+    fundamentals: "edgar" | "unavailable";
   };
 };
 
@@ -117,38 +117,37 @@ function nopatFromOpinc(opincBillions: number, taxRate = 0.21) {
   return opincBillions * (1 - taxRate);
 }
 
-function fromSample(ticker: string, price: number, change: number, priceSource: "marketstack" | "sample"): CompanySnapshot {
-  const s = sample(ticker);
+function withoutFilings(ticker: string, price: number | null, change: number | null, priceSource: CompanySnapshot["sources"]["prices"]): CompanySnapshot {
   return {
     ticker: ticker.toUpperCase(),
     price,
     change,
-    peTtm: s.fpe,
-    evNopat: s.evn,
+    peTtm: null,
+    evNopat: null,
     evNopatAvg: null,
-    revBillions: s.rev,
-    growthYoY: s.growth,
-    epsTtm: s.eps,
-    fcfBillions: s.fcf,
-    opincBillions: s.opinc,
-    de: s.de,
-    marketCapBillions: s.marketCapBillions,
-    dividendYieldPercent: s.dividendYieldPercent,
+    revBillions: null,
+    growthYoY: null,
+    epsTtm: null,
+    fcfBillions: null,
+    opincBillions: null,
+    de: null,
+    marketCapBillions: null,
+    dividendYieldPercent: null,
     revenueHistory: [],
     operatingIncomeHistory: [],
     epsHistory: [],
     fcfHistory: [],
     evNopatHistory: [],
-    sources: { prices: priceSource, fundamentals: "sample" },
+    sources: { prices: priceSource, fundamentals: "unavailable" },
   };
 }
 
 function buildFromEdgar(
   ticker: string,
   edgar: EdgarFundamentals,
-  price: number,
-  change: number,
-  priceSource: "marketstack" | "sample",
+  price: number | null,
+  change: number | null,
+  priceSource: CompanySnapshot["sources"]["prices"],
   valuationPoints: ValuationPoint[],
 ): CompanySnapshot {
   const revTtm = ttm(edgar.revenue);
@@ -172,12 +171,12 @@ function buildFromEdgar(
   const growthYoY = yoyGrowth(edgar.revenue);
 
   const marketCapBillions =
-    priceSource === "marketstack" && edgar.sharesOutstandingBillions != null ? price * edgar.sharesOutstandingBillions : null;
+    price != null && edgar.sharesOutstandingBillions != null ? price * edgar.sharesOutstandingBillions : null;
 
   const nopat = opTtm != null ? nopatFromOpinc(opTtm) : null;
   const enterpriseValue =
-    compatiblePriceCurrency && marketCapBillions != null
-      ? marketCapBillions + (edgar.debtBillions ?? 0) - (edgar.cashBillions ?? 0)
+    compatiblePriceCurrency && marketCapBillions != null && edgar.debtBillions != null && edgar.cashBillions != null
+      ? marketCapBillions + edgar.debtBillions - edgar.cashBillions
       : null;
   const evNopat = enterpriseValue != null && nopat && nopat > 0 ? enterpriseValue / nopat : null;
 
@@ -188,13 +187,13 @@ function buildFromEdgar(
   const start = latestQuarter ? `${Number(latestQuarter.slice(0, 4)) - 10}${latestQuarter.slice(4)}` : null;
   const benchmark = start ? valuationPoints.filter(({ quarter }) => quarter > start) : [];
 
-  const peTtm = compatiblePriceCurrency && (!asmlEpsIsTtm || edgar.reportingCurrency === "USD") && epsTtm
+  const peTtm = compatiblePriceCurrency && price != null && (!asmlEpsIsTtm || edgar.reportingCurrency === "USD") && epsTtm
     ? price / epsTtm
     : null;
-  const dividendPerShare = edgar.dividendPerShare ?? 0;
+  const dividendPerShare = edgar.dividendPerShare;
   const dividendYieldPercent = dividendPerShare === 0
     ? 0
-    : compatiblePriceCurrency && price > 0 ? (dividendPerShare / price) * 100 : null;
+    : compatiblePriceCurrency && price != null && price > 0 && dividendPerShare != null ? (dividendPerShare / price) * 100 : null;
 
   return {
     ticker: ticker.toUpperCase(),
@@ -215,9 +214,7 @@ function buildFromEdgar(
     de:
       edgar.debtBillions != null && edgar.equityBillions && edgar.equityBillions > 0
         ? (edgar.debtBillions / edgar.equityBillions).toFixed(2)
-        : compatiblePriceCurrency && edgar.debtBillions != null && marketCapBillions && marketCapBillions > 0
-          ? (edgar.debtBillions / marketCapBillions).toFixed(2)
-          : null,
+        : null,
     marketCapBillions,
     dividendYieldPercent,
     revenueHistory: revenueHistory.values,
@@ -233,26 +230,6 @@ function buildFromEdgar(
     evNopatHistory,
     valuationPoints,
     sources: { prices: priceSource, fundamentals: "edgar" },
-  };
-}
-
-/** Sample-shaped object for older UI helpers that still call into Sample fields. */
-export function snapshotToSample(snap: CompanySnapshot): Sample {
-  const fallback = sample(snap.ticker);
-  return {
-    price: snap.price,
-    change: snap.change,
-    fpe: snap.peTtm ?? fallback.fpe,
-    evn: snap.evNopat ?? fallback.evn,
-    avg: snap.evNopatAvg ?? fallback.avg,
-    rev: snap.revBillions ?? fallback.rev,
-    growth: snap.growthYoY ?? fallback.growth,
-    eps: snap.epsTtm ?? fallback.eps,
-    fcf: snap.fcfBillions ?? fallback.fcf,
-    opinc: snap.opincBillions ?? fallback.opinc,
-    de: snap.de ?? fallback.de,
-    marketCapBillions: snap.marketCapBillions,
-    dividendYieldPercent: snap.dividendYieldPercent ?? fallback.dividendYieldPercent,
   };
 }
 
@@ -289,13 +266,12 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
     }
   }
 
-  const priceSource = quote ? "marketstack" : "sample";
-  const fallback = sample(id);
-  const price = quote?.price ?? fallback.price;
-  const change = quote?.change ?? fallback.change;
+  const priceSource = quote ? "marketstack" : "unavailable";
+  const price = quote?.price ?? null;
+  const change = quote?.change ?? null;
   const snapshot = edgar
     ? buildFromEdgar(id, edgar, price, change, priceSource, valuations)
-    : fromSample(id, price, change, priceSource);
+    : withoutFilings(id, price, change, priceSource);
   return { ...snapshot, isFund, priceAsOf: quote?.date };
 }
 

@@ -7,7 +7,7 @@ import { Fundamentals } from "@/components/Fundamentals";
 import { RemoveIcon } from "@/components/Icons";
 import { ValuationHistory } from "@/components/ValuationHistory";
 import type { CompanySnapshot } from "@/lib/companyData";
-import { fmt, hashStr, nameOf, projectSim, rng, sample, type SimInput } from "@/lib/market";
+import { fmt, nameOf, projectSim, type SimInput } from "@/lib/market";
 import { useCompanySnapshot, useCompanySnapshots } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 
@@ -29,6 +29,10 @@ function PanelHead({ title, sub }: { title: string; sub?: string }) {
 
 function FootNote({ children }: { children: string }) {
   return <div className="foot">{children}</div>;
+}
+
+function metric(value: number | null | undefined, decimals: number, suffix = "", prefix = "") {
+  return value == null ? "Data unavailable" : prefix + fmt(value, decimals) + suffix;
 }
 
 export function LineChart({ data, w, h, pad, label }: { data: number[]; w: number; h: number; pad: number; label: string }) {
@@ -106,12 +110,13 @@ function WatchPanel({
                   </span>
                   <span className="watch-card-quote mono">
                     <span className="watch-card-price" title={quote ? "Close as of " + quote.date : undefined}>
-                      {quote ? <AnimatedPrice price={quote.price} /> : "—"}
+                      {quote ? <AnimatedPrice price={quote.price} /> : "Data unavailable"}
                     </span>
                     <span className={quote ? (up ? "chg-up" : "chg-dn") : "watch-card-chg-empty"}>
                       {quote ? ((up ? "▲ +" : "▼ ") + fmt(quote.change, 2) + "%") : "—"}
                     </span>
                   </span>
+                  {quote && <time className="watch-card-date" dateTime={quote.date}>Close as of {quote.date}</time>}
                 </button>
                 <button
                   type="button"
@@ -134,18 +139,17 @@ function ValuationPanel({ watchlist, selected, onSelect }: { watchlist: string[]
   const { snapshots, loading } = useCompanySnapshots(watchlist);
   const row = (tk: string) => {
     const snap = snapshots[tk.toUpperCase()];
-    const fallback = sample(tk);
     return {
-      pe: snap?.peTtm ?? fallback.fpe,
-      evn: snap?.evNopat ?? fallback.evn,
+      pe: snap?.peTtm ?? null,
+      evn: snap?.evNopat ?? null,
       avg: snap?.evNopatAvg ?? null,
-      live: snap?.sources.fundamentals === "edgar",
     };
   };
   const sorted = watchlist.slice().sort(function (a, b) {
-    return row(a).evn - row(b).evn;
+    const left = row(a).evn;
+    const right = row(b).evn;
+    return left == null ? (right == null ? 0 : 1) : right == null ? -1 : left - right;
   });
-  const liveCount = sorted.filter((tk) => row(tk).live).length;
   return (
     <article className="panel">
       <PanelHead title="Valuation" sub="sorted by EV/NOPAT" />
@@ -163,13 +167,13 @@ function ValuationPanel({ watchlist, selected, onSelect }: { watchlist: string[]
             const s = row(tk);
             return (
               <tr key={tk} data-tk={tk} className={tk === selected ? "sel" : undefined} onClick={() => onSelect(tk)}>
-                <td className="tk">{tk}</td><td className="num mono">{fmt(s.pe, 1)}x</td><td className="num mono">{fmt(s.evn, 1)}x</td><td className="num mono">{s.avg == null ? "—" : `${fmt(s.avg, 1)}x`}</td>
+                <td className="tk">{tk}</td><td className="num mono">{metric(s.pe, 1, "x")}</td><td className="num mono">{metric(s.evn, 1, "x")}</td><td className="num mono">{metric(s.avg, 1, "x")}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      {loading ? <FootNote>Loading…</FootNote> : !liveCount ? <FootNote>Sample data for layout preview.</FootNote> : null}
+      {loading ? <FootNote>Loading…</FootNote> : null}
     </article>
   );
 }
@@ -178,7 +182,7 @@ function BarRow({ label, val, max, suffix }: { label: string; val: number | null
   const pct = val == null ? 0 : Math.max(4, Math.min(100, (val / max) * 100));
   return (
     <div className="bar-row">
-      <span>{label}</span><div className="bar-track"><div className="bar-fill" style={{ width: pct + "%" }} /></div><span className="mono" style={{ textAlign: "right" }}>{val == null ? "—" : fmt(val, 1) + suffix}</span>
+      <span>{label}</span><div className="bar-track"><div className="bar-fill" style={{ width: pct + "%" }} /></div><span className="mono" style={{ textAlign: "right" }}>{metric(val, 1, suffix)}</span>
     </div>
   );
 }
@@ -186,22 +190,16 @@ function BarRow({ label, val, max, suffix }: { label: string; val: number | null
 function ValuationDetailPanel({ selected, watchlist, showStockName = true }: { selected: string; watchlist: string[]; showStockName?: boolean }) {
   const { snapshot } = useCompanySnapshot(selected);
   const { snapshots } = useCompanySnapshots(watchlist);
-  const fallback = sample(selected);
   const s = {
-    fpe: snapshot?.peTtm ?? fallback.fpe,
-    evn: snapshot?.evNopat ?? fallback.evn,
+    fpe: snapshot?.peTtm ?? null,
+    evn: snapshot?.evNopat ?? null,
     avg: snapshot?.evNopatAvg ?? null,
   };
-  const evs = watchlist.map(function (tk) {
-    const snap = snapshots[tk.toUpperCase()];
-    return snap?.evNopat ?? sample(tk).evn;
-  });
-  const med = evs.length
-    ? evs.slice().sort(function (a, b) {
-        return a - b;
-      })[Math.floor(evs.length / 2)]
-    : 0;
-  const verdict = s.evn < med ? "Trading below the watchlist median EV/NOPAT." : "Trading above the watchlist median EV/NOPAT.";
+  const evs = watchlist.flatMap((tk) => snapshots[tk.toUpperCase()]?.evNopat ?? []).sort((a, b) => a - b);
+  const med = evs[Math.floor(evs.length / 2)] ?? null;
+  const verdict = s.evn == null || med == null ? ""
+    : s.evn === med ? "Trading at the watchlist median EV/NOPAT."
+    : s.evn < med ? "Trading below the watchlist median EV/NOPAT." : "Trading above the watchlist median EV/NOPAT.";
   return (
     <article className="panel">
       <PanelHead title={showStockName ? "Valuation — " + selected : "Valuation"} sub={showStockName ? nameOf(selected) : undefined} />
@@ -212,29 +210,15 @@ function ValuationDetailPanel({ selected, watchlist, showStockName = true }: { s
       <p style={{ fontSize: "14.5px", lineHeight: 1.6, color: "var(--ink-2)", margin: "14px 0 0" }}>
         {verdict} EV/NOPAT is enterprise value divided by after-tax operating income — the v2 headline multiple.
       </p>
-      {snapshot?.sources.fundamentals !== "edgar" ? <FootNote>Sample data for layout preview.</FootNote> : null}
     </article>
   );
 }
 
 function FundamentalPanel({ selected }: { selected: string }) {
-  const { snapshot } = useCompanySnapshot(selected);
-  const s = sample(selected);
-  const hist = snapshot?.revenueHistory?.length ? snapshot.revenueHistory : null;
-  const vals = hist
-    ? hist.slice(-5)
-    : (() => {
-        const r = rng(hashStr(selected + ":rev"));
-        const out: number[] = [];
-        let v = s.rev / Math.pow(1 + s.growth / 100, 4);
-        for (let i = 0; i < 5; i++) {
-          out.push(v);
-          v *= 1 + (s.growth + (r() - 0.5) * 6) / 100;
-        }
-        return out;
-      })();
-  const growth = snapshot?.growthYoY ?? s.growth;
-  const max = Math.max.apply(null, vals);
+  const { snapshot, loading } = useCompanySnapshot(selected);
+  const vals = snapshot?.revenueHistory.slice(-5) ?? [];
+  const growth = snapshot?.growthYoY;
+  const max = Math.max(1, ...vals);
   const bw = 64;
   const gap = 26;
   const base = 168;
@@ -242,7 +226,7 @@ function FundamentalPanel({ selected }: { selected: string }) {
   return (
     <article className="panel">
       <PanelHead title={"Revenue — " + selected} sub="trailing twelve months, $B" />
-      <svg viewBox="0 0 480 200" role="img" aria-label="Revenue by period chart" style={{ width: "100%", height: "auto", display: "block" }}>
+      {vals.length ? <svg viewBox="0 0 480 200" role="img" aria-label="Revenue by period chart" style={{ width: "100%", height: "auto", display: "block" }}>
         {vals.map(function (val, i) {
           const h = (val / max) * (base - top);
           const x = 20 + i * (bw + gap);
@@ -258,11 +242,10 @@ function FundamentalPanel({ selected }: { selected: string }) {
             </g>
           );
         })}
-      </svg>
+      </svg> : <FootNote>{loading ? "Loading…" : "Data unavailable"}</FootNote>}
       <p style={{ fontSize: "14px", color: "var(--ink-2)", margin: "10px 0 0" }}>
-        TTM revenue growth <strong style={{ color: "var(--ink)" }}>{growth >= 0 ? "+" : ""}{fmt(growth, 1)}%</strong> year over year.
+        TTM revenue growth <strong style={{ color: "var(--ink)" }}>{metric(growth, 1, "%", growth != null && growth >= 0 ? "+" : "")}</strong> year over year.
       </p>
-      {snapshot?.sources.fundamentals !== "edgar" ? <FootNote>Sample data for layout preview.</FootNote> : null}
     </article>
   );
 }
@@ -279,28 +262,26 @@ function Stat({ k, v, d }: { k: string; v: string; d: string }) {
 
 function StatsPanel({ selected }: { selected: string }) {
   const { snapshot } = useCompanySnapshot(selected);
-  const fallback = sample(selected);
-  const rev = snapshot?.revBillions ?? fallback.rev;
-  const growth = snapshot?.growthYoY ?? fallback.growth;
-  const eps = snapshot?.epsTtm ?? fallback.eps;
-  const fcf = snapshot?.fcfBillions ?? fallback.fcf;
-  const opinc = snapshot?.opincBillions ?? fallback.opinc;
-  const pe = snapshot?.peTtm ?? fallback.fpe;
-  const de = snapshot?.de ?? fallback.de;
+  const rev = snapshot?.revBillions;
+  const growth = snapshot?.growthYoY;
+  const eps = snapshot?.epsTtm;
+  const fcf = snapshot?.fcfBillions;
+  const opinc = snapshot?.opincBillions;
+  const pe = snapshot?.peTtm;
+  const de = snapshot?.de;
   return (
     <article className="panel">
       <PanelHead title={"Fundamentals — " + selected} sub="TTM" />
       <div className="stat-grid">{[
-        <Stat key="rev" k="Revenue" v={"$" + fmt(rev, 1) + "B"} d={(growth >= 0 ? "+" : "") + fmt(growth, 1) + "% YoY"} />,
-        <Stat key="eps" k="EPS" v={"$" + fmt(eps, 2)} d="diluted, TTM" />,
-        <Stat key="fcf" k="Free cash flow" v={"$" + fmt(fcf, 1) + "B"} d={fmt((fcf / Math.max(rev, 0.01)) * 100, 0) + "% of revenue"} />,
-        <Stat key="op" k="Operating income" v={"$" + fmt(opinc, 1) + "B"} d={fmt((opinc / Math.max(rev, 0.01)) * 100, 0) + "% margin"} />,
+        <Stat key="rev" k="Revenue" v={metric(rev, 1, "B", "$")} d={growth == null ? "" : metric(growth, 1, "% YoY", growth >= 0 ? "+" : "")} />,
+        <Stat key="eps" k="EPS" v={metric(eps, 2, "", "$")} d="diluted, TTM" />,
+        <Stat key="fcf" k="Free cash flow" v={metric(fcf, 1, "B", "$")} d={fcf != null && rev && rev > 0 ? metric(fcf / rev * 100, 0, "% of revenue") : ""} />,
+        <Stat key="op" k="Operating income" v={metric(opinc, 1, "B", "$")} d={opinc != null && rev && rev > 0 ? metric(opinc / rev * 100, 0, "% margin") : ""} />,
       ]}</div>
       <div className="stat-grid" style={{ marginTop: 12 }}>{[
-        <Stat key="pe" k="P/E (TTM)" v={fmt(pe, 1) + "x"} d="price ÷ TTM diluted EPS" />,
-        <Stat key="de" k="Debt / Equity" v={de ?? "—"} d="from filings + market cap" />,
+        <Stat key="pe" k="P/E (TTM)" v={metric(pe, 1, "x")} d="price ÷ TTM diluted EPS" />,
+        <Stat key="de" k="Debt / Equity" v={de ?? "Data unavailable"} d="from filings" />,
       ]}</div>
-      {snapshot?.sources.fundamentals !== "edgar" ? <FootNote>Sample data for layout preview.</FootNote> : null}
     </article>
   );
 }
@@ -350,7 +331,7 @@ function SimulationPanels({ sim, onSim }: { sim: SimInput; onSim: (next: SimInpu
         <div className="chart-box" id="simChart">
           <LineChart data={projection.pts} w={560} h={200} pad={8} label="Projection chart" />
         </div>
-        <FootNote>Sample data for layout preview.</FootNote>
+        <FootNote>Simulation based on your inputs.</FootNote>
       </article>,
   ];
 }

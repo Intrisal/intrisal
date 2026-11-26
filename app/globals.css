@@ -809,6 +809,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         font-size: 13px;
       }
       .watch-card-price { font-weight: 700; font-size: 15px; }
+      .watch-card-date { grid-column: 2; color: var(--ink-3); font-size: 11px; }
       .watch-card-chg-empty { color: var(--ink-3); }
       .watch-card-remove {
         position: absolute; top: 8px; right: 8px;
@@ -1450,6 +1451,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .stock-legend .stock-sma-long::before { border-top-style: dashed; }
       .stock-snapshot h2 { margin: 0; color: var(--ink-2); font-size: 14px; font-weight: 650; }
       .stock-snapshot-price { margin-top: 12px; font-size: clamp(30px, 4vw, 42px); font-weight: 750; font-variant-numeric: tabular-nums; }
+      .stock-snapshot-unavailable { margin-top: 12px; color: var(--ink-2); font-size: 14px; }
       .stock-snapshot-date { display: block; margin-top: 4px; font-size: 12px; color: var(--ink-2); }
       .stock-chart-status {
         margin: 28px 0;
