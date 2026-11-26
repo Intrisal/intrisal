@@ -908,6 +908,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         text-transform: uppercase; color: var(--ink-2);
       }
       .valuation-status-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 3px; }
+      .valuation-source { margin: 0; color: var(--ink-3); font-size: 11.5px; }
       .valuation-status {
         color: var(--valuation-side);
         font: 750 clamp(32px, 4.4vw, 54px)/1.04 var(--font-display), sans-serif;
@@ -1087,6 +1088,19 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .stock-legend .stock-sma-long::before { border-top-style: dashed; }
       .stock-snapshot h2 { margin: 0; color: var(--ink-2); font-size: 14px; font-weight: 650; }
       .stock-snapshot-price { margin-top: 12px; font-size: clamp(30px, 4vw, 42px); font-weight: 750; font-variant-numeric: tabular-nums; }
+      .stock-chart-status {
+        margin: 28px 0;
+        min-height: 180px;
+        display: grid;
+        place-items: center;
+        color: var(--ink-2);
+        font-size: 14px;
+      }
+      .stock-data-source {
+        margin: 14px 0 0;
+        font-size: 11.5px;
+        color: var(--ink-3);
+      }
       .stock-snapshot dl { margin: 16px 0 0; }
       .stock-snapshot dl > div { padding: 13px 0; border-top: 1px solid var(--line); }
       .stock-snapshot dl > div:last-child { padding-bottom: 0; }

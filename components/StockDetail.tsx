@@ -1,6 +1,10 @@
+"use client";
+
 import { useMemo, useState, type CSSProperties } from "react";
 import { AnimatedPrice, useAnimatedNumber } from "@/components/AnimatedPrice";
-import { fmt, sample, series } from "@/lib/market";
+import { fmt, sample } from "@/lib/market";
+import { useCompanySnapshot } from "@/lib/useCompanyData";
+import { useStockHistory } from "@/lib/useMarketData";
 
 const RANGES = { "3M": 63, "6M": 126, "1Y": 252, "5Y": 1050, "All": 1260 };
 type Range = keyof typeof RANGES;
@@ -13,14 +17,10 @@ const CHART_MONTH_YEAR_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short", year: "2-digit", timeZone: "UTC",
 });
 
-function chartSessionDate(sessionsAgo: number) {
-  // Demo closing prices have no dates, so map sessions to the demo calendar.
-  const calendarDaysAgo = Math.round(sessionsAgo * 365.25 / RANGES["1Y"]);
-  return new Date(Date.UTC(2026, 10, 24 - calendarDaysAgo));
-}
-
 function average(prices: number[], end: number, days: number) {
-  return prices.slice(end - days + 1, end + 1).reduce((sum, price) => sum + price, 0) / days;
+  const start = Math.max(0, end - days + 1);
+  const slice = prices.slice(start, end + 1);
+  return slice.reduce((sum, price) => sum + price, 0) / slice.length;
 }
 
 function formatReturn(value: number) {
@@ -49,40 +49,73 @@ function AnimatedReturn({ value }: { value: number }) {
   );
 }
 
-function PriceChart({ ticker, lines, days }: { ticker: string; lines: number[][]; days: number }) {
+function PriceChart({
+  ticker,
+  lines,
+  days,
+  dates,
+}: {
+  ticker: string;
+  lines: number[][];
+  days: number;
+  dates: string[];
+}) {
   const left = 34;
   const right = 704;
   const top = 14;
   const bottom = 344;
-  const values = lines.flat();
-  const low = Math.min(...values);
-  const high = Math.max(...values);
+  // Ignore non-positive glitch values so a bad close cannot pin the axis at $0.
+  const values = lines.flat().filter((value) => Number.isFinite(value) && value > 0);
+  const low = values.length ? Math.min(...values) : 0;
+  const high = values.length ? Math.max(...values) : 1;
   const padding = (high - low) * 0.08 || 1;
   const max = high + padding;
   const min = Math.max(0, low - padding);
   const xAt = (progress: number) => left + progress * (right - left);
-  const yAt = (value: number) => bottom - (value - min) / (max - min) * (bottom - top);
+  const yAt = (value: number) => bottom - ((value - min) / (max - min)) * (bottom - top);
   const tickCount = days === RANGES["3M"] ? 4 : 5;
   const dateFormat = days <= RANGES["6M"] ? CHART_MONTH_FORMAT : CHART_MONTH_YEAR_FORMAT;
 
   return (
-    <svg className="stock-chart" viewBox="0 0 720 378"
-      role="img" aria-label={ticker + " sample closing prices with 50-day and 200-day moving averages"}>
+    <svg
+      className="stock-chart"
+      viewBox="0 0 720 378"
+      role="img"
+      aria-label={ticker + " closing prices with 50-day and 200-day moving averages"}
+    >
       {[0, 1, 2, 3, 4].map((tick) => {
-        const value = max - (max - min) * tick / 4;
+        const value = max - ((max - min) * tick) / 4;
         const y = yAt(value);
-        return <g key={tick}><line x1={left} x2={right} y1={y} y2={y} /><text x={left - 8} y={y} textAnchor="end" dominantBaseline="middle">${fmt(value, 0)}</text></g>;
+        return (
+          <g key={tick}>
+            <line x1={left} x2={right} y1={y} y2={y} />
+            <text x={left - 8} y={y} textAnchor="end" dominantBaseline="middle">
+              ${fmt(value, 0)}
+            </text>
+          </g>
+        );
       })}
       {lines.map((line, index) => (
-        <polyline key={index} className={["stock-close", "stock-sma-short", "stock-sma-long"][index]}
-          points={line.map((value, i) => `${xAt(i / (line.length - 1)).toFixed(2)},${yAt(value).toFixed(2)}`).join(" ")} />
+        <polyline
+          key={index}
+          className={["stock-close", "stock-sma-short", "stock-sma-long"][index]}
+          points={line
+            .map((value, i) => `${xAt(i / Math.max(1, line.length - 1)).toFixed(2)},${yAt(value).toFixed(2)}`)
+            .join(" ")}
+        />
       ))}
       {Array.from({ length: tickCount }, (_, tick) => {
         const progress = tick / (tickCount - 1);
-        const sessionsAgo = Math.round((days - 1) * (1 - progress));
+        const index = Math.min(dates.length - 1, Math.round(progress * (dates.length - 1)));
+        const iso = dates[index];
         return (
-          <text key={tick} x={xAt(progress)} y={370} textAnchor={progress === 1 ? "end" : progress === 0 ? "start" : "middle"}>
-            {dateFormat.format(chartSessionDate(sessionsAgo))}
+          <text
+            key={tick}
+            x={xAt(progress)}
+            y={370}
+            textAnchor={progress === 1 ? "end" : progress === 0 ? "start" : "middle"}
+          >
+            {iso ? dateFormat.format(new Date(iso + "T00:00:00Z")) : ""}
           </text>
         );
       })}
@@ -92,60 +125,104 @@ function PriceChart({ ticker, lines, days }: { ticker: string; lines: number[][]
 
 export function StockDetail({ ticker }: { ticker: string }) {
   const [range, setRange] = useState<Range>("1Y");
-  const { closes, shortSma, longSma } = useMemo(() => {
-    const history = series(ticker, "stock-detail", RANGES.All + 199);
-    const closes = history.slice(199);
-    return {
-      closes,
-      shortSma: closes.map((_, index) => average(history, index + 199, 50)),
-      longSma: closes.map((_, index) => average(history, index + 199, 200)),
-    };
-  }, [ticker]);
-  const { price, marketCapBillions, nextEarningsDate, dividendYieldPercent } = sample(ticker);
-  const short = shortSma[shortSma.length - 1];
-  const long = longSma[longSma.length - 1];
+  const { history, loading, error } = useStockHistory(ticker);
+  const { snapshot } = useCompanySnapshot(ticker);
+  const fallback = sample(ticker);
+
+  const chart = useMemo(() => {
+    const closes = history?.closes ?? [];
+    const dates = history?.dates ?? [];
+    if (closes.length < 2) {
+      return { closes: [] as number[], shortSma: [] as number[], longSma: [] as number[], dates: [] as string[] };
+    }
+
+    // Warm-up window for SMAs when history is short (free plans ≈ 1y).
+    const shortSma = closes.map((_, index) => average(closes, index, Math.min(50, index + 1)));
+    const longSma = closes.map((_, index) => average(closes, index, Math.min(200, index + 1)));
+    return { closes, shortSma, longSma, dates };
+  }, [history]);
+
+  const price = history?.price ?? snapshot?.price ?? fallback.price;
+  // Never substitute sample placeholders for filing-backed fields — show N/A instead of a fake number.
+  const marketCapBillions = snapshot?.marketCapBillions ?? null;
+  const nextEarningsDate = snapshot?.nextEarningsDate ?? null;
+  const dividendYieldPercent = snapshot?.dividendYieldPercent ?? null;
+  const earningsEstimated = snapshot?.nextEarningsEstimated ?? false;
+  const short = chart.shortSma[chart.shortSma.length - 1] ?? price;
+  const long = chart.longSma[chart.longSma.length - 1] ?? price;
   const signal = price < long ? "Strong Buy" : price < short ? "Buy" : "Hold";
   const signalClass = signal === "Hold" ? "stock-neutral" : "stock-positive";
-  const year = closes.slice(-RANGES["1Y"]);
-  const low = Math.min(...year);
-  const high = Math.max(...year);
-  const position = high > low ? (price - low) / (high - low) * 100 : 50;
+
+  const yearSlice = Math.min(RANGES["1Y"], chart.closes.length);
+  const year = chart.closes.slice(-yearSlice).filter((value) => value > 0 && Number.isFinite(value));
+  const lowCandidate = history?.low52 && history.low52 > 0 ? history.low52 : null;
+  const highCandidate = history?.high52 && history.high52 > 0 ? history.high52 : null;
+  const low = lowCandidate ?? (year.length ? Math.min(...year) : price * 0.85);
+  const high = highCandidate ?? (year.length ? Math.max(...year) : price * 1.15);
+  const position = high > low ? ((price - low) / (high - low)) * 100 : 50;
+
   let cross: { name: string; up: boolean } | undefined;
-  for (let i = shortSma.length - 1; i > 0; i--) {
-    const up = shortSma[i] >= longSma[i];
-    if (up !== (shortSma[i - 1] >= longSma[i - 1])) {
+  for (let i = chart.shortSma.length - 1; i > 0; i--) {
+    const up = chart.shortSma[i] >= chart.longSma[i];
+    if (up !== chart.shortSma[i - 1] >= chart.longSma[i - 1]) {
       cross = { name: up ? "Bullish Trend" : "Bearish Trend", up };
       break;
     }
   }
-  const days = RANGES[range];
-  const rangeReturn = (closes[closes.length - 1] / closes[closes.length - days] - 1) * 100;
+
+  const days = Math.min(RANGES[range], Math.max(2, chart.closes.length));
+  const rangeStart = Math.max(0, chart.closes.length - days);
+  const rangeCloses = chart.closes.slice(rangeStart);
+  const rangeDates = chart.dates.slice(rangeStart);
+  const rangeShort = chart.shortSma.slice(rangeStart);
+  const rangeLong = chart.longSma.slice(rangeStart);
+  const rangeReturn =
+    rangeCloses.length > 1 ? (rangeCloses[rangeCloses.length - 1] / rangeCloses[0] - 1) * 100 : 0;
 
   return (
     <section className="panel stock-detail" aria-label={ticker + " stock details"}>
       <article className="stock-chart-panel">
         <div className="stock-chart-header">
-          <div className="stock-ranges" role="group" aria-label="Chart range"
-            style={{ "--range-index": RANGE_OPTIONS.indexOf(range) } as CSSProperties}>
+          <div
+            className="stock-ranges"
+            role="group"
+            aria-label="Chart range"
+            style={{ "--range-index": RANGE_OPTIONS.indexOf(range) } as CSSProperties}
+          >
             {RANGE_OPTIONS.map((item) => (
-              <button type="button" key={item} aria-pressed={item === range} onClick={() => setRange(item)}>{item}</button>
+              <button type="button" key={item} aria-pressed={item === range} onClick={() => setRange(item)}>
+                {item}
+              </button>
             ))}
           </div>
           <div className="stock-chart-return">
             <span className="stock-chart-return-label">{range === "All" ? "All-time" : range} return</span>
-            <AnimatedReturn value={rangeReturn} />
+            {rangeCloses.length > 1 ? <AnimatedReturn value={rangeReturn} /> : <strong>—</strong>}
           </div>
         </div>
-        <PriceChart ticker={ticker} days={days} lines={[closes, shortSma, longSma].map((line) => line.slice(-days))} />
+        {loading && !history ? (
+          <p className="stock-chart-status">Loading Marketstack prices…</p>
+        ) : rangeCloses.length > 1 ? (
+          <PriceChart
+            ticker={ticker}
+            days={days}
+            dates={rangeDates}
+            lines={[rangeCloses, rangeShort, rangeLong]}
+          />
+        ) : (
+          <p className="stock-chart-status">{error || "No price history available yet."}</p>
+        )}
         <ul className="stock-legend" aria-label="Chart legend">
           <li className="stock-close">Closing price</li>
           <li className="stock-sma-short">50-day SMA</li>
           <li className="stock-sma-long">200-day SMA</li>
         </ul>
       </article>
-      <aside className="stock-snapshot" aria-label="Latest sample snapshot">
+      <aside className="stock-snapshot" aria-label="Latest snapshot">
         <h2>Latest snapshot</h2>
-        <div className="stock-snapshot-price"><AnimatedPrice price={price} /></div>
+        <div className="stock-snapshot-price">
+          <AnimatedPrice price={price} />
+        </div>
         <dl>
           <div>
             <dt>Signal</dt>
@@ -154,34 +231,43 @@ export function StockDetail({ ticker }: { ticker: string }) {
           <div>
             <dt>Market trend</dt>
             <dd className={cross ? (cross.up ? "stock-positive" : "stock-negative") : undefined}>
-              {cross?.up ? <SnapshotGlow label={cross.name} /> : cross?.name ?? "No crossover in sample"}
+              {cross?.up ? <SnapshotGlow label={cross.name} /> : (cross?.name ?? "No crossover yet")}
             </dd>
           </div>
           <div>
-            <dt>Next earnings</dt>
+            <dt>Next earnings{earningsEstimated ? " (est.)" : ""}</dt>
             <dd>
               {nextEarningsDate ? (
-                <time dateTime={nextEarningsDate}>{EARNINGS_DATE_FORMAT.format(new Date(nextEarningsDate))}</time>
-              ) : "N/A"}
+                <time dateTime={nextEarningsDate}>{EARNINGS_DATE_FORMAT.format(new Date(nextEarningsDate + "T00:00:00Z"))}</time>
+              ) : (
+                "N/A"
+              )}
             </dd>
           </div>
           <div>
             <dt>Market cap</dt>
             <dd>
-              {marketCapBillions === null ? "N/A" :
-                marketCapBillions >= 1000 ? "$" + fmt(marketCapBillions / 1000, 2) + "T" :
-                  "$" + fmt(marketCapBillions, 2) + "B"}
+              {marketCapBillions == null
+                ? "—"
+                : marketCapBillions >= 1000
+                  ? "$" + fmt(marketCapBillions / 1000, 2) + "T"
+                  : "$" + fmt(marketCapBillions, 2) + "B"}
             </dd>
           </div>
           <div>
             <dt>Dividend Yield</dt>
-            <dd>{fmt(dividendYieldPercent, 2)}%</dd>
+            <dd>{dividendYieldPercent == null ? "—" : fmt(dividendYieldPercent, 2) + "%"}</dd>
           </div>
           <div>
             <dt>52-Week Range</dt>
             <dd className="stock-range">
-              <div className="stock-range-track" aria-hidden="true"><span style={{ left: position + "%" }} /></div>
-              <div className="stock-range-labels"><span>${fmt(low, 2)}</span><span>${fmt(high, 2)}</span></div>
+              <div className="stock-range-track" aria-hidden="true">
+                <span style={{ left: position + "%" }} />
+              </div>
+              <div className="stock-range-labels">
+                <span>${fmt(low, 2)}</span>
+                <span>${fmt(high, 2)}</span>
+              </div>
             </dd>
           </div>
         </dl>

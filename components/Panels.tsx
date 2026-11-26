@@ -1,8 +1,12 @@
+"use client";
+
 import type { ReactNode } from "react";
 import { AnimatedPrice } from "@/components/AnimatedPrice";
 import { Fundamentals } from "@/components/Fundamentals";
 import { ValuationHistory } from "@/components/ValuationHistory";
 import { fmt, hashStr, nameOf, projectSim, rng, sample, series, type SimInput } from "@/lib/market";
+import { useCompanySnapshot, useCompanySnapshots } from "@/lib/useCompanyData";
+import { useQuotes, useStockHistory } from "@/lib/useMarketData";
 
 export type Section = "home" | "fundamental" | "learn" | "simulation" | "valuation" | "watchlist";
 
@@ -62,16 +66,25 @@ export function LineChart({ data, w, h, pad, label }: { data: number[]; w: numbe
 }
 
 function ChartPanel({ selected, range, onRange }: { selected: string; range: string; onRange: (range: string) => void }) {
-  const s = sample(selected);
+  const fallback = sample(selected);
+  const { history } = useStockHistory(selected);
   const pts = POINTS[range as (typeof RANGES)[number]] ?? 80;
+  const liveCloses = history?.closes ?? [];
+  const chartData =
+    liveCloses.length > 1
+      ? liveCloses.slice(-Math.min(pts, liveCloses.length))
+      : series(selected, range, pts);
+  const price = history?.price ?? fallback.price;
+  const change = history?.change ?? fallback.change;
+
   return (
     <article className="panel">
       <PanelHead title="Chart" sub={selected} />
       <div className="big-ticker">{selected}</div>
       <div className="big-name">{nameOf(selected)}</div>
-      <div className="big-price mono"><AnimatedPrice key={selected} price={s.price} /><span className="chg"><Chg c={s.change} /></span></div>
+      <div className="big-price mono"><AnimatedPrice key={selected} price={price} /><span className="chg"><Chg c={change} /></span></div>
       <div className="chart-box">
-        <LineChart data={series(selected, range, pts)} w={560} h={210} pad={8} label="Price chart" />
+        <LineChart data={chartData} w={560} h={210} pad={8} label="Price chart" />
       </div>
       <div className="range-row">{RANGES.map(function (r) {
           return (
@@ -80,12 +93,13 @@ function ChartPanel({ selected, range, onRange }: { selected: string; range: str
             </button>
           );
         })}</div>
-      <FootNote>Sample data for layout preview.</FootNote>
+      {!history ? <FootNote>Sample data for layout preview.</FootNote> : null}
     </article>
   );
 }
 
 function WatchPanel({ watchlist, selected, onSelect }: { watchlist: string[]; selected: string; onSelect: (tk: string) => void }) {
+  const { quotes } = useQuotes(watchlist);
   return (
     <article className="panel">
       <PanelHead title="Watchlist" sub={watchlist.length + " stocks"} />
@@ -99,24 +113,38 @@ function WatchPanel({ watchlist, selected, onSelect }: { watchlist: string[]; se
         </thead>
         <tbody>
           {watchlist.map(function (tk) {
+            const live = quotes[tk];
             const s = sample(tk);
+            const price = live?.source === "marketstack" ? live.price : s.price;
+            const change = live?.source === "marketstack" ? live.change : s.change;
             return (
               <tr key={tk} data-tk={tk} className={tk === selected ? "sel" : undefined} onClick={() => onSelect(tk)}>
-                <td className="tk">{tk}</td><td className="num mono"><AnimatedPrice price={s.price} /></td><td className="num mono"><Chg c={s.change} /></td>
+                <td className="tk">{tk}</td><td className="num mono"><AnimatedPrice price={price} /></td><td className="num mono"><Chg c={change} /></td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      <FootNote>Sample data for layout preview.</FootNote>
     </article>
   );
 }
 
 function ValuationPanel({ watchlist, selected, onSelect }: { watchlist: string[]; selected: string; onSelect: (tk: string) => void }) {
+  const { snapshots, loading } = useCompanySnapshots(watchlist);
+  const row = (tk: string) => {
+    const snap = snapshots[tk.toUpperCase()];
+    const fallback = sample(tk);
+    return {
+      pe: snap?.peTtm ?? fallback.fpe,
+      evn: snap?.evNopat ?? fallback.evn,
+      avg: snap?.evNopatAvg ?? fallback.avg,
+      live: snap?.sources.fundamentals === "edgar",
+    };
+  };
   const sorted = watchlist.slice().sort(function (a, b) {
-    return sample(a).evn - sample(b).evn;
+    return row(a).evn - row(b).evn;
   });
+  const liveCount = sorted.filter((tk) => row(tk).live).length;
   return (
     <article className="panel">
       <PanelHead title="Valuation" sub="sorted by EV/NOPAT" />
@@ -124,23 +152,23 @@ function ValuationPanel({ watchlist, selected, onSelect }: { watchlist: string[]
         <thead>
           <tr>
             <th>Ticker</th>
-            <th className="num">Fwd P/E</th>
+            <th className="num">P/E (TTM)</th>
             <th className="num">EV/NOPAT</th>
-            <th className="num">10Y Avg</th>
+            <th className="num">Hist Avg</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map(function (tk) {
-            const s = sample(tk);
+            const s = row(tk);
             return (
               <tr key={tk} data-tk={tk} className={tk === selected ? "sel" : undefined} onClick={() => onSelect(tk)}>
-                <td className="tk">{tk}</td><td className="num mono">{fmt(s.fpe, 1)}x</td><td className="num mono">{fmt(s.evn, 1)}x</td><td className="num mono">{fmt(s.avg, 1)}x</td>
+                <td className="tk">{tk}</td><td className="num mono">{fmt(s.pe, 1)}x</td><td className="num mono">{fmt(s.evn, 1)}x</td><td className="num mono">{fmt(s.avg, 1)}x</td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      <FootNote>Sample data for layout preview.</FootNote>
+      {loading ? <FootNote>Loading…</FootNote> : !liveCount ? <FootNote>Sample data for layout preview.</FootNote> : null}
     </article>
   );
 }
@@ -155,9 +183,17 @@ function BarRow({ label, val, max, suffix }: { label: string; val: number; max: 
 }
 
 function ValuationDetailPanel({ selected, watchlist, showStockName = true }: { selected: string; watchlist: string[]; showStockName?: boolean }) {
-  const s = sample(selected);
+  const { snapshot } = useCompanySnapshot(selected);
+  const { snapshots } = useCompanySnapshots(watchlist);
+  const fallback = sample(selected);
+  const s = {
+    fpe: snapshot?.peTtm ?? fallback.fpe,
+    evn: snapshot?.evNopat ?? fallback.evn,
+    avg: snapshot?.evNopatAvg ?? fallback.avg,
+  };
   const evs = watchlist.map(function (tk) {
-    return sample(tk).evn;
+    const snap = snapshots[tk.toUpperCase()];
+    return snap?.evNopat ?? sample(tk).evn;
   });
   const med = evs.length
     ? evs.slice().sort(function (a, b) {
@@ -168,29 +204,35 @@ function ValuationDetailPanel({ selected, watchlist, showStockName = true }: { s
   return (
     <article className="panel">
       <PanelHead title={showStockName ? "Valuation — " + selected : "Valuation"} sub={showStockName ? nameOf(selected) : undefined} />
-      <BarRow label="Fwd P/E" val={s.fpe} max={50} suffix="x" />
+      <BarRow label="P/E (TTM)" val={s.fpe} max={50} suffix="x" />
       <BarRow label="EV/NOPAT" val={s.evn} max={55} suffix="x" />
-      <BarRow label="10Y Avg" val={s.avg} max={55} suffix="x" />
+      <BarRow label="History avg" val={s.avg} max={55} suffix="x" />
       <BarRow label="Median" val={med} max={55} suffix="x" />
       <p style={{ fontSize: "14.5px", lineHeight: 1.6, color: "var(--ink-2)", margin: "14px 0 0" }}>
         {verdict} EV/NOPAT is enterprise value divided by after-tax operating income — the v2 headline multiple.
       </p>
-      <FootNote>Sample data for layout preview.</FootNote>
+      {snapshot?.sources.fundamentals !== "edgar" ? <FootNote>Sample data for layout preview.</FootNote> : null}
     </article>
   );
 }
 
 function FundamentalPanel({ selected }: { selected: string }) {
+  const { snapshot } = useCompanySnapshot(selected);
   const s = sample(selected);
-  const r = rng(hashStr(selected + ":rev"));
-  const years: number[] = [];
-  const vals: number[] = [];
-  let v = s.rev / Math.pow(1 + s.growth / 100, 4);
-  for (let i = 0; i < 5; i++) {
-    years.push(2022 + i);
-    vals.push(v);
-    v *= 1 + (s.growth + (r() - 0.5) * 6) / 100;
-  }
+  const hist = snapshot?.revenueHistory?.length ? snapshot.revenueHistory : null;
+  const vals = hist
+    ? hist.slice(-5)
+    : (() => {
+        const r = rng(hashStr(selected + ":rev"));
+        const out: number[] = [];
+        let v = s.rev / Math.pow(1 + s.growth / 100, 4);
+        for (let i = 0; i < 5; i++) {
+          out.push(v);
+          v *= 1 + (s.growth + (r() - 0.5) * 6) / 100;
+        }
+        return out;
+      })();
+  const growth = snapshot?.growthYoY ?? s.growth;
   const max = Math.max.apply(null, vals);
   const bw = 64;
   const gap = 26;
@@ -199,15 +241,15 @@ function FundamentalPanel({ selected }: { selected: string }) {
   return (
     <article className="panel">
       <PanelHead title={"Revenue — " + selected} sub="trailing twelve months, $B" />
-      <svg viewBox="0 0 480 200" role="img" aria-label="Revenue by year chart" style={{ width: "100%", height: "auto", display: "block" }}>
+      <svg viewBox="0 0 480 200" role="img" aria-label="Revenue by period chart" style={{ width: "100%", height: "auto", display: "block" }}>
         {vals.map(function (val, i) {
           const h = (val / max) * (base - top);
           const x = 20 + i * (bw + gap);
           return (
-            <g key={years[i]}>
+            <g key={i}>
               <rect x={x} y={base - h} width={bw} height={h} rx="5" fill="var(--ink)" opacity={i === vals.length - 1 ? "1" : "0.35"} />
               <text x={x + bw / 2} y={base + 22} textAnchor="middle" fontSize="12" fill="var(--ink-3)">
-                {years[i]}
+                {i === vals.length - 1 ? "TTM" : `${vals.length - 1 - i}q`}
               </text>
               <text x={x + bw / 2} y={base - h - 8} textAnchor="middle" fontSize="12" fontWeight="700" fill="var(--ink)">
                 ${fmt(val, 0)}B
@@ -217,9 +259,9 @@ function FundamentalPanel({ selected }: { selected: string }) {
         })}
       </svg>
       <p style={{ fontSize: "14px", color: "var(--ink-2)", margin: "10px 0 0" }}>
-        TTM revenue growth <strong style={{ color: "var(--ink)" }}>+{fmt(s.growth, 1)}%</strong> year over year.
+        TTM revenue growth <strong style={{ color: "var(--ink)" }}>{growth >= 0 ? "+" : ""}{fmt(growth, 1)}%</strong> year over year.
       </p>
-      <FootNote>Sample data for layout preview.</FootNote>
+      {snapshot?.sources.fundamentals !== "edgar" ? <FootNote>Sample data for layout preview.</FootNote> : null}
     </article>
   );
 }
@@ -235,21 +277,29 @@ function Stat({ k, v, d }: { k: string; v: string; d: string }) {
 }
 
 function StatsPanel({ selected }: { selected: string }) {
-  const s = sample(selected);
+  const { snapshot } = useCompanySnapshot(selected);
+  const fallback = sample(selected);
+  const rev = snapshot?.revBillions ?? fallback.rev;
+  const growth = snapshot?.growthYoY ?? fallback.growth;
+  const eps = snapshot?.epsTtm ?? fallback.eps;
+  const fcf = snapshot?.fcfBillions ?? fallback.fcf;
+  const opinc = snapshot?.opincBillions ?? fallback.opinc;
+  const pe = snapshot?.peTtm ?? fallback.fpe;
+  const de = snapshot?.de ?? fallback.de;
   return (
     <article className="panel">
       <PanelHead title={"Fundamentals — " + selected} sub="TTM" />
       <div className="stat-grid">{[
-        <Stat key="rev" k="Revenue" v={"$" + fmt(s.rev, 1) + "B"} d={"+" + fmt(s.growth, 1) + "% YoY"} />,
-        <Stat key="eps" k="EPS" v={"$" + fmt(s.eps, 2)} d="diluted, TTM" />,
-        <Stat key="fcf" k="Free cash flow" v={"$" + fmt(s.fcf, 1) + "B"} d={fmt((s.fcf / s.rev) * 100, 0) + "% of revenue"} />,
-        <Stat key="op" k="Operating income" v={"$" + fmt(s.opinc, 1) + "B"} d={fmt((s.opinc / s.rev) * 100, 0) + "% margin"} />,
+        <Stat key="rev" k="Revenue" v={"$" + fmt(rev, 1) + "B"} d={(growth >= 0 ? "+" : "") + fmt(growth, 1) + "% YoY"} />,
+        <Stat key="eps" k="EPS" v={"$" + fmt(eps, 2)} d="diluted, TTM" />,
+        <Stat key="fcf" k="Free cash flow" v={"$" + fmt(fcf, 1) + "B"} d={fmt((fcf / Math.max(rev, 0.01)) * 100, 0) + "% of revenue"} />,
+        <Stat key="op" k="Operating income" v={"$" + fmt(opinc, 1) + "B"} d={fmt((opinc / Math.max(rev, 0.01)) * 100, 0) + "% margin"} />,
       ]}</div>
       <div className="stat-grid" style={{ marginTop: 12 }}>{[
-        <Stat key="pe" k="Forward P/E" v={fmt(s.fpe, 1) + "x"} d="next-twelve-month earnings" />,
-        <Stat key="de" k="Debt / Equity" v={s.de} d="total liabilities basis" />,
+        <Stat key="pe" k="P/E (TTM)" v={fmt(pe, 1) + "x"} d="price ÷ TTM diluted EPS" />,
+        <Stat key="de" k="Debt / Equity" v={de ?? "—"} d="from filings + market cap" />,
       ]}</div>
-      <FootNote>Sample data for layout preview.</FootNote>
+      {snapshot?.sources.fundamentals !== "edgar" ? <FootNote>Sample data for layout preview.</FootNote> : null}
     </article>
   );
 }

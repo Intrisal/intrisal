@@ -17,6 +17,7 @@ import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
 import { DEFAULT_WATCHLIST, SIM_DEFAULT, exchangeOf, fmt, nameOf, sample, searchCatalog, type SimInput } from "@/lib/market";
+import { useQuotes } from "@/lib/useMarketData";
 
 type ThemeChoice = "auto" | "light" | "dark";
 type MenuId = "profile" | "help";
@@ -72,6 +73,7 @@ export function Dashboard() {
   const watchDockRef = useRef<HTMLDivElement>(null);
   const watchDockStart = useRef<Map<string, DOMRect> | null>(null);
   const toastTimer = useRef<number | null>(null);
+  const { quotes } = useQuotes(watchlist);
 
   useLayoutEffect(() => {
     const dock = watchDockRef.current;
@@ -407,10 +409,13 @@ export function Dashboard() {
               </div>
               <div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Full watchlist">
                 {listOpen && watchlist.map((tk) => {
+                  const live = quotes[tk];
                   const s = sample(tk);
-                  const up = s.change >= 0;
+                  const price = live?.source === "marketstack" ? live.price : s.price;
+                  const change = live?.source === "marketstack" ? live.change : s.change;
+                  const up = change >= 0;
                   return (
-                    <button type="button" key={tk} onClick={() => openStock(tk)}><span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span><span className="mono"><AnimatedPrice price={s.price} /></span><span className="mono"><span className={up ? "chg-up" : "chg-dn"}>{up ? "▲" : "▼"} {up ? "+" : ""}{fmt(s.change, 2)}%</span></span></button>
+                    <button type="button" key={tk} onClick={() => openStock(tk)}><span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span><span className="mono"><AnimatedPrice price={price} /></span><span className="mono"><span className={up ? "chg-up" : "chg-dn"}>{up ? "▲" : "▼"} {up ? "+" : ""}{fmt(change, 2)}%</span></span></button>
                   );
                 })}
               </div>
