@@ -19,9 +19,10 @@ import { Stars } from "@/components/Stars";
 import { DEFAULT_WATCHLIST, SIM_DEFAULT, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, type SimInput } from "@/lib/market";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
-import { RouteArrive } from "@/components/RouteArrive";
-import { navigateWithCurtain } from "@/lib/routeTransition";
+import { SKY_PAN_MS } from "@/components/landing/intro";
+import { consumeFlag, navigateWithCurtain, ROUTE_FROM_LANDING_KEY } from "@/lib/routeTransition";
 import { signOutAndReload, useSessionUser } from "@/lib/useSessionUser";
+import "@/components/landing/landing.css";
 
 type ThemeChoice = "auto" | "light" | "dark";
 type MenuId = "profile" | "help";
@@ -73,6 +74,13 @@ export function Dashboard() {
   const [sim, setSim] = useState<SimInput>(SIM_DEFAULT);
   const [toastMsg, setToastMsg] = useState("");
   const [toastOn, setToastOn] = useState(false);
+  // Read once on mount so the first paint already hides chrome when arriving from landing.
+  const [enterFromLanding] = useState(() => {
+    if (typeof window === "undefined") return false;
+    if (!consumeFlag(ROUTE_FROM_LANDING_KEY)) return false;
+    return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  });
+  const [skyReady, setSkyReady] = useState(!enterFromLanding);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const searchDockStart = useRef<DOMRect | null>(null);
@@ -130,6 +138,13 @@ export function Dashboard() {
     setThemeReady(true);
     document.documentElement.setAttribute("data-theme", choice === "auto" ? autoTheme() : choice);
   }, []);
+
+  // Sky pan + chrome load-in only when Open platform brought us here — not when tapping Home later.
+  useEffect(() => {
+    if (!enterFromLanding || skyReady) return;
+    const timer = window.setTimeout(() => setSkyReady(true), SKY_PAN_MS);
+    return () => window.clearTimeout(timer);
+  }, [enterFromLanding, skyReady]);
 
   useEffect(() => {
     if (!themeReady) return;
@@ -323,10 +338,30 @@ export function Dashboard() {
 
   return (
     <>
-      <RouteArrive kind="platform" />
-      <Stars />
-      <div className="aurora" aria-hidden="true" />
-      <div className="shell">
+      {enterFromLanding ? (
+        <div
+          className={"platform-sky is-sky-pan-right" + (skyReady ? " is-ready" : "")}
+          aria-hidden="true"
+        >
+          {/* Keep this cosmos mounted after the pan — resizing it to inset 0 remounts the starfield and chops. */}
+          <div className="landing-cosmos">
+            <Stars />
+            <div className="aurora" />
+          </div>
+        </div>
+      ) : (
+        <>
+          <Stars />
+          <div className="aurora" aria-hidden="true" />
+        </>
+      )}
+      <div
+        className={
+          "shell" +
+          (enterFromLanding ? " platform-enter" : "") +
+          (enterFromLanding && skyReady ? " is-enter-ready" : "")
+        }
+      >
         <header className={isStock ? "topbar stock-topbar" : "topbar"}><div className="left">
             <button
               className="icon-btn"
@@ -348,7 +383,6 @@ export function Dashboard() {
               ) : (
                 <p>Appearance and page switching live here.</p>
               )}
-              <div className="row-label">Pages</div>
               <button
                 type="button"
                 className="menu-link"
@@ -358,11 +392,8 @@ export function Dashboard() {
                   void navigateWithCurtain("/", "to-landing");
                 }}
               >
-                Landing page
+                Back to Intrisal
               </button>
-              <a className="menu-link" href="/home" role="menuitem" aria-current="page">
-                Platform
-              </a>
               <div className="row-label">Appearance</div>
               <div className="seg" role="group" aria-label="Theme">{(["auto", "light", "dark"] as const).map((choice) => (
                   <button key={choice} type="button" data-theme-choice={choice} aria-pressed={themePressed(choice)} onClick={() => chooseTheme(choice)}>

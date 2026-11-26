@@ -108,7 +108,7 @@ export function LandingTopbar() {
               <>
                 <p className="landing-profile-kicker">Pages</p>
                 <Link className="landing-profile-link" href="/" role="menuitem" aria-current="page" onClick={() => setOpen(false)}>
-                  Landing page
+                  Intrisal
                 </Link>
                 <Link className="landing-profile-link" href="/login" role="menuitem" onClick={() => setOpen(false)}>
                   Sign in

@@ -14,6 +14,7 @@ export const metadata: Metadata = {
     icon: [
       { url: "/brand/favicon-16.png", sizes: "16x16", type: "image/png" },
       { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/favicon-48.png", sizes: "48x48", type: "image/png" },
       { url: "/brand/intrisal-icon-signal-256.png", sizes: "256x256", type: "image/png" },
     ],
     apple: [{ url: "/brand/intrisal-icon-signal-256.png", sizes: "256x256", type: "image/png" }],

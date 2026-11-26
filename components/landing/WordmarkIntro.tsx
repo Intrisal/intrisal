@@ -32,6 +32,7 @@ export function WordmarkIntro({ ready, skipIntro = false }: WordmarkIntroProps) 
   skipIntroRef.current = skipIntro;
 
   // Before paint: park the brand at viewport center, scaled up.
+  // Depends on skipIntro so pending→intro can still park after the hold frame.
   useLayoutEffect(() => {
     const mark = markRef.current;
     if (!mark) return;
@@ -73,7 +74,7 @@ export function WordmarkIntro({ ready, skipIntro = false }: WordmarkIntroProps) 
     startRef.current = { dx, dy, scale };
     mark.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`;
     setPrepared(true);
-  }, [ready]);
+  }, [ready, skipIntro]);
 
   // When intro finishes: ease back to the natural layout slot.
   useEffect(() => {

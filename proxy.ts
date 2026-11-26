@@ -5,7 +5,7 @@ import { getSessionFromCookieHeader } from "@/lib/authSession";
  * Gate the product surface and its data APIs.
  * Signed-in users may still visit the landing page; login/signup redirect home.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const session = await getSessionFromCookieHeader(request.headers.get("cookie"));
 

@@ -17,6 +17,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         --hover: #f0f0f0;
         --focus: #0a0a0a;
         --shadow: 0 18px 50px rgba(0, 0, 0, 0.14);
+        /* Shared landing/platform chrome so the profile control shares one spot */
+        --chrome-gutter: clamp(16px, 3vw, 28px);
+        --chrome-top: 18px;
         color-scheme: light;
       }
       [data-theme="dark"] {
@@ -136,7 +139,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         to { transform: translate3d(5%, -4%, 0) rotate(-17deg) scale(1); opacity: 0.72; }
       }
 
-      .shell { position: relative; z-index: 1; padding: 0 clamp(16px, 3vw, 28px) 40px; }
+      .shell { position: relative; z-index: 1; padding: 0 var(--chrome-gutter, clamp(16px, 3vw, 28px)) 40px; }
 
       /* Home idle fits the viewport — no page scroll unless search results need the page. */
       html:has(.layout.home):not(:has(.results.open)),
@@ -161,7 +164,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       /* ---------- Top bar ---------- */
       .topbar {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 18px 0 4px;
+        padding: max(var(--chrome-top), env(safe-area-inset-top)) 0 4px;
       }
       .topbar .left { position: relative; }
       .topbar .right { position: relative; }
@@ -1316,64 +1319,10 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
           animation: none !important;
         }
       }
-      /* Landing ↔ platform hop */
-      .route-curtain {
-        position: fixed;
-        inset: 0;
-        z-index: 10000;
-        pointer-events: auto;
-        background:
-          radial-gradient(ellipse 70% 50% at 50% -10%, rgba(252, 243, 234, 0.08), transparent 60%),
-          #100e11;
-      }
-      .route-curtain--to-platform {
-        transform: translate3d(-100%, 0, 0);
-      }
-      .route-curtain--to-landing {
-        transform: translate3d(100%, 0, 0);
-      }
-      .route-curtain--to-platform.is-covering {
-        animation: route-curtain-cover-right 0.52s cubic-bezier(0.22, 0.82, 0.2, 1) forwards;
-      }
-      .route-curtain--to-landing.is-covering {
-        animation: route-curtain-cover-left 0.52s cubic-bezier(0.22, 0.82, 0.2, 1) forwards;
-      }
-      .route-curtain--to-platform.is-arrive.is-covering {
-        animation: none;
-        transform: translate3d(0, 0, 0);
-      }
-      .route-curtain--to-landing.is-arrive.is-covering {
-        animation: none;
-        transform: translate3d(0, 0, 0);
-      }
-      .route-curtain--to-platform.is-clearing {
-        animation: route-curtain-clear-right 0.52s cubic-bezier(0.22, 0.82, 0.2, 1) forwards;
-      }
-      .route-curtain--to-landing.is-clearing {
-        animation: route-curtain-clear-left 0.52s cubic-bezier(0.22, 0.82, 0.2, 1) forwards;
-      }
-      @keyframes route-curtain-cover-right {
-        from { transform: translate3d(-100%, 0, 0); }
-        to { transform: translate3d(0, 0, 0); }
-      }
-      @keyframes route-curtain-cover-left {
-        from { transform: translate3d(100%, 0, 0); }
-        to { transform: translate3d(0, 0, 0); }
-      }
-      @keyframes route-curtain-clear-right {
-        from { transform: translate3d(0, 0, 0); }
-        to { transform: translate3d(100%, 0, 0); }
-      }
-      @keyframes route-curtain-clear-left {
-        from { transform: translate3d(0, 0, 0); }
-        to { transform: translate3d(-100%, 0, 0); }
-      }
-
       @media (prefers-reduced-motion: reduce) {
-        *:not(.route-curtain) { transition: none !important; }
+        * { transition: none !important; }
         #stars-deep, .aurora::before, .aurora::after,
-        .section-stage, .stock-analysis-switch, .stock-analysis-panels,
-        .route-curtain {
+        .section-stage, .stock-analysis-switch, .stock-analysis-panels {
           animation: none !important;
         }
       }

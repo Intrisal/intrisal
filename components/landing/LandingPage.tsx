@@ -7,7 +7,6 @@ import { LandingTopbar } from "@/components/landing/LandingTopbar";
 import { LandingShooters } from "@/components/landing/LandingShooters";
 import { decideLandingSky, LANDING_INTRO_MS, SKY_PAN_MS } from "@/components/landing/intro";
 import { WordmarkIntro } from "@/components/landing/WordmarkIntro";
-import { RouteArrive } from "@/components/RouteArrive";
 import { Stars } from "@/components/Stars";
 import "@/components/landing/landing.css";
 
@@ -38,7 +37,8 @@ export function LandingPage() {
     return () => window.clearTimeout(timer);
   }, [skyMode]);
 
-  const fromAuth = skyMode === "pan-left";
+  // Pending / pan returns must not park the brand large — that caused the choppy shrink.
+  const skipIntro = skyMode !== "intro";
 
   return (
     <div
@@ -50,7 +50,6 @@ export function LandingPage() {
       }
       data-theme="dark"
     >
-      <RouteArrive kind="landing" />
       <div className="landing-cosmos" aria-hidden="true" key={skyMode}>
         <Stars />
         <div className="aurora" />
@@ -62,7 +61,7 @@ export function LandingPage() {
         <main>
           <section className="landing-hero" aria-label="Intrisal">
             <div className="landing-hero-inner">
-              <WordmarkIntro ready={ready} skipIntro={fromAuth} />
+              <WordmarkIntro ready={ready} skipIntro={skipIntro} />
               <div className="landing-hero-rest">
                 <h2 className="landing-headline">Know if a stock is worth buying — and why.</h2>
                 <p className="landing-support">

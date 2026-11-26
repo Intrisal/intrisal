@@ -1,10 +1,10 @@
 /** First-visit / refresh landing wordmark + hard space-spin. */
 export const LANDING_INTRO_MS = 1350;
 
-/** Auth ↔ landing sky pan. */
+/** Auth ↔ landing sky pan (also platform → landing). */
 export const SKY_PAN_MS = 1100;
 
-/** Set while on auth pages; landing peeks this to pan instead of twirling. */
+/** Set while on auth pages / leaving platform; landing peeks this to pan instead of twirling. */
 export const SKY_FROM_AUTH_KEY = "intrisal-from-auth";
 
 type LandingSkyMode = "intro" | "pan-left";
@@ -47,7 +47,7 @@ export function resetLandingSkyDecision() {
 
 /**
  * Fresh visit / refresh → intro twirl.
- * Back from signup/login → pan left (opposite of the to-auth pan right).
+ * Back from signup/login/platform → pan left (opposite of the to-auth / to-platform pan right).
  * Storage is cleared immediately; the in-memory cache covers Strict Mode remounts
  * so a landing refresh still gets the twirl.
  */

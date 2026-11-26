@@ -1,5 +1,5 @@
 /**
- * Edge-safe session token helpers (Web Crypto). Used by middleware and auth APIs.
+ * Edge-safe session token helpers (Web Crypto). Used by proxy and auth APIs.
  */
 
 export type SessionPayload = {
