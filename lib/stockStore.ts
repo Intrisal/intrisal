@@ -182,3 +182,18 @@ export async function readValuations(ticker: string) {
   });
   return rows.reverse();
 }
+
+export async function valuationReviewTickers() {
+  return rest<Pick<StoredTicker, "ticker" | "edgar_snapshot">[]>("tickers", {
+    select: "ticker,edgar_snapshot", edgar_snapshot: "not.is.null", order: "ticker",
+  });
+}
+
+export function saveValuationReview(ticker: string, points: ValuationPoint[]) {
+  return upsert("valuation_history_review", "ticker", [{ ticker, points }]);
+}
+
+export async function readValuationReview(ticker: string) {
+  const [row] = await rest<{ points: ValuationPoint[] }[]>("valuation_history_review", { select: "points", ticker: "eq." + ticker });
+  return row?.points ?? [];
+}

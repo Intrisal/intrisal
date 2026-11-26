@@ -5,7 +5,8 @@
 
 import { EPS_SPLIT_BASIS_VERSION, fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries, type ReportingCurrency } from "@/lib/edgar";
 import { isKnownFund } from "@/lib/market";
-import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuations, saveFundamentals, saveValuations, type ValuationPoint } from "@/lib/stockStore";
+import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuations, type ValuationPoint } from "@/lib/stockStore";
+import { canReviewValuation, prepareValuationReview, valuationBenchmark } from "@/lib/valuationReview";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 
@@ -22,6 +23,7 @@ export type CompanySnapshot = {
   /** Average of available quarterly multiples in the ten years ending at the latest valuation quarter. */
   evNopatAvg: number | null;
   evNopatAverageQuarters?: number;
+  valuationReview?: boolean;
   revBillions: number | null;
   growthYoY: number | null;
   epsTtm: number | null;
@@ -149,6 +151,7 @@ function buildFromEdgar(
   change: number | null,
   priceSource: CompanySnapshot["sources"]["prices"],
   valuationPoints: ValuationPoint[],
+  valuationReview: boolean,
 ): CompanySnapshot {
   const revTtm = ttm(edgar.revenue);
   const opTtm = ttm(edgar.operatingIncome);
@@ -178,14 +181,14 @@ function buildFromEdgar(
     compatiblePriceCurrency && marketCapBillions != null && edgar.debtBillions != null && edgar.cashBillions != null
       ? marketCapBillions + edgar.debtBillions - edgar.cashBillions
       : null;
-  const evNopat = enterpriseValue != null && nopat && nopat > 0 ? enterpriseValue / nopat : null;
+  const evNopat = valuationReview
+    ? price == null ? null : prepareValuationReview(ticker, edgar).atLatestClose(price)?.ev_nopat ?? null
+    : enterpriseValue != null && nopat && nopat > 0 ? enterpriseValue / nopat : null;
 
   if (reportingCurrency !== "USD") valuationPoints = [];
   const evNopatHistory = valuationPoints.map((point) => point.ev_nopat);
-  const latestQuarter = valuationPoints.at(-1)?.quarter;
   // Exclude the matching quarter ten years earlier, giving 40 points when coverage is complete.
-  const start = latestQuarter ? `${Number(latestQuarter.slice(0, 4)) - 10}${latestQuarter.slice(4)}` : null;
-  const benchmark = start ? valuationPoints.filter(({ quarter }) => quarter > start) : [];
+  const benchmark = valuationBenchmark(valuationPoints);
 
   const peTtm = compatiblePriceCurrency && price != null && (!asmlEpsIsTtm || edgar.reportingCurrency === "USD") && epsTtm
     ? price / epsTtm
@@ -206,6 +209,7 @@ function buildFromEdgar(
       ? benchmark.reduce((total, { ev_nopat }) => total + ev_nopat, 0) / benchmark.length
       : null,
     evNopatAverageQuarters: benchmark.length,
+    valuationReview,
     revBillions: revTtm,
     growthYoY,
     epsTtm,
@@ -246,8 +250,13 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
   ]) : [undefined, null];
 
   let edgar = isFund ? null : stored?.edgar_snapshot ?? null;
-  let valuations = edgar ? await readValuations(id).catch(() => []) : [];
-  if (!isFund && !canUseDilutedEps(id, edgar)) {
+  const review = process.env.INTRISAL_VALUATION_REVIEW === "1"
+    && (process.env.VERCEL_ENV === "preview" || process.env.NODE_ENV === "development");
+  const valuationReview = review && canReviewValuation(id, edgar);
+  let valuations = edgar
+    ? await (valuationReview ? readValuationReview(id) : readValuations(id)).catch(() => [])
+    : [];
+  if (!review && !isFund && !canUseDilutedEps(id, edgar)) {
     try {
       const needsEpsRefresh = Boolean(edgar);
       const fetched = await fetchEdgarFundamentals(id, needsEpsRefresh);
@@ -270,7 +279,7 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
   const price = quote?.price ?? null;
   const change = quote?.change ?? null;
   const snapshot = edgar
-    ? buildFromEdgar(id, edgar, price, change, priceSource, valuations)
+    ? buildFromEdgar(id, edgar, price, change, priceSource, valuations, valuationReview)
     : withoutFilings(id, price, change, priceSource);
   return { ...snapshot, isFund, priceAsOf: quote?.date };
 }

@@ -1,7 +1,8 @@
 begin;
 
 alter table public.fundamentals_quarterly
-  add column if not exists reporting_currency text not null default 'USD';
+  add column if not exists reporting_currency text not null default 'USD',
+  add column if not exists sti double precision;
 
 create schema if not exists intrisal_private;
 revoke all on schema intrisal_private from public;
@@ -108,8 +109,8 @@ begin
   if snapshot is null then return new; end if;
   if tg_op = 'UPDATE' then previous := old.edgar_snapshot; end if;
 
-  insert into public.fundamentals_quarterly
-    (ticker, quarter, reporting_currency, revenue, operating_income, diluted_eps, free_cash_flow, tax, pretax, debt, cash, shares)
+  insert into public.fundamentals_quarterly as stored
+    (ticker, quarter, reporting_currency, revenue, operating_income, diluted_eps, free_cash_flow, tax, pretax, debt, cash, shares, sti)
   with metrics as (
     select point.period_end, key, point.amount
     from unnest(array['revenue','operatingIncome','dilutedEps','freeCashFlow','tax','pretax']) as metric(key)
@@ -132,7 +133,8 @@ begin
     max(amount) filter (where key = 'pretax'),
     (snapshot -> 'balances' -> (dates.period_end::text) ->> 'debt')::double precision,
     (snapshot -> 'balances' -> (dates.period_end::text) ->> 'cash')::double precision,
-    (snapshot -> 'balances' -> (dates.period_end::text) ->> 'shares')::double precision
+    (snapshot -> 'balances' -> (dates.period_end::text) ->> 'shares')::double precision,
+    (snapshot -> 'balances' -> (dates.period_end::text) ->> 'sti')::double precision
   from dates left join metrics using (period_end)
   group by dates.period_end
   on conflict (ticker, quarter) do update set
@@ -145,7 +147,8 @@ begin
     pretax = excluded.pretax,
     debt = excluded.debt,
     cash = excluded.cash,
-    shares = excluded.shares;
+    shares = excluded.shares,
+    sti = coalesce(excluded.sti, case when stored.reporting_currency = excluded.reporting_currency then stored.sti end);
 
   return new;
 end;

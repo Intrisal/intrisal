@@ -62,7 +62,7 @@ export type EdgarFundamentals = {
   freeCashFlow: QuarterlySeries;
   tax: QuarterlySeries;
   pretax: QuarterlySeries;
-  balances: Record<string, { debt: number | null; cash: number | null; shares: number | null }>;
+  balances: Record<string, { debt: number | null; cash: number | null; shares: number | null; sti?: number | null }>;
   /** Instant shares outstanding (billions) */
   sharesOutstandingBillions: number | null;
   /** Instant cash, USD billions */
