@@ -4,6 +4,7 @@ create table if not exists public.valuation_history_review (
 );
 
 alter table public.valuation_history_review enable row level security;
+alter table public.valuation_history_review add column if not exists current_point jsonb;
 revoke all on public.valuation_history_review from public, anon, authenticated;
 grant select, insert, update on public.valuation_history_review to service_role;
 notify pgrst, 'reload schema';

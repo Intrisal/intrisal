@@ -8,6 +8,7 @@ import { quarterLabelFromEnd } from "@/components/Fundamentals";
 
 const DAY_MS = 86_400_000;
 const VALUATION_MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+const VALUATION_CLOSE_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 
 function multiple(value: number) {
   return `${fmt(value, 1)}x`;
@@ -28,7 +29,24 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   const average = snapshot?.evNopatAvg;
   const benchmarkQuarters = snapshot?.evNopatAverageQuarters;
   const review = snapshot?.valuationReview === true;
-  if (count < 2 || average == null) return <p className="panel">{loading ? "Loading valuation history…" : "Data unavailable. More reported financials and historical prices are needed to chart valuation history."}</p>;
+  const currentMultiple = review && (
+    <p className="valuation-caption">
+      Current EV/NOPAT{" "}
+      <strong>{snapshot.evNopat == null ? "Data unavailable" : multiple(snapshot.evNopat)}</strong>
+      {snapshot.valuationPriceAsOf && <>
+        {" · Close as of "}
+        <time dateTime={snapshot.valuationPriceAsOf}>
+          {VALUATION_CLOSE_FORMAT.format(new Date(snapshot.valuationPriceAsOf + "T00:00:00Z"))}
+        </time>
+      </>}
+    </p>
+  );
+  if (count < 2 || average == null) return (
+    <article className="panel">
+      {currentMultiple}
+      <p>{loading ? "Loading valuation history…" : "Data unavailable. More reported financials and historical prices are needed to chart valuation history."}</p>
+    </article>
+  );
   const active = Math.min(hovered ?? count - 1, count - 1);
   const values = quarters.map(({ value }) => value);
   const low = Math.min(...values);
@@ -80,8 +98,9 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
           {fmt(difference, 1)}% vs 10Y avg
         </span>
       </div>
+      {currentMultiple}
       <p className="valuation-caption">
-        Quarterly history{review ? " · formula preview" : ""}{benchmarkQuarters != null && benchmarkQuarters < 40
+        Quarterly history{benchmarkQuarters != null && benchmarkQuarters < 40
           ? ` · 10Y average uses ${benchmarkQuarters} available quarters` : ""}
       </p>
 

@@ -15,7 +15,7 @@ registerHooks({
 });
 
 const { readPrices, saveValuationReview, valuationReviewTickers } = await import("../lib/stockStore.ts");
-const { canReviewValuation, prepareValuationReview } = await import("../lib/valuationReview.ts");
+const { canReviewValuation } = await import("../lib/valuationReview.ts");
 const snapshots = (await valuationReviewTickers())
   .filter(({ ticker, edgar_snapshot }) => canReviewValuation(ticker, edgar_snapshot));
 let pointsWritten = 0;
@@ -25,8 +25,7 @@ const failed = [];
 for (let offset = 0; offset < snapshots.length; offset += 6) {
   await Promise.all(snapshots.slice(offset, offset + 6).map(async ({ ticker, edgar_snapshot }) => {
     try {
-      const points = prepareValuationReview(ticker, edgar_snapshot).history(await readPrices(ticker));
-      await saveValuationReview(ticker, points);
+      const { points } = await saveValuationReview(ticker, edgar_snapshot, await readPrices(ticker));
       pointsWritten += points.length;
       if (points.length) withPoints += 1;
     } catch (error) {

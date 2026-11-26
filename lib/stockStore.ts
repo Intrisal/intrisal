@@ -1,7 +1,10 @@
 import type { EdgarFundamentals, QuarterlySeries } from "@/lib/edgar";
 import { marketstackSymbol, type StockHistory, type StockQuote } from "@/lib/marketstack";
+import { canReviewValuation, prepareValuationReview } from "@/lib/valuationReview";
 
 export type ValuationPoint = { quarter: string; close: number; ev: number; nopat: number; ev_nopat: number };
+export type CurrentValuation = ValuationPoint & { priceAsOf: string };
+type StoredValuation = { points: ValuationPoint[]; current: CurrentValuation | null };
 type StoredTicker = {
   ticker: string;
   edgar_snapshot: EdgarFundamentals | null;
@@ -189,11 +192,17 @@ export async function valuationReviewTickers() {
   });
 }
 
-export function saveValuationReview(ticker: string, points: ValuationPoint[]) {
-  return upsert("valuation_history_review", "ticker", [{ ticker, points }]);
+export async function saveValuationReview(ticker: string, edgar: EdgarFundamentals, history: StockHistory | null): Promise<StoredValuation> {
+  if (!canReviewValuation(ticker, edgar)) return { points: [], current: null };
+  const calculator = prepareValuationReview(ticker, edgar, history);
+  const result = { points: calculator.history(), current: calculator.atLatestClose() };
+  await upsert("valuation_history_review", "ticker", [{ ticker, points: result.points, current_point: result.current }]);
+  return result;
 }
 
-export async function readValuationReview(ticker: string) {
-  const [row] = await rest<{ points: ValuationPoint[] }[]>("valuation_history_review", { select: "points", ticker: "eq." + ticker });
-  return row?.points ?? [];
+export async function readValuationReview(ticker: string): Promise<StoredValuation> {
+  const [row] = await rest<{ points: ValuationPoint[]; current_point: CurrentValuation | null }[]>(
+    "valuation_history_review", { select: "points,current_point", ticker: "eq." + ticker, limit: "1" },
+  );
+  return { points: row?.points ?? [], current: row?.current_point ?? null };
 }

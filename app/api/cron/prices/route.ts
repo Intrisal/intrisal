@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { authorizedCron } from "@/lib/cronAuth";
+import { refreshStoredValuations } from "@/lib/companyData";
 import { DEFAULT_WATCHLIST } from "@/lib/market";
 import { fetchStockHistory, hasMarketstackKey, MarketstackQuotaError } from "@/lib/marketstack";
 import {
-  calculateValuations, claimPriceRefresh, hasStockStore, readLatestPriceDate, readPrices,
-  readTicker, savePrices, saveValuations,
+  claimPriceRefresh, hasStockStore, readLatestPriceDate, readTicker, readValuationReview, savePrices,
 } from "@/lib/stockStore";
+import { canReviewValuation } from "@/lib/valuationReview";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -25,14 +26,20 @@ function latestExpectedClose(now: Date) {
 
 async function refreshPrice(ticker: string, expectedClose: string, now: Date) {
   const lastDate = await readLatestPriceDate(ticker);
-  if (lastDate && lastDate >= expectedClose) return "current";
+  if (lastDate && lastDate >= expectedClose) {
+    const edgar = (await readTicker(ticker))?.edgar_snapshot;
+    if (edgar && canReviewValuation(ticker, edgar) && (await readValuationReview(ticker)).current?.priceAsOf !== lastDate) {
+      await refreshStoredValuations(ticker, edgar);
+    }
+    return "current";
+  }
   if (!await claimPriceRefresh(ticker, now)) return "already_attempted";
   const delta = await fetchStockHistory(ticker, lastDate);
   if (!delta) return "no_bars";
   await savePrices(ticker, delta);
   const stored = await readTicker(ticker);
   if (stored?.edgar_snapshot) {
-    await saveValuations(ticker, calculateValuations(stored.edgar_snapshot, await readPrices(ticker)));
+    await refreshStoredValuations(ticker, stored.edgar_snapshot);
   }
   return !lastDate || delta.asOf > lastDate ? "updated" : "no_new_close";
 }

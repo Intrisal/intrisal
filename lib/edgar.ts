@@ -721,6 +721,10 @@ export async function fetchEdgarFundamentals(
   };
   const [total, long, current, short, cashByDate, sharesByDate] =
     [debtTotal, debtLong, debtCurrent, shortBorrowings, cashPts, sharePts].map(byDate);
+  const latestPeriod = operatingIncome.ends.at(-1);
+  const currentInvestments = ["ShortTermInvestments", "MarketableSecuritiesCurrent", "AvailableForSaleSecuritiesCurrent"]
+    .map((tag) => byDate(pickUnit(facts, [tag], money)).get(latestPeriod ?? ""))
+    .find((value) => value != null);
   const balances: EdgarFundamentals["balances"] = {};
   for (const date of new Set([...revenue.ends, ...operatingIncome.ends])) {
     const longTerm = total.get(date) ??
@@ -729,6 +733,7 @@ export async function fetchEdgarFundamentals(
       debt: longTerm !== null || short.has(date) ? (longTerm ?? 0) + (short.get(date) ?? 0) : null,
       cash: cashByDate.get(date) ?? null,
       shares: sharesByDate.get(date) ?? averageSharesByDate.get(date) ?? null,
+      ...(date === latestPeriod && currentInvestments != null ? { sti: currentInvestments } : {}),
     };
   }
 

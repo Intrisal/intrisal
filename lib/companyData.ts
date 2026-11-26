@@ -5,8 +5,8 @@
 
 import { EPS_SPLIT_BASIS_VERSION, fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries, type ReportingCurrency } from "@/lib/edgar";
 import { isKnownFund } from "@/lib/market";
-import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuations, type ValuationPoint } from "@/lib/stockStore";
-import { canReviewValuation, prepareValuationReview, valuationBenchmark } from "@/lib/valuationReview";
+import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuationReview, saveValuations, type CurrentValuation, type ValuationPoint } from "@/lib/stockStore";
+import { canReviewValuation, valuationBenchmark } from "@/lib/valuationReview";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 
@@ -24,6 +24,7 @@ export type CompanySnapshot = {
   evNopatAvg: number | null;
   evNopatAverageQuarters?: number;
   valuationReview?: boolean;
+  valuationPriceAsOf?: string;
   revBillions: number | null;
   growthYoY: number | null;
   epsTtm: number | null;
@@ -152,6 +153,7 @@ function buildFromEdgar(
   priceSource: CompanySnapshot["sources"]["prices"],
   valuationPoints: ValuationPoint[],
   valuationReview: boolean,
+  currentValuation: CurrentValuation | null,
 ): CompanySnapshot {
   const revTtm = ttm(edgar.revenue);
   const opTtm = ttm(edgar.operatingIncome);
@@ -182,7 +184,7 @@ function buildFromEdgar(
       ? marketCapBillions + edgar.debtBillions - edgar.cashBillions
       : null;
   const evNopat = valuationReview
-    ? price == null ? null : prepareValuationReview(ticker, edgar).atLatestClose(price)?.ev_nopat ?? null
+    ? currentValuation?.ev_nopat ?? null
     : enterpriseValue != null && nopat && nopat > 0 ? enterpriseValue / nopat : null;
 
   if (reportingCurrency !== "USD") valuationPoints = [];
@@ -210,6 +212,7 @@ function buildFromEdgar(
       : null,
     evNopatAverageQuarters: benchmark.length,
     valuationReview,
+    valuationPriceAsOf: currentValuation?.priceAsOf,
     revBillions: revTtm,
     growthYoY,
     epsTtm,
@@ -250,36 +253,29 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
   ]) : [undefined, null];
 
   let edgar = isFund ? null : stored?.edgar_snapshot ?? null;
-  const review = process.env.INTRISAL_VALUATION_REVIEW === "1"
-    && (process.env.VERCEL_ENV === "preview" || process.env.NODE_ENV === "development");
-  const valuationReview = review && canReviewValuation(id, edgar);
-  let valuations = edgar
-    ? await (valuationReview ? readValuationReview(id) : readValuations(id)).catch(() => [])
-    : [];
-  if (!review && !isFund && !canUseDilutedEps(id, edgar)) {
+  let refreshedValuation: Awaited<ReturnType<typeof saveValuationReview>> | undefined;
+  if (!isFund && !edgar && !EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(id)) {
     try {
-      const needsEpsRefresh = Boolean(edgar);
-      const fetched = await fetchEdgarFundamentals(id, needsEpsRefresh);
+      const fetched = await fetchEdgarFundamentals(id);
       if (fetched && fetched.revenue.values.length >= 4) {
-        // Preserve the last accession checked by the cron. A request does not check submissions.
-        fetched.filingAccession = edgar?.filingAccession;
         edgar = configured ? await saveFundamentals(id, fetched) : fetched;
-        if (!needsEpsRefresh) {
-          const history = quote ? await readPrices(id).catch(() => null) : null;
-          valuations = calculateValuations(edgar, history);
-          if (configured) await saveValuations(id, valuations);
-        }
+        if (configured && quote) refreshedValuation = await refreshStoredValuations(id, edgar);
       }
     } catch (error) {
       console.error("EDGAR backfill failed for " + id, error);
     }
   }
 
+  const valuationReview = process.env.INTRISAL_VALUATION_VERSION !== "legacy" && canReviewValuation(id, edgar);
+  const revised = valuationReview
+    ? refreshedValuation ?? await readValuationReview(id).catch(() => null)
+    : null;
+  const valuations = valuationReview ? revised?.points ?? [] : edgar ? await readValuations(id).catch(() => []) : [];
   const priceSource = quote ? "marketstack" : "unavailable";
   const price = quote?.price ?? null;
   const change = quote?.change ?? null;
   const snapshot = edgar
-    ? buildFromEdgar(id, edgar, price, change, priceSource, valuations, valuationReview)
+    ? buildFromEdgar(id, edgar, price, change, priceSource, valuations, valuationReview, revised?.current ?? null)
     : withoutFilings(id, price, change, priceSource);
   return { ...snapshot, isFund, priceAsOf: quote?.date };
 }
@@ -299,14 +295,31 @@ function canUseDilutedEps(ticker: string, edgar: EdgarFundamentals | null | unde
     || (EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(ticker) && Boolean(edgar?.dilutedEps.values.length));
 }
 
+export async function refreshStoredValuations(ticker: string, edgar: EdgarFundamentals) {
+  const history = await readPrices(ticker);
+  if (process.env.INTRISAL_VALUATION_VERSION === "legacy") {
+    await saveValuations(ticker, calculateValuations(edgar, history));
+  }
+  return saveValuationReview(ticker, edgar, history);
+}
+
 export async function refreshCompanyFilings(ticker: string) {
   const stored = await readTicker(ticker);
   const previous = stored?.edgar_snapshot;
+  if (ticker === "TEST" || EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(ticker) || previous?.source === "edgar-6k") {
+    if (stored) await markFilingsChecked(ticker);
+    return "excluded";
+  }
   const cik = previous?.cik ?? await resolveCik(ticker);
   const accession = cik ? await latestFinancialFiling(cik) : undefined;
   if (!cik || !accession || (
     accession === previous?.filingAccession && canUseDilutedEps(ticker, previous)
   )) {
+    if (previous && accession && canReviewValuation(ticker, previous)) {
+      const revised = await readValuationReview(ticker);
+      const quarter = previous.operatingIncome.ends.at(-1);
+      if (quarter && revised.current?.quarter !== quarter) await refreshStoredValuations(ticker, previous);
+    }
     await markFilingsChecked(ticker);
     return previous ? "unchanged" : "unavailable";
   }
@@ -316,7 +329,6 @@ export async function refreshCompanyFilings(ticker: string) {
     return "unavailable";
   }
   const merged = await saveFundamentals(ticker, filing);
-  const history = await readPrices(ticker);
-  await saveValuations(ticker, calculateValuations(merged, history));
+  await refreshStoredValuations(ticker, merged);
   return "updated";
 }
