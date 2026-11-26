@@ -3,10 +3,12 @@
  * for Graph Analysis / Fundamental / Valuation.
  */
 
+import { readFile } from "node:fs/promises";
 import { EPS_SPLIT_BASIS_VERSION, fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries, type ReportingCurrency } from "@/lib/edgar";
 import { isKnownFund } from "@/lib/market";
 import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuationReview, saveValuations, type CurrentValuation, type ValuationPoint } from "@/lib/stockStore";
 import { canReviewValuation, valuationBenchmark } from "@/lib/valuationReview";
+import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 
@@ -25,6 +27,7 @@ export type CompanySnapshot = {
   evNopatAverageQuarters?: number;
   valuationReview?: boolean;
   valuationPriceAsOf?: string;
+  valuationEarningsRelease?: boolean;
   revBillions: number | null;
   growthYoY: number | null;
   epsTtm: number | null;
@@ -107,8 +110,8 @@ function rollingTtm(series: QuarterlySeries): QuarterlySeries {
   for (let i = 3; i < series.values.length; i++) {
     const quarters = series.ends.slice(i - 3, i + 1);
     if (quarters.slice(1).some((end, index) => {
-      const gap = (Date.parse(end) - Date.parse(quarters[index])) / 86_400_000;
-      return gap < 70 || gap > 110;
+      const gap = (Date.parse(end) - Date.parse(quarters[index])) / DAY_MS;
+      return !isFiscalQuarterGap(gap);
     })) continue;
     ends.push(series.ends[i]);
     values.push(series.values.slice(i - 3, i + 1).reduce((a, b) => a + b, 0));
@@ -185,7 +188,8 @@ function buildFromEdgar(
       : null;
   const evNopat = valuationReview
     ? currentValuation?.ev_nopat ?? null
-    : enterpriseValue != null && nopat && nopat > 0 ? enterpriseValue / nopat : null;
+    : process.env.INTRISAL_VALUATION_VERSION === "legacy" && enterpriseValue != null && nopat && nopat > 0
+      ? enterpriseValue / nopat : null;
 
   if (reportingCurrency !== "USD") valuationPoints = [];
   const evNopatHistory = valuationPoints.map((point) => point.ev_nopat);
@@ -213,6 +217,7 @@ function buildFromEdgar(
     evNopatAverageQuarters: benchmark.length,
     valuationReview,
     valuationPriceAsOf: currentValuation?.priceAsOf,
+    valuationEarningsRelease: currentValuation?.earningsRelease,
     revBillions: revTtm,
     growthYoY,
     epsTtm,
@@ -252,9 +257,13 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
     readStoredQuotes([id]).then((quotes) => quotes[id] ?? null).catch(() => null),
   ]) : [undefined, null];
 
-  let edgar = isFund ? null : stored?.edgar_snapshot ?? null;
+  const useStage = process.env.NODE_ENV === "development" && process.env.INTRISAL_VALUATION_STAGE === "1";
+  const stage = useStage ? (JSON.parse(await readFile(".cache/valuation-stage.json", "utf8")) as Record<string, {
+    snapshot?: EdgarFundamentals; points?: ValuationPoint[]; current?: CurrentValuation | null;
+  }>)[id] : undefined;
+  let edgar = isFund ? null : stage?.snapshot ?? stored?.edgar_snapshot ?? null;
   let refreshedValuation: Awaited<ReturnType<typeof saveValuationReview>> | undefined;
-  if (!isFund && !edgar && !EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(id)) {
+  if (!useStage && !isFund && !edgar && !EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(id)) {
     try {
       const fetched = await fetchEdgarFundamentals(id);
       if (fetched && fetched.revenue.values.length >= 4) {
@@ -268,9 +277,11 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
 
   const valuationReview = process.env.INTRISAL_VALUATION_VERSION !== "legacy" && canReviewValuation(id, edgar);
   const revised = valuationReview
-    ? refreshedValuation ?? await readValuationReview(id).catch(() => null)
+    ? useStage ? { points: stage?.points ?? [], current: stage?.current ?? null }
+      : refreshedValuation ?? await readValuationReview(id).catch(() => null)
     : null;
-  const valuations = valuationReview ? revised?.points ?? [] : edgar ? await readValuations(id).catch(() => []) : [];
+  const valuations = valuationReview ? revised?.points ?? []
+    : edgar && process.env.INTRISAL_VALUATION_VERSION === "legacy" ? await readValuations(id).catch(() => []) : [];
   const priceSource = quote ? "marketstack" : "unavailable";
   const price = quote?.price ?? null;
   const change = quote?.change ?? null;
@@ -310,7 +321,7 @@ export async function refreshCompanyFilings(ticker: string) {
     if (stored) await markFilingsChecked(ticker);
     return "excluded";
   }
-  const cik = previous?.cik ?? await resolveCik(ticker);
+  const cik = previous?.cik ?? stored?.cik ?? await resolveCik(ticker);
   const accession = cik ? await latestFinancialFiling(cik) : undefined;
   if (!cik || !accession || (
     accession === previous?.filingAccession && canUseDilutedEps(ticker, previous)

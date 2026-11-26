@@ -2,11 +2,15 @@ import type { EdgarFundamentals, QuarterlySeries } from "@/lib/edgar";
 import { marketstackSymbol, type StockHistory, type StockQuote } from "@/lib/marketstack";
 import { canReviewValuation, prepareValuationReview } from "@/lib/valuationReview";
 
-export type ValuationPoint = { quarter: string; close: number; ev: number; nopat: number; ev_nopat: number };
+export type ValuationPoint = {
+  quarter: string; close: number; ev: number; nopat: number; ev_nopat: number;
+  sharesEstimated?: boolean; earningsRelease?: boolean;
+};
 export type CurrentValuation = ValuationPoint & { priceAsOf: string };
 type StoredValuation = { points: ValuationPoint[]; current: CurrentValuation | null };
 type StoredTicker = {
   ticker: string;
+  cik: number | null;
   edgar_snapshot: EdgarFundamentals | null;
   edgar_fetched_at: string | null;
   prices_fetched_at: string | null;
@@ -189,6 +193,23 @@ export async function readValuations(ticker: string) {
 export async function valuationReviewTickers() {
   return rest<Pick<StoredTicker, "ticker" | "edgar_snapshot">[]>("tickers", {
     select: "ticker,edgar_snapshot", edgar_snapshot: "not.is.null", order: "ticker",
+  });
+}
+
+export async function valuationAuditTickers() {
+  return rest<Pick<StoredTicker, "ticker" | "cik" | "edgar_snapshot" | "edgar_fetched_at">[]>("tickers", {
+    select: "ticker,cik,edgar_snapshot,edgar_fetched_at", order: "ticker",
+  });
+}
+
+export function readQuarterlyValuationInputs(ticker: string) {
+  return rest<{
+    quarter: string; reporting_currency: string; operating_income: number | null; revenue: number | null;
+    tax: number | null; pretax: number | null; cash: number | null; debt: number | null;
+    shares: number | null; sti: number | string | null;
+  }[]>("fundamentals_quarterly", {
+    ticker: "eq." + ticker, select: "quarter,reporting_currency,revenue,operating_income,tax,pretax,cash,debt,shares,sti",
+    order: "quarter",
   });
 }
 

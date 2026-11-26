@@ -4,9 +4,9 @@ import { useId, useState } from "react";
 import { ChartReveal } from "@/components/ChartReveal";
 import { fmt } from "@/lib/market";
 import type { CompanySnapshot } from "@/lib/companyData";
+import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 import { quarterLabelFromEnd } from "@/components/Fundamentals";
 
-const DAY_MS = 86_400_000;
 const VALUATION_MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 const VALUATION_CLOSE_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 
@@ -24,6 +24,8 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
 
   const quarters = snapshot?.valuationPoints?.map((point) => ({
     quarter: point.quarter, value: point.ev_nopat, price: point.close, nopat: point.nopat,
+    sharesEstimated: point.sharesEstimated,
+    earningsRelease: point.earningsRelease,
   })) ?? [];
   const count = quarters.length;
   const average = snapshot?.evNopatAvg;
@@ -39,12 +41,13 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
           {VALUATION_CLOSE_FORMAT.format(new Date(snapshot.valuationPriceAsOf + "T00:00:00Z"))}
         </time>
       </>}
+      {snapshot.valuationEarningsRelease && " · Earnings release · Estimated shares"}
     </p>
   );
   if (count < 2 || average == null) return (
     <article className="panel">
       {currentMultiple}
-      <p>{loading ? "Loading valuation history…" : "Data unavailable. More reported financials and historical prices are needed to chart valuation history."}</p>
+      <p>{loading ? "Loading valuation history…" : "EV/NOPAT history unavailable. More reported financials and historical prices are needed to chart valuation history."}</p>
     </article>
   );
   const active = Math.min(hovered ?? count - 1, count - 1);
@@ -53,7 +56,8 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   const high = Math.max(...values);
   const latest = quarters[count - 1];
   const current = quarters[active];
-  const difference = (latest.value / average - 1) * 100;
+  const currentComparison = review ? snapshot?.evNopat : null;
+  const difference = ((currentComparison ?? latest.value) / average - 1) * 100;
   const tickIndexes = [...new Set(Array.from({ length: 5 }, (_, i) => Math.round(i * (count - 1) / 4)))];
 
   const left = 46;
@@ -75,7 +79,7 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   const segments: { start: number; end: number; path: string }[] = [];
   for (const [index, value] of values.entries()) {
     const segment = segments.at(-1);
-    if (!segment || (review && dates[index] - dates[index - 1] > 110 * DAY_MS)) {
+    if (!segment || (review && !isFiscalQuarterGap((dates[index] - dates[index - 1]) / DAY_MS))) {
       segments.push({ start: index, end: index, path: `M ${x(index)} ${y(value)}` });
     } else {
       const mid = (x(index - 1) + x(index)) / 2;
@@ -100,6 +104,7 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
       </div>
       {currentMultiple}
       <p className="valuation-caption">
+        {currentComparison == null ? "Badge uses latest quarter-end EV/NOPAT · " : ""}
         Quarterly history{benchmarkQuarters != null && benchmarkQuarters < 40
           ? ` · 10Y average uses ${benchmarkQuarters} available quarters` : ""}
       </p>
@@ -186,6 +191,8 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
         <span>
           TTM NOPAT <strong>${fmt(current.nopat, 1)}B</strong>
         </span>
+        {current.earningsRelease && <span>Earnings release</span>}
+        {current.sharesEstimated && <span>Estimated shares</span>}
       </p>
 
       <dl className="valuation-summary">

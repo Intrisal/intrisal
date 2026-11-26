@@ -1,8 +1,7 @@
 import type { EdgarFundamentals, QuarterlySeries } from "@/lib/edgar";
 import type { StockHistory } from "@/lib/marketstack";
 import type { ValuationPoint } from "@/lib/stockStore";
-
-const DAY_MS = 86_400_000;
+import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const REVIEW_EXCLUDED = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD", "TEST"]);
 const SPLIT_RATIOS = [1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10, 12, 15, 16, 20, 25, 30, 40, 50, 100];
@@ -31,7 +30,8 @@ function sharesOnPriceBasis(edgar: EdgarFundamentals, history: StockHistory) {
   const shares = new Map<string, number>();
   let reference: { date: string; shares: number } | undefined;
   for (const date of [...edgar.operatingIncome.ends].reverse()) {
-    const reported = edgar.balances[date]?.shares;
+    const balance = edgar.balances[date];
+    const reported = balance?.reportedShares ?? balance?.shares;
     if (reported == null || reported <= 0) continue;
     const futureSplits = splits.filter((split) => split.date > date);
     let normalized = reported;
@@ -74,18 +74,21 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
   const hasInvestments = Object.values(edgar.balances).some((balance) => balance?.sti != null);
   const basis = history ? sharesOnPriceBasis(edgar, history) : null;
 
-  function asOf(index: number, close: number, shares: number | undefined): ValuationPoint | null {
-    if (index < 3 || !canReviewValuation(ticker, edgar) || edgar.reportingCurrency === "EUR" || !Number.isFinite(close) || close <= 0) return null;
+  function asOf(index: number, close: number | undefined | null, shares: number | undefined) {
     const quarter = ends[index];
+    if (!canReviewValuation(ticker, edgar) || edgar.reportingCurrency === "EUR") return { reason: "ineligible filing or currency" } as const;
+    if (index < 3) return { reason: "fewer than four operating quarters" } as const;
     const window = ends.slice(index - 3, index + 1);
-    if (window.slice(1).some((date, i) => {
-      const days = (Date.parse(date) - Date.parse(window[i])) / DAY_MS;
-      return !Number.isFinite(days) || days < 70 || days > 110;
-    })) return null;
+    if (window.slice(1).some((date, i) => !isFiscalQuarterGap((Date.parse(date) - Date.parse(window[i])) / DAY_MS))) {
+      return { reason: "nonconsecutive operating quarters" } as const;
+    }
+    if (close == null || !Number.isFinite(close) || close <= 0) return { reason: "missing usable closing price" } as const;
 
     const balance = edgar.balances[quarter];
-    if (!balance || balance.cash == null || balance.debt == null || shares == null) return null;
-    if (hasInvestments && balance.sti == null) return null;
+    if (balance?.cash == null) return { reason: "missing cash" } as const;
+    if (balance.debt == null) return { reason: "missing debt" } as const;
+    if (shares == null) return { reason: "missing usable shares" } as const;
+    if (hasInvestments && balance.sti == null) return { reason: "missing short-term investments" } as const;
     const ev = close * shares + balance.debt - balance.cash - (balance.sti ?? 0);
     const sum = (metric: Map<string, number>) => {
       const data = window.map((date) => metric.get(date));
@@ -97,8 +100,24 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
     const rate = taxSum != null && pretaxSum != null && pretaxSum > 0
       ? Math.min(0.35, Math.max(0, taxSum / pretaxSum)) : 0.21;
     const nopat = values.slice(index - 3, index + 1).reduce((total, value) => total + value, 0) * (1 - rate);
-    if (!Number.isFinite(ev) || !Number.isFinite(nopat) || ev <= 0 || nopat <= 0) return null;
-    return { quarter, close, ev, nopat, ev_nopat: ev / nopat };
+    if (!Number.isFinite(ev) || ev <= 0) return { reason: "nonpositive or invalid EV" } as const;
+    if (!Number.isFinite(nopat) || nopat <= 0) return { reason: "nonpositive or invalid NOPAT" } as const;
+    const estimatedShares = balance.reportedShares == null && balance.sharesEstimated === true;
+    return {
+      point: { quarter, close, ev, nopat, ev_nopat: ev / nopat, ...(estimatedShares ? { sharesEstimated: true } : {}) },
+      rate, estimatedShares,
+    } as const;
+  }
+
+  function quarterlyResults() {
+    const latest = ends.at(-1);
+    const window = valuationBenchmark(ends.map((quarter, index) => ({ quarter, index })), latest).slice(-40);
+    return window.map(({ quarter, index }) => {
+      const priceIndex = history?.dates.findLastIndex((date) => date <= quarter) ?? -1;
+      const close = history && priceIndex >= 0 && Date.parse(quarter) - Date.parse(history.dates[priceIndex]) <= 7 * DAY_MS
+        ? history.rawCloses?.[priceIndex] : null;
+      return { quarter, ...asOf(index, close, basis?.shares.get(quarter)) };
+    });
   }
 
   return {
@@ -106,28 +125,17 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
       const quarter = ends.at(-1);
       if (!quarter || !history || !basis || history.asOf < quarter) return null;
       const shares = basis.shares.get(quarter);
-      const point = asOf(ends.length - 1, history.price, shares == null ? undefined : shares * basis.factorAfter(quarter));
+      const { point } = asOf(ends.length - 1, history.price, shares == null ? undefined : shares * basis.factorAfter(quarter));
       return point ? { ...point, priceAsOf: history.asOf } : null;
     },
+    quarterlyResults,
     history(): ValuationPoint[] {
-      if (!history?.rawCloses || !canReviewValuation(ticker, edgar) || edgar.reportingCurrency === "EUR") return [];
-      const points: ValuationPoint[] = [];
-      for (let i = ends.length - 1; i >= 3 && points.length < 40; i--) {
-        const quarter = ends[i];
-        const priceIndex = history.dates.findLastIndex((date) => date <= quarter);
-        if (priceIndex < 0) break;
-        const close = history.rawCloses[priceIndex];
-        if (close == null || Date.parse(quarter) - Date.parse(history.dates[priceIndex]) > 7 * DAY_MS) continue;
-        const point = asOf(i, close, basis?.shares.get(quarter));
-        if (point) points.push(point);
-      }
-      return valuationBenchmark(points.reverse());
+      return quarterlyResults().flatMap(({ point }) => point ? [point] : []);
     },
   };
 }
 
-export function valuationBenchmark(points: ValuationPoint[]) {
-  const latest = points.at(-1)?.quarter;
+export function valuationBenchmark<T extends { quarter: string }>(points: T[], latest = points.at(-1)?.quarter) {
   const start = latest ? `${Number(latest.slice(0, 4)) - 10}${latest.slice(4)}` : null;
   return start ? points.filter(({ quarter }) => quarter > start) : [];
 }

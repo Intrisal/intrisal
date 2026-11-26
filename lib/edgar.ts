@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { isKnownFund } from "@/lib/market";
+import { isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
 const FUNDS_URL = "https://www.sec.gov/files/company_tickers_mf.json";
@@ -24,7 +25,7 @@ export type ReportingCurrency = "USD" | "EUR";
 /** Minimum gap between SEC requests (ms). */
 const MIN_GAP_MS = 250;
 
-let lastRequestAt = 0;
+let nextRequestAt = 0;
 
 export type FactPoint = {
   end: string;
@@ -62,7 +63,10 @@ export type EdgarFundamentals = {
   freeCashFlow: QuarterlySeries;
   tax: QuarterlySeries;
   pretax: QuarterlySeries;
-  balances: Record<string, { debt: number | null; cash: number | null; shares: number | null; sti?: number | null }>;
+  balances: Record<string, {
+    debt: number | null; cash: number | null; shares: number | null; sti?: number | null;
+    sharesEstimated?: boolean; reportedShares?: number;
+  }>;
   /** Instant shares outstanding (billions) */
   sharesOutstandingBillions: number | null;
   /** Instant cash, USD billions */
@@ -90,9 +94,11 @@ function userAgent() {
 }
 
 async function secFetch(url: string): Promise<Response> {
-  const wait = MIN_GAP_MS - (Date.now() - lastRequestAt);
+  const now = Date.now();
+  const requestAt = Math.max(now, nextRequestAt);
+  nextRequestAt = requestAt + MIN_GAP_MS;
+  const wait = requestAt - now;
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastRequestAt = Date.now();
 
   const res = await fetch(url, {
     headers: {
@@ -246,6 +252,105 @@ async function loadCompanyFacts(cik: number, refresh = false): Promise<CompanyFa
   return body;
 }
 
+export type FinancialFiling = { accession: string; date: string; document: string };
+type SubmissionRows = {
+  form: string[]; accessionNumber: string[]; reportDate: string[]; primaryDocument: string[];
+};
+
+export async function listFinancialFilings(cik: number, since: string): Promise<FinancialFiling[]> {
+  const root = "https://data.sec.gov/submissions/";
+  const response = await secFetch(root + "CIK" + String(cik).padStart(10, "0") + ".json");
+  const { filings } = await response.json() as {
+    filings: { recent: SubmissionRows; files: { name: string; filingTo: string }[] };
+  };
+  const pages = [filings.recent];
+  for (const file of filings.files.filter(({ filingTo }) => filingTo >= since)) {
+    pages.push(await (await secFetch(root + file.name)).json() as SubmissionRows);
+  }
+  return pages.flatMap((page) => page.form.flatMap((form, index) => {
+    const date = page.reportDate[index];
+    return /^(10-K|10-Q)$/.test(form) && date >= since && page.primaryDocument[index]
+      ? [{ accession: page.accessionNumber[index], date, document: page.primaryDocument[index] }] : [];
+  }));
+}
+
+/** META reports class-level quarter-end shares missing from Company Facts. */
+export async function readMetaFilingBalances(filing: FinancialFiling) {
+  if (!/^\d{10}-\d{2}-\d{6}$/.test(filing.accession) || !/^[\w.-]+\.html?$/i.test(filing.document)) {
+    throw new Error("Invalid META filing reference");
+  }
+  const url = "https://www.sec.gov/Archives/edgar/data/1326801/" + filing.accession.replaceAll("-", "") + "/" + filing.document;
+  const html = await (await secFetch(url)).text();
+  const contexts = new Map<string, string>();
+  const consolidatedContexts = new Set<string>();
+  for (const [, id, body] of html.matchAll(/<xbrli:context\b[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/xbrli:context>/gi)) {
+    if (!body.includes("<xbrli:instant>" + filing.date + "</xbrli:instant>")) continue;
+    const members = [...body.matchAll(/<xbrldi:explicitMember\b[^>]*>([^<]+)</g)].map((match) => match[1]);
+    if (/<xbrldi:typedMember\b/.test(body)) continue;
+    if (members.length === 0) consolidatedContexts.add(id);
+    if (members.length === 1) contexts.set(id, members[0]);
+  }
+  const values = new Map<string, Set<number>>();
+  // Scan opening tags independently because SEC filings can nest identical numeric facts.
+  for (const match of html.matchAll(/<ix:nonFraction\b[^>]*>/gi)) {
+    const attributes = match[0];
+    const context = attributes.match(/\bcontextRef="([^"]+)"/i)?.[1] ?? "";
+    const concept = attributes.match(/\bname="([^"]+)"/i)?.[1];
+    const member = concept === "us-gaap:CommonStockSharesOutstanding" ? contexts.get(context)
+      : /^(?:fb|meta):NotionalCashPoolOverdraftBalance$/.test(concept ?? "") && consolidatedContexts.has(context) ? "overdraft" : null;
+    if (!member) continue;
+    const content = html.slice(match.index + attributes.length, match.index + attributes.length + 1000).match(/^(?:\s*<[^/][^>]*>)*\s*([\d,.]+)\s*</);
+    const raw = Number(content?.[1].replaceAll(",", ""));
+    const value = raw * 10 ** Number(attributes.match(/\bscale="(-?\d+)"/i)?.[1] ?? 0);
+    if (!Number.isFinite(value) || value <= 0) continue;
+    const candidates = values.get(member) ?? new Set<number>();
+    candidates.add(value);
+    values.set(member, candidates);
+  }
+  function unambiguous(member: string) {
+    const candidates = [...(values.get(member) ?? [])];
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+  const a = unambiguous("us-gaap:CommonClassAMember");
+  const b = unambiguous("us-gaap:CommonClassBMember");
+  const shares = a != null && b != null ? a + b : unambiguous("us-gaap:CommonStockMember");
+  const text = html.replace(/<[^>]+>/g, " ").replace(/&#(?:32|160|x0*(?:20|a0));|&nbsp;/gi, " ")
+    .replace(/\s+/g, " ");
+  const dateLabel = new Intl.DateTimeFormat("en-US", {
+    year: "numeric", month: "long", day: "numeric", timeZone: "UTC",
+  }).format(new Date(filing.date + "T00:00:00Z"));
+  const unusedFacility = new RegExp("As of " + dateLabel + " *, no amounts? had been drawn down", "i").test(text);
+  const explicitlyDebtFree = new RegExp("As of " + dateLabel + " *, we had no (?:outstanding debt|debt outstanding)\\b", "i").test(text);
+  const overdraft = unambiguous("overdraft");
+  // Meta’s filings identify the revolver as undrawn before the bond issuance.
+  // When the pool existed, require its actual balance before assigning debt.
+  const debt = explicitlyDebtFree ? 0
+    : filing.date < "2018-01-01" && unusedFacility ? 0
+    : filing.date < "2022-09-30" && unusedFacility && overdraft != null ? toBillions(overdraft) : null;
+  return { shares: shares == null ? null : toBillions(shares), debt, url };
+}
+
+export async function readMetaCashPoolDebt(reported2019Debt: number) {
+  const facts = await loadCompanyFacts(1326801);
+  const movements = pickUnit(facts, ["ProceedsFromRepaymentsOfBankOverdrafts"], ["USD"]);
+  // The filings date the start of the cash pool to 2018. Reconstruct its first
+  // two years only if the cash movements reconcile to the reported 2019 balance.
+  const balances = new Map<string, number>();
+  let opening = 0;
+  for (const year of ["2018", "2019"]) {
+    for (const monthDay of ["03-31", "06-30", "09-30", "12-31"]) {
+      const date = year + "-" + monthDay;
+      const candidates = new Set(movements.filter(({ start, end }) => start === year + "-01-01" && end === date)
+        .map(({ val }) => val));
+      const value = [...candidates][0];
+      if (candidates.size !== 1 || !Number.isFinite(value) || opening + value < 0) return new Map<string, number>();
+      balances.set(date, toBillions(opening + value));
+      if (monthDay === "12-31") opening += value;
+    }
+  }
+  return Math.abs(toBillions(opening) - reported2019Debt) < 0.000001 ? balances : new Map<string, number>();
+}
+
 export async function latestFinancialFiling(cik: number) {
   const response = await secFetch(`https://data.sec.gov/submissions/CIK${String(cik).padStart(10, "0")}.json`);
   const data = await response.json() as {
@@ -315,7 +420,7 @@ function pickBestUnit(facts: CompanyFacts, tags: string[], unitKeys: string[]): 
 
 function isQuarterDuration(p: FactPoint) {
   const d = daysBetween(p.start, p.end);
-  return d !== null && d >= 70 && d <= 110;
+  return d !== null && isFiscalQuarterGap(d + 1);
 }
 
 function isAnnualDuration(p: FactPoint) {
@@ -333,7 +438,7 @@ function isAnnualDuration(p: FactPoint) {
  * Derive the missing quarter: Q4 = FY − (Q1+Q2+Q3) when exactly three
  * in-year quarters exist (common for MSFT and peers).
  */
-function deriveMissingQuarters(quarters: FactPoint[], allPoints: FactPoint[], additive: boolean): FactPoint[] {
+function deriveMissingQuarters(quarters: FactPoint[], allPoints: FactPoint[], mode: boolean | "average"): FactPoint[] {
   const byEnd = new Map<string, FactPoint>();
   for (const q of quarters) {
     if (!q.end || typeof q.val !== "number") continue;
@@ -364,12 +469,19 @@ function deriveMissingQuarters(quarters: FactPoint[], allPoints: FactPoint[], ad
 
     if (inYear.length !== 3) continue;
     const sum3 = inYear.reduce((s, p) => s + p.val, 0);
-    const q4 = annual.val - sum3;
+    const lastQ = inYear[inYear.length - 1];
+    let q4 = annual.val - sum3;
+    if (mode === "average") {
+      const boundaries = [annual.start!, ...inYear.map(({ end }) => end), annual.end];
+      const durations = boundaries.slice(1).map((end, i) => (daysBetween(boundaries[i], end) ?? 0) + (i === 0 ? 1 : 0));
+      if (!durations.every(isFiscalQuarterGap)) continue;
+      q4 = (annual.val * durations.reduce((sum, days) => sum + days, 0)
+        - inYear.reduce((sum, point, i) => sum + point.val * durations[i], 0)) / durations[3];
+    }
     // Per-share data is not strictly additive because the weighted share count can change.
     const avg = sum3 / 3;
-    if (!additive && (!(q4 > 0) || q4 > avg * 3 || q4 < avg * 0.15)) continue;
+    if (mode !== true && (!(q4 > 0) || q4 > avg * 3 || q4 < avg * 0.15)) continue;
 
-    const lastQ = inYear[inYear.length - 1];
     const start =
       lastQ.end &&
       (() => {
@@ -396,7 +508,7 @@ function deriveMissingQuarters(quarters: FactPoint[], allPoints: FactPoint[], ad
  * Prefer CY*Qn frames, also keep duration-based quarters, then fill Q4
  * gaps from annual filings when XBRL omits the fourth quarter.
  */
-function quarterlyPoints(points: FactPoint[], additive = false): FactPoint[] {
+function quarterlyPoints(points: FactPoint[], mode: boolean | "average" = false): FactPoint[] {
   const framed = points.filter((p) => p.frame && /^CY\d{4}Q[1-4]$/.test(p.frame));
   const duration = points.filter((p) => !p.frame && isQuarterDuration(p));
 
@@ -415,7 +527,7 @@ function quarterlyPoints(points: FactPoint[], additive = false): FactPoint[] {
     }
   }
 
-  return deriveMissingQuarters([...byEnd.values()], points, additive);
+  return deriveMissingQuarters([...byEnd.values()], points, mode);
 }
 
 function latestInstant(points: FactPoint[]): FactPoint | null {
@@ -461,8 +573,8 @@ function toBillions(usd: number) {
   return usd / 1e9;
 }
 
-function seriesFromPoints(points: FactPoint[], scale: (n: number) => number, additive = false): QuarterlySeries {
-  const q = quarterlyPoints(points, additive);
+function seriesFromPoints(points: FactPoint[], scale: (n: number) => number, mode: boolean | "average" = false): QuarterlySeries {
+  const q = quarterlyPoints(points, mode);
   return {
     ends: q.map((p) => p.end),
     values: q.map((p) => scale(p.val)),
@@ -542,7 +654,7 @@ function cashFlowQuarters(points: FactPoint[]) {
       const previous = cumulative[index - 1];
       const current = cumulative[index];
       const gap = daysBetween(previous.end, current.end);
-      if (gap == null || gap < 70 || gap > 110 || quarters.has(current.end)) continue;
+      if (gap == null || !isFiscalQuarterGap(gap) || quarters.has(current.end)) continue;
       const start = new Date(previous.end + "T00:00:00Z");
       start.setUTCDate(start.getUTCDate() + 1);
       quarters.set(current.end, { ...current, start: start.toISOString().slice(0, 10), val: current.val - previous.val });
@@ -641,14 +753,14 @@ function splitAdjustedEps(facts: CompanyFacts, eps: FactPoint[]) {
  * pass live price later to compute market cap / EV / yield.
  */
 export async function fetchEdgarFundamentals(
-  ticker: string, refresh = false, filing?: { cik: number; accession: string },
+  ticker: string, refresh = false, filing?: { cik: number; accession?: string },
 ): Promise<EdgarFundamentals | null> {
   const id = ticker.trim().toUpperCase();
   const cik = filing?.cik ?? await resolveCik(id);
   if (cik == null) return null;
 
   const facts = await loadCompanyFacts(cik, refresh);
-  if (filing && !Object.values(facts.facts ?? {}).some((taxonomy) =>
+  if (filing?.accession && !Object.values(facts.facts ?? {}).some((taxonomy) =>
     Object.values(taxonomy).some((concept) => Object.values(concept.units ?? {}).some(
       (points) => points.some((point) => point.accn === filing.accession),
     )),
@@ -676,6 +788,7 @@ export async function fetchEdgarFundamentals(
   const averageShares = seriesFromPoints(
     pickBestUnit(facts, ["WeightedAverageNumberOfSharesOutstandingBasic", "WeightedAverageNumberOfDilutedSharesOutstanding"], ["shares"]),
     toBillions,
+    "average",
   );
   const averageSharesByDate = new Map(averageShares.ends.map((date, index) => [date, averageShares.values[index]]));
   const equityPts = pickUnit(
@@ -721,20 +834,45 @@ export async function fetchEdgarFundamentals(
   };
   const [total, long, current, short, cashByDate, sharesByDate] =
     [debtTotal, debtLong, debtCurrent, shortBorrowings, cashPts, sharePts].map(byDate);
-  const latestPeriod = operatingIncome.ends.at(-1);
-  const currentInvestments = ["ShortTermInvestments", "MarketableSecuritiesCurrent", "AvailableForSaleSecuritiesCurrent"]
-    .map((tag) => byDate(pickUnit(facts, [tag], money)).get(latestPeriod ?? ""))
-    .find((value) => value != null);
+  // Comcast and Alphabet use this tag for their consolidated noncurrent debt.
+  const isAlphabet = id === "GOOG" || id === "GOOGL";
+  const alternativeLong = byDate(id === "CMCSA" || isAlphabet
+    ? pickUnit(facts, ["LongTermDebtAndCapitalLeaseObligations"], money) : []);
+  const alternativeCurrent = byDate(id === "CMCSA" ? pickUnit(facts, ["DebtCurrent"], money) : []);
+  const commercialPaper = byDate(isAlphabet ? pickUnit(facts, ["CommercialPaper"], money) : []);
+  const investments = [
+    "ShortTermInvestments", "MarketableSecuritiesCurrent", "MarketableSecurities",
+    "DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
+    "AvailableForSaleSecuritiesDebtSecuritiesCurrent", "AvailableForSaleSecuritiesCurrent", "DebtSecuritiesCurrent",
+  ].map((tag) => byDate(pickUnit(facts, [tag], money)));
   const balances: EdgarFundamentals["balances"] = {};
   for (const date of new Set([...revenue.ends, ...operatingIncome.ends])) {
+    const noncurrent = long.get(date) ?? alternativeLong.get(date);
+    const currentDebt = current.get(date) ?? alternativeCurrent.get(date);
+    const shortDebt = alternativeCurrent.has(date) && !current.has(date)
+      ? undefined : short.get(date) ?? (total.has(date) ? undefined : commercialPaper.get(date));
     const longTerm = total.get(date) ??
-      (long.has(date) || current.has(date) ? (long.get(date) ?? 0) + (current.get(date) ?? 0) : null);
+      (noncurrent != null || currentDebt != null ? (noncurrent ?? 0) + (currentDebt ?? 0) : null);
+    const sti = investments.map((series) => series.get(date)).find((value) => value != null);
     balances[date] = {
-      debt: longTerm !== null || short.has(date) ? (longTerm ?? 0) + (short.get(date) ?? 0) : null,
+      debt: longTerm !== null || shortDebt != null
+        ? (longTerm ?? 0) + (shortDebt ?? 0) : null,
       cash: cashByDate.get(date) ?? null,
       shares: sharesByDate.get(date) ?? averageSharesByDate.get(date) ?? null,
-      ...(date === latestPeriod && currentInvestments != null ? { sti: currentInvestments } : {}),
+      ...(sharesByDate.has(date) || averageSharesByDate.has(date) ? { sharesEstimated: !sharesByDate.has(date) } : {}),
+      ...(sti != null ? { sti } : {}),
     };
+  }
+  if (id === "META" && filing?.accession) {
+    const recent = await listFinancialFilings(cik, operatingIncome.ends.at(-1) ?? "9999").catch(() => []);
+    const report = recent.find(({ accession }) => accession === filing.accession);
+    if (report && balances[report.date]) {
+      const verified = await readMetaFilingBalances(report).catch(() => null);
+      if (verified?.shares != null) {
+        balances[report.date].reportedShares = verified.shares;
+      }
+      if (verified?.debt != null && balances[report.date].debt == null) balances[report.date].debt = verified.debt;
+    }
   }
 
   const equity = latestInstant(equityPts);
@@ -766,7 +904,11 @@ export async function fetchEdgarFundamentals(
     dilutedEps,
     freeCashFlow,
     tax: seriesFromPoints(pickBestUnit(facts, ["IncomeTaxExpenseBenefit", "IncomeTaxExpenseContinuingOperations"], money), toBillions, true),
-    pretax: seriesFromPoints(pickBestUnit(facts, ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "ProfitLossBeforeTax"], money), toBillions, true),
+    pretax: seriesFromQuarterMap(consolidatedQuarters(facts, [
+      "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+      "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+      "ProfitLossBeforeTax",
+    ], reportingCurrency)),
     balances,
     sharesOutstandingBillions: sharesVal != null ? sharesVal / 1e9 : null,
     cashBillions: cash ? toBillions(cash.val) : null,
