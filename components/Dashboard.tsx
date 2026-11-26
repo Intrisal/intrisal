@@ -74,13 +74,9 @@ export function Dashboard() {
   const [sim, setSim] = useState<SimInput>(SIM_DEFAULT);
   const [toastMsg, setToastMsg] = useState("");
   const [toastOn, setToastOn] = useState(false);
-  // Read once on mount so the first paint already hides chrome when arriving from landing.
-  const [enterFromLanding] = useState(() => {
-    if (typeof window === "undefined") return false;
-    if (!consumeFlag(ROUTE_FROM_LANDING_KEY)) return false;
-    return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  });
-  const [skyReady, setSkyReady] = useState(!enterFromLanding);
+  const [skyPhase, setSkyPhase] = useState<"direct" | "panning" | "ready">("direct");
+  const enterFromLanding = skyPhase !== "direct";
+  const skyReady = skyPhase === "ready";
   const inputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const searchDockStart = useRef<DOMRect | null>(null);
@@ -139,12 +135,18 @@ export function Dashboard() {
     document.documentElement.setAttribute("data-theme", choice === "auto" ? autoTheme() : choice);
   }, []);
 
-  // Sky pan + chrome load-in only when Open platform brought us here — not when tapping Home later.
+  // Hydrate the same sky as the server before reading the one-time navigation flag.
+  useLayoutEffect(() => {
+    if (consumeFlag(ROUTE_FROM_LANDING_KEY) && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setSkyPhase("panning");
+    }
+  }, []);
+
   useEffect(() => {
-    if (!enterFromLanding || skyReady) return;
-    const timer = window.setTimeout(() => setSkyReady(true), SKY_PAN_MS);
+    if (skyPhase !== "panning") return;
+    const timer = window.setTimeout(() => setSkyPhase("ready"), SKY_PAN_MS);
     return () => window.clearTimeout(timer);
-  }, [enterFromLanding, skyReady]);
+  }, [skyPhase]);
 
   useEffect(() => {
     if (!themeReady) return;
