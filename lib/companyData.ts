@@ -42,6 +42,7 @@ export type CompanySnapshot = {
   evNopatAvg: number | null;
   evNopatAverageQuarters?: number;
   valuationReview?: boolean;
+  valuationHasNegativeOperatingIncome?: boolean;
   valuationPriceAsOf?: string;
   valuationEarningsRelease?: boolean;
   valuationDebtEstimate?: ValuationPoint["debtEstimate"];
@@ -243,6 +244,7 @@ function buildFromEdgar(
       : null,
     evNopatAverageQuarters: benchmark.length,
     valuationReview,
+    valuationHasNegativeOperatingIncome: financialQuarters.some(({ negativeOperatingIncome }) => negativeOperatingIncome),
     valuationPriceAsOf: evNopat == null ? undefined : currentValuation?.priceAsOf,
     valuationEarningsRelease: evNopat == null ? undefined : currentValuation?.earningsRelease,
     valuationDebtEstimate: evNopat == null ? undefined : currentValuation?.debtEstimate,

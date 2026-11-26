@@ -22,6 +22,17 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   const id = useId();
   const [hovered, setHovered] = useState<string | null>(null);
 
+  if (!loading && snapshot?.valuationHasNegativeOperatingIncome) {
+    return (
+      <article className="panel valuation-history" aria-labelledby={id + "-title"}>
+        <h3 id={id + "-title"}>EV/NOPAT</h3>
+        <p className="valuation-caption" role="status">
+          Can’t calculate data for this stock because trailing 12-month operating income was negative.
+        </p>
+      </article>
+    );
+  }
+
   const quarters = snapshot?.valuationPoints?.map((point) => ({
     quarter: point.quarter, value: point.ev_nopat, price: point.close, nopat: point.nopat,
     sharesEstimated: point.sharesEstimated,

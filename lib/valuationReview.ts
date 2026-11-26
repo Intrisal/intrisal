@@ -101,9 +101,14 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
     const pretaxSum = sum(pretax);
     const rate = taxSum != null && pretaxSum != null && pretaxSum > 0
       ? Math.min(0.35, Math.max(0, taxSum / pretaxSum)) : 0.21;
-    const nopat = values.slice(index - 3, index + 1).reduce((total, value) => total + value, 0) * (1 - rate);
+    const operatingIncome = values.slice(index - 3, index + 1);
+    if (operatingIncome.length !== 4 || !operatingIncome.every(Number.isFinite)) {
+      return { reason: "invalid NOPAT data" } as const;
+    }
+    const trailingIncome = operatingIncome.reduce((total, value) => total + value, 0);
+    const nopat = trailingIncome * (1 - rate);
     if (!Number.isFinite(nopat)) return { reason: "invalid NOPAT data" } as const;
-    if (nopat <= 0) return { reason: "nonpositive NOPAT" } as const;
+    if (nopat <= 0) return { reason: "nonpositive NOPAT", negativeOperatingIncome: trailingIncome < 0 } as const;
 
     const balance = edgar.balances[quarter];
     if (balance?.cash == null) return { reason: "missing cash" } as const;
@@ -154,7 +159,10 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
     // Filing-related reasons are available without reading price history.
     financialQuarters() {
       if (!eligible) return [];
-      return benchmarkQuarters.map(({ quarter, index }) => ({ quarter, reason: fundamentalsAt(index).reason }));
+      return benchmarkQuarters.map(({ quarter, index }) => {
+        const { reason, negativeOperatingIncome } = fundamentalsAt(index);
+        return { quarter, reason, negativeOperatingIncome };
+      });
     },
     atLatestClose() {
       const quarter = ends.at(-1);
