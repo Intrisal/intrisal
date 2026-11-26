@@ -62,6 +62,7 @@ export function Dashboard() {
   const [themeReady, setThemeReady] = useState(false);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistReady, setWatchlistReady] = useState(false);
+  const [watchlistRemovalPreview, setWatchlistRemovalPreview] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
   const [section, setSection] = useState<Section | "stock">("home");
   const [revealHomeWordmark, setRevealHomeWordmark] = useState(false);
@@ -260,7 +261,7 @@ export function Dashboard() {
   }
 
   function addToWatchlist(tk: string) {
-    setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : bumpWatchlist(tk, list.concat(tk))));
+    setWatchlist((list) => bumpWatchlist(tk, list));
     setSelected(tk);
     toast(tk + " added to your watchlist");
   }
@@ -268,7 +269,9 @@ export function Dashboard() {
   function removeFromWatchlist(tk: string) {
     setWatchlist((list) => {
       const next = list.filter((x) => x !== tk);
-      setSelected((current) => (current === tk ? (next[0] || "") : current));
+      if (section !== "stock") {
+        setSelected((current) => (current === tk ? (next[0] || "") : current));
+      }
       return next;
     });
     setListOpen(false);
@@ -348,6 +351,8 @@ export function Dashboard() {
   }
 
   const isStock = section === "stock";
+  const selectedIsWatched = watchlist.includes(selected);
+  const previewWatchlistRemoval = selectedIsWatched && watchlistRemovalPreview === selected;
   const { snapshot, loading: snapshotLoading } = useCompanySnapshot(isStock ? selected : "");
   const selectedSnapshot = snapshot?.ticker === selected ? snapshot : null;
   const selectedSnapshotLoading = snapshotLoading || (snapshot !== null && selectedSnapshot === null);
@@ -599,6 +604,43 @@ export function Dashboard() {
                     <span>{[selected, exchangeOf(selected)].filter(Boolean).join(" | ")}</span>
                   </span>
                 </h2>
+                <button
+                  key={selected}
+                  type="button"
+                  className="stock-watchlist-button"
+                  data-added={selectedIsWatched}
+                  data-removing={previewWatchlistRemoval}
+                  disabled={!watchlistReady}
+                  aria-label={selectedIsWatched && !previewWatchlistRemoval ? "Added to Watchlist. Remove from Watchlist" : undefined}
+                  onPointerEnter={(event) => {
+                    if (selectedIsWatched && event.pointerType !== "touch") setWatchlistRemovalPreview(selected);
+                  }}
+                  onPointerLeave={(event) => {
+                    if (event.pointerType !== "touch") setWatchlistRemovalPreview(null);
+                  }}
+                  onFocus={(event) => {
+                    if (selectedIsWatched && event.currentTarget.matches(":focus-visible")) setWatchlistRemovalPreview(selected);
+                  }}
+                  onBlur={() => setWatchlistRemovalPreview(null)}
+                  onClick={(event) => {
+                    if (!selectedIsWatched) {
+                      addToWatchlist(selected);
+                    } else if (previewWatchlistRemoval || event.detail === 0) {
+                      setWatchlistRemovalPreview(null);
+                      removeFromWatchlist(selected);
+                    } else {
+                      setWatchlistRemovalPreview(selected);
+                    }
+                  }}
+                >
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path className="stock-watchlist-plus" d="M10 5v10M5 10h10" />
+                    <path className="stock-watchlist-check" pathLength={1} d="m5 10 3.2 3.2L15 6.6" />
+                    <path className="stock-watchlist-remove" d="m6 6 8 8m0-8-8 8" />
+                  </svg>
+                  <span>{previewWatchlistRemoval ? "Remove from Watchlist" : selectedIsWatched ? "Added to Watchlist" : "Add to Watchlist"}</span>
+                </button>
               </div>
             ) : null}
             {isStock && selected ? (

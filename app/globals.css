@@ -779,13 +779,12 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
           linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 55%, transparent), transparent 42%),
           var(--panel);
         overflow: hidden;
-        transition: border-color 160ms ease, transform 180ms ease, box-shadow 180ms ease;
+        transition: border-color 160ms ease, transform 180ms ease;
       }
       .watch-card.sel { border-color: var(--line-strong); }
       .watch-card:hover {
         border-color: color-mix(in srgb, var(--line-strong) 35%, var(--line));
         transform: translateY(-1px);
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
       }
       .watch-card-main {
         flex: 1; min-width: 0; display: grid;
@@ -965,9 +964,6 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         border-color: var(--glass-stroke);
         box-shadow: var(--glass-edge);
       }
-      [data-theme="dark"] .watch-card:hover {
-        box-shadow: var(--glass-edge), 0 12px 28px rgba(0, 0, 0, 0.35);
-      }
       [data-theme="dark"] .watch-card.sel {
         border-color: rgba(244, 207, 180, 0.42);
       }
@@ -1047,10 +1043,11 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .stock-analysis-switch button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
       html:has(.layout.stock) { scrollbar-gutter: stable; }
       .stock-overview {
-        display: grid; grid-template-columns: minmax(0, 1fr);
-        gap: 14px; margin-top: 22px;
+        display: grid; grid-template-columns: minmax(176px, 1fr) minmax(0, max-content) minmax(176px, 1fr);
+        align-items: center; gap: 8px 12px; margin-top: 22px;
       }
       .stock-identity {
+        grid-column: 2;
         display: flex; align-items: center; text-align: center;
         gap: 12px; justify-self: center; margin: 0; max-width: 100%;
         padding: 4px 16px; overflow-wrap: anywhere;
@@ -1065,6 +1062,77 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .stock-identity-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
       .stock-identity strong { font-size: clamp(21px, 2.6vw, 32px); line-height: 1.1; }
       .stock-identity-text > span { color: var(--ink-2); font-size: 12px; font-weight: 650; letter-spacing: 0.08em; }
+      .stock-watchlist-button {
+        --watchlist-sheen: #aa6944;
+        --watchlist-saved: #216447;
+        --watchlist-remove: #9e332e;
+        grid-column: 3; justify-self: start;
+        display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+        position: relative; isolation: isolate; overflow: hidden;
+        min-width: 176px; min-height: 38px; padding: 7px 12px;
+        border: 1px solid var(--line); border-radius: 999px;
+        background: var(--panel); color: var(--ink);
+        font: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer;
+      }
+      [data-theme="dark"] .stock-watchlist-button {
+        --watchlist-sheen: #f4cfb4;
+        --watchlist-saved: #64d1a3;
+        --watchlist-remove: #ff8f82;
+      }
+      .stock-watchlist-button::before,
+      .stock-watchlist-button::after { content: ""; position: absolute; pointer-events: none; }
+      .stock-watchlist-button::before {
+        z-index: -2; top: 50%; left: 50%; width: 120%; aspect-ratio: 1;
+        translate: -50% -50%;
+        background: conic-gradient(from -90deg, transparent 0 64%, var(--watchlist-sheen) 89%, transparent 100%);
+        opacity: 0.7;
+      }
+      .stock-watchlist-button::after {
+        z-index: -1; inset: 1px; border-radius: inherit;
+        background: linear-gradient(145deg, var(--panel-2), var(--panel));
+      }
+      .stock-watchlist-button svg { width: 16px; height: 16px; flex: none; color: var(--watchlist-sheen); }
+      .stock-watchlist-plus { transform-origin: center; }
+      .stock-watchlist-check { stroke-dasharray: 1; stroke-dashoffset: 1; }
+      .stock-watchlist-remove { opacity: 0; }
+      .stock-watchlist-button:disabled { cursor: default; }
+      .stock-watchlist-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+      .stock-watchlist-button[data-added="false"]:enabled:hover {
+        border-color: color-mix(in srgb, var(--watchlist-sheen) 55%, var(--line));
+        box-shadow: 0 0 17px color-mix(in srgb, var(--watchlist-sheen) 18%, transparent);
+      }
+      .stock-watchlist-button[data-added="true"] {
+        --watchlist-state: var(--watchlist-saved);
+        color: var(--watchlist-state);
+        border-color: color-mix(in srgb, var(--watchlist-state) 45%, var(--line));
+      }
+      .stock-watchlist-button[data-added="true"]::before,
+      .stock-watchlist-button[data-added="true"] .stock-watchlist-plus { opacity: 0; }
+      .stock-watchlist-button[data-added="true"]::after {
+        background: linear-gradient(145deg, color-mix(in srgb, var(--watchlist-state) 12%, var(--panel)), var(--panel));
+      }
+      .stock-watchlist-button[data-added="true"] svg { color: inherit; }
+      .stock-watchlist-button[data-added="true"] .stock-watchlist-plus { transform: scale(0.6) rotate(40deg); }
+      .stock-watchlist-button[data-added="true"] .stock-watchlist-check { stroke-dashoffset: 0; }
+      .stock-watchlist-button[data-removing="true"] {
+        --watchlist-state: var(--watchlist-remove);
+        box-shadow: 0 0 17px color-mix(in srgb, var(--watchlist-state) 16%, transparent);
+      }
+      .stock-watchlist-button[data-removing="true"] .stock-watchlist-check { opacity: 0; }
+      .stock-watchlist-button[data-removing="true"] .stock-watchlist-remove { opacity: 1; }
+      @media (prefers-reduced-motion: no-preference) {
+        .stock-watchlist-button { transition: color 210ms ease, border-color 210ms ease, box-shadow 210ms ease; }
+        .stock-watchlist-button[data-added="false"]:enabled::before { animation: stock-watchlist-orbit 3s linear infinite; }
+        .stock-watchlist-plus { transition: opacity 140ms ease, transform 180ms ease; }
+        .stock-watchlist-check { transition: stroke-dashoffset 280ms ease 90ms, opacity 140ms ease; }
+        .stock-watchlist-remove { transition: opacity 140ms ease; }
+      }
+      @keyframes stock-watchlist-orbit { to { transform: rotate(1turn); } }
+      @media (max-width: 700px) {
+        .stock-overview { grid-template-columns: minmax(0, 1fr); }
+        .stock-overview > * { grid-column: 1; justify-self: center; }
+        .stock-watchlist-button { min-height: 44px; }
+      }
       .layout.stock .section-stage { padding-top: 16px; }
       .stock-analysis-panels { margin-top: 0; }
       @media (prefers-reduced-motion: no-preference) {
