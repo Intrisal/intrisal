@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { LandingAuth } from "@/components/landing/LandingAuth";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { LandingClose, LandingDemos } from "@/components/landing/LandingDemos";
+import { LandingHeroActions } from "@/components/landing/LandingHeroActions";
 import { LandingTopbar } from "@/components/landing/LandingTopbar";
 import { LandingShooters } from "@/components/landing/LandingShooters";
+import { decideLandingSky, LANDING_INTRO_MS, SKY_PAN_MS } from "@/components/landing/intro";
 import { WordmarkIntro } from "@/components/landing/WordmarkIntro";
 import { Stars } from "@/components/Stars";
 import "@/components/landing/landing.css";
 
-const INTRO_MS = 1350;
+type SkyMode = "pending" | "intro" | "pan-left";
 
 /**
  * Public Intrisal landing — the product's night sky, a brand-first hero, then
@@ -17,37 +18,55 @@ const INTRO_MS = 1350;
  */
 export function LandingPage() {
   const [ready, setReady] = useState(false);
+  const [skyMode, setSkyMode] = useState<SkyMode>("pending");
+
+  useLayoutEffect(() => {
+    // Cached decision survives Strict Mode remount — prevents back→twirl.
+    setSkyMode(decideLandingSky());
+  }, []);
 
   useEffect(() => {
+    if (skyMode === "pending") return;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduced) {
       setReady(true);
       return;
     }
-    const timer = window.setTimeout(() => setReady(true), INTRO_MS);
+    const wait = skyMode === "pan-left" ? SKY_PAN_MS : LANDING_INTRO_MS;
+    const timer = window.setTimeout(() => setReady(true), wait);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [skyMode]);
+
+  const fromAuth = skyMode === "pan-left";
 
   return (
-    <div className={"landing" + (ready ? " is-ready" : "")} data-theme="dark">
-      <div className="landing-cosmos" aria-hidden="true">
+    <div
+      className={
+        "landing" +
+        (skyMode === "pending" ? " is-sky-hold" : "") +
+        (skyMode === "pan-left" ? " is-sky-pan-left" : "") +
+        (ready ? " is-ready" : "")
+      }
+      data-theme="dark"
+    >
+      <div className="landing-cosmos" aria-hidden="true" key={skyMode}>
         <Stars />
         <div className="aurora" />
         <div className="landing-sky" />
       </div>
-      <LandingShooters />
+      {skyMode === "intro" ? <LandingShooters /> : null}
       <LandingTopbar />
       <div className="landing-scroll">
         <main>
           <section className="landing-hero" aria-label="Intrisal">
             <div className="landing-hero-inner">
-              <WordmarkIntro ready={ready} />
+              <WordmarkIntro ready={ready} skipIntro={fromAuth} />
               <div className="landing-hero-rest">
                 <h2 className="landing-headline">Know if a stock is worth buying — and why.</h2>
                 <p className="landing-support">
                   One clear signal for every stock, with the trend, fundamentals and valuation behind it.
                 </p>
-                <LandingAuth />
+                <LandingHeroActions />
               </div>
             </div>
             <a className="landing-scroll-cue" href="#graph-analysis">

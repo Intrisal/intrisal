@@ -12,26 +12,40 @@ const INTRO_SCALE = 1.55;
 const INTRO_FILL = 0.82;
 /** Keep a clear shrink on narrow phones. */
 const INTRO_SCALE_MIN = 1.18;
+const SETTLE_MS = 950;
 
 type WordmarkIntroProps = {
   ready: boolean;
+  /** Returning from auth — keep the mark in its settled slot (no hard jump). */
+  skipIntro?: boolean;
 };
 
 /**
  * Single Intrisal wordmark: starts centered & large, then eases into its
  * in-flow hero slot. Same DOM node the whole time — no handoff flash.
  */
-export function WordmarkIntro({ ready }: WordmarkIntroProps) {
+export function WordmarkIntro({ ready, skipIntro = false }: WordmarkIntroProps) {
   const markRef = useRef<HTMLHeadingElement>(null);
   const startRef = useRef<{ dx: number; dy: number; scale: number } | null>(null);
+  const skipIntroRef = useRef(skipIntro);
   const [prepared, setPrepared] = useState(false);
+  skipIntroRef.current = skipIntro;
 
   // Before paint: park the brand at viewport center, scaled up.
   useLayoutEffect(() => {
     const mark = markRef.current;
     if (!mark) return;
 
-    // Ready settle is handled in the effect below — don't clobber startRef/transform.
+    if (skipIntroRef.current) {
+      mark.style.transition = "none";
+      mark.style.transform = "none";
+      startRef.current = null;
+      setPrepared(true);
+      return;
+    }
+
+    // When ready flips, do NOT clear the parked transform here.
+    // Clearing it caused the choppy snap; the settle effect owns the handoff.
     if (ready) {
       setPrepared(true);
       return;
@@ -64,31 +78,38 @@ export function WordmarkIntro({ ready }: WordmarkIntroProps) {
   // When intro finishes: ease back to the natural layout slot.
   useEffect(() => {
     const mark = markRef.current;
-    if (!mark || !ready) return;
+    if (!mark || !ready || skipIntroRef.current) return;
 
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced || !startRef.current) {
+    const start = startRef.current;
+    if (reduced || !start) {
       mark.style.transition = "none";
       mark.style.transform = "none";
       return;
     }
 
-    const { dx, dy, scale } = startRef.current;
+    // Re-assert the parked pose (no transition), then tween to the hero slot.
     mark.style.transition = "none";
-    mark.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`;
+    mark.style.transform = `translate3d(${start.dx}px, ${start.dy}px, 0) scale(${start.scale})`;
     void mark.offsetWidth;
 
     let raf2 = 0;
+    let settleTimer = 0;
     const raf1 = window.requestAnimationFrame(() => {
       raf2 = window.requestAnimationFrame(() => {
-        mark.style.transition = "transform 0.95s cubic-bezier(0.22, 1, 0.36, 1)";
+        mark.style.transition = `transform ${SETTLE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
         mark.style.transform = "translate3d(0, 0, 0) scale(1)";
+        settleTimer = window.setTimeout(() => {
+          mark.style.transition = "";
+          startRef.current = null;
+        }, SETTLE_MS + 40);
       });
     });
 
     return () => {
       window.cancelAnimationFrame(raf1);
       window.cancelAnimationFrame(raf2);
+      if (settleTimer) window.clearTimeout(settleTimer);
     };
   }, [ready]);
 
@@ -99,7 +120,7 @@ export function WordmarkIntro({ ready }: WordmarkIntroProps) {
         className={
           "landing-brand" +
           (prepared ? " is-prepared" : "") +
-          (ready ? " is-settling" : " is-intro")
+          (ready || skipIntro ? " is-settling" : " is-intro")
         }
         ref={markRef}
         aria-label="Intrisal"

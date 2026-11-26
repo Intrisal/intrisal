@@ -10,7 +10,14 @@ const outfit = Outfit({
 
 export const metadata: Metadata = {
   title: "intrisal.com",
-  icons: { icon: "data:," },
+  icons: {
+    icon: [
+      { url: "/brand/favicon-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/intrisal-icon-signal-256.png", sizes: "256x256", type: "image/png" },
+    ],
+    apple: [{ url: "/brand/intrisal-icon-signal-256.png", sizes: "256x256", type: "image/png" }],
+  },
 };
 
 export const viewport: Viewport = {

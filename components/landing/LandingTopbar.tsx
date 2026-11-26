@@ -75,14 +75,22 @@ export function LandingTopbar() {
             <Link className="landing-profile-link" href="/" role="menuitem" aria-current="page" onClick={() => setOpen(false)}>
               Landing page
             </Link>
-            <Link className="landing-profile-link" href="/home" role="menuitem" onClick={() => setOpen(false)}>
-              Platform
+            <Link className="landing-profile-link" href="/login" role="menuitem" onClick={() => setOpen(false)}>
+              Sign in
+            </Link>
+            <Link className="landing-profile-link" href="/signup" role="menuitem" onClick={() => setOpen(false)}>
+              Create account
             </Link>
           </div>
         ) : null}
       </div>
-      <Link className="landing-topbar-cta" href="/home" tabIndex={scrolled ? undefined : -1} aria-hidden={scrolled ? undefined : true}>
-        Open platform
+      <Link
+        className="landing-topbar-cta"
+        href="/login"
+        tabIndex={scrolled ? undefined : -1}
+        aria-hidden={scrolled ? undefined : true}
+      >
+        Sign in
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M3 8h10M9 4l4 4-4 4" />
         </svg>

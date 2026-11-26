@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { BrandLogo } from "@/components/BrandLogo";
 import {
@@ -523,15 +522,21 @@ export function LandingClose() {
       <section className="landing-cta" aria-label="Enter Intrisal">
         <div className={"landing-cta-inner landing-reveal" + (ctaInView ? " is-inview" : "")} ref={ctaRef}>
           <h2>Look up your first stock.</h2>
-          <Link href="/home" className="landing-btn landing-btn-primary landing-btn-lg">
-            Enter Intrisal
+          <a href="/signup" className="landing-btn landing-btn-primary landing-btn-lg">
+            Create account
             <ArrowIcon />
-          </Link>
+          </a>
         </div>
       </section>
       <footer className="landing-foot">
-        <span className="landing-foot-mark">Intrisal</span>
-        <span>Sample data shown for illustration. Not investment advice.</span>
+        <div className="landing-foot-brand">
+          <span className="landing-foot-mark">Intrisal</span>
+          <span>Sample data shown for illustration. Not investment advice.</span>
+        </div>
+        <nav className="landing-foot-legal" aria-label="Legal">
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+        </nav>
       </footer>
     </div>
   );
