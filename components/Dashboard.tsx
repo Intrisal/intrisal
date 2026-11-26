@@ -22,7 +22,14 @@ import { useQuotes } from "@/lib/useMarketData";
 import { SKY_PAN_MS } from "@/components/landing/intro";
 import { decidePlatformArrival, navigateWithCurtain } from "@/lib/routeTransition";
 import { signOutAndReload, useSessionUser } from "@/lib/useSessionUser";
-import { readWatchlist, writeWatchlist } from "@/lib/watchlistStorage";
+import {
+  clearLocalWatchlist,
+  fetchAccountWatchlist,
+  hasMigratedLocalWatchlist,
+  markLocalWatchlistMigrated,
+  readLocalWatchlist,
+  saveAccountWatchlist,
+} from "@/lib/watchlistStorage";
 import "@/components/landing/landing.css";
 
 type ThemeChoice = "auto" | "light" | "dark";
@@ -89,21 +96,73 @@ export function Dashboard() {
   const { user, loading: sessionLoading } = useSessionUser();
 
   const watchlistOwner = useRef<string | null>(null);
+  const watchlistSaveTimer = useRef<number | null>(null);
+  const skipNextWatchlistSave = useRef(false);
 
   useEffect(() => {
     if (sessionLoading) return;
-    const owner = user?.id ?? "anon";
+    if (!user?.id) {
+      watchlistOwner.current = null;
+      setWatchlist([]);
+      setSelected("");
+      setWatchlistReady(false);
+      return;
+    }
+
+    const owner = user.id;
     if (watchlistOwner.current === owner) return;
     watchlistOwner.current = owner;
-    const saved = readWatchlist(user?.id);
-    setWatchlist(saved);
-    setSelected(saved[0] || "");
-    setWatchlistReady(true);
+    setWatchlistReady(false);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        let tickers = await fetchAccountWatchlist();
+        if (
+          tickers.length === 0 &&
+          !hasMigratedLocalWatchlist(owner)
+        ) {
+          const local = readLocalWatchlist(owner);
+          if (local.length) {
+            tickers = await saveAccountWatchlist(local);
+          }
+          markLocalWatchlistMigrated(owner);
+          clearLocalWatchlist(owner);
+        }
+        if (cancelled || watchlistOwner.current !== owner) return;
+        skipNextWatchlistSave.current = true;
+        setWatchlist(tickers);
+        setSelected(tickers[0] || "");
+        setWatchlistReady(true);
+      } catch {
+        if (cancelled || watchlistOwner.current !== owner) return;
+        // Fall back to any local list so the UI still works if the table isn't migrated yet.
+        const local = readLocalWatchlist(owner);
+        skipNextWatchlistSave.current = true;
+        setWatchlist(local);
+        setSelected(local[0] || "");
+        setWatchlistReady(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [sessionLoading, user?.id]);
 
   useEffect(() => {
-    if (!watchlistReady) return;
-    writeWatchlist(user?.id, watchlist);
+    if (!watchlistReady || !user?.id) return;
+    if (skipNextWatchlistSave.current) {
+      skipNextWatchlistSave.current = false;
+      return;
+    }
+    if (watchlistSaveTimer.current) window.clearTimeout(watchlistSaveTimer.current);
+    watchlistSaveTimer.current = window.setTimeout(() => {
+      void saveAccountWatchlist(watchlist).catch(() => undefined);
+    }, 400);
+    return () => {
+      if (watchlistSaveTimer.current) window.clearTimeout(watchlistSaveTimer.current);
+    };
   }, [watchlist, watchlistReady, user?.id]);
 
   useLayoutEffect(() => {
@@ -477,7 +536,7 @@ export function Dashboard() {
                 <strong>Search</strong> — type a ticker or company name (or press <span className="mono">/</span>). Open a result to view it, or choose <strong>Add +</strong> to put it on your watchlist.
               </p>
               <p>
-                <strong>Watchlist</strong> — Home shows up to eight of your most recently viewed watchlist stocks. Manage the full list (and remove stocks) in the Watchlist section.
+                <strong>Watchlist</strong> — saved to your account across devices. Home shows up to eight of your most recently viewed watchlist stocks. Manage the full list (and remove stocks) in the Watchlist section.
               </p>
               <p style={{ marginBottom: 0 }}>
                 <strong>Sections</strong> — use the dock to open Home, Learn, Simulation, or Watchlist. Open a stock to see its Graph Analysis, Fundamental, and Valuation views.

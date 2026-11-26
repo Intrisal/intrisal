@@ -20,7 +20,8 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/home") ||
     pathname.startsWith("/api/stock") ||
     pathname.startsWith("/api/market") ||
-    pathname.startsWith("/api/fundamentals");
+    pathname.startsWith("/api/fundamentals") ||
+    pathname.startsWith("/api/watchlist");
 
   if (!needsAuth || session) return NextResponse.next();
 
@@ -44,5 +45,6 @@ export const config = {
     "/api/stock/:path*",
     "/api/market/:path*",
     "/api/fundamentals",
+    "/api/watchlist",
   ],
 };
