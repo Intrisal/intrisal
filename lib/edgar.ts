@@ -101,8 +101,14 @@ async function secFetch(url: string): Promise<Response> {
   return res;
 }
 
+/** Best-effort mkdir — Vercel /var/task is read-only, so never throw. */
 function ensureDir(dir: string) {
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  try {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readJsonFile<T>(file: string): T | null {
@@ -116,10 +122,10 @@ function readJsonFile<T>(file: string): T | null {
 
 function writeJsonFile(file: string, value: unknown) {
   try {
-    ensureDir(path.dirname(file));
+    if (!ensureDir(path.dirname(file))) return;
     writeFileSync(file, JSON.stringify(value), "utf8");
   } catch {
-    /* read-only fs */
+    /* read-only fs — Supabase is the durable cache in production */
   }
 }
 
@@ -184,7 +190,6 @@ type CompanyFacts = {
 };
 
 async function loadCompanyFacts(cik: number, refresh = false): Promise<CompanyFacts> {
-  ensureDir(FACTS_DIR);
   const file = path.join(FACTS_DIR, `CIK${String(cik).padStart(10, "0")}.json`);
   const cached = readJsonFile<{ at: number; body: CompanyFacts }>(file);
   if (!refresh && cached && Date.now() - cached.at < FACTS_TTL_MS) return cached.body;

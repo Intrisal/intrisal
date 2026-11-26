@@ -23,7 +23,8 @@ async function rest<T>(table: string, query: Record<string, string>, rows?: obje
     method: rows ? "POST" : "GET",
     headers: {
       apikey: key,
-      ...(key.startsWith("sb_secret_") ? {} : { Authorization: "Bearer " + key }),
+      Authorization: "Bearer " + key,
+      "User-Agent": "Intrisal-server/1.0",
       ...(rows ? { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" } : {}),
     },
     body: rows ? JSON.stringify(rows) : undefined,
