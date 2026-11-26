@@ -1,39 +1,37 @@
 import { NextResponse } from "next/server";
-import { fetchEdgarFundamentals } from "@/lib/edgar";
-import { DEFAULT_WATCHLIST } from "@/lib/market";
+import { timingSafeEqual } from "node:crypto";
+import { refreshCompanyFilings } from "@/lib/companyData";
+import { hasStockStore, trackedTickers } from "@/lib/stockStore";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * Daily warm of EDGAR company facts for the default watchlist.
- * Auth: Authorization: Bearer $CRON_SECRET  (or ?secret=)
+ * Refresh filings for stocks previously requested by visitors.
  */
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET?.trim();
-  const auth = request.headers.get("authorization") || "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  const querySecret = new URL(request.url).searchParams.get("secret") || "";
-  if (!secret || (bearer !== secret && querySecret !== secret)) {
+  const expected = Buffer.from(`Bearer ${secret ?? ""}`);
+  const actual = Buffer.from(request.headers.get("authorization") ?? "");
+  if (!secret || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const results: Array<{ ticker: string; ok: boolean; error?: string }> = [];
-  for (const ticker of DEFAULT_WATCHLIST) {
+  if (!hasStockStore()) return NextResponse.json({ error: "Stock storage unavailable" }, { status: 503 });
+  const tickers = await trackedTickers().catch(() => null);
+  if (!tickers) return NextResponse.json({ error: "Unable to read stock storage" }, { status: 502 });
+  const results: Array<{ ticker: string; ok: boolean }> = [];
+  for (const ticker of tickers) {
     try {
-      const data = await fetchEdgarFundamentals(ticker);
-      results.push({ ticker, ok: Boolean(data) });
+      results.push({ ticker, ok: await refreshCompanyFilings(ticker) });
     } catch (error) {
-      results.push({
-        ticker,
-        ok: false,
-        error: error instanceof Error ? error.message : "failed",
-      });
+      console.error("Cron filing refresh failed for " + ticker, error);
+      results.push({ ticker, ok: false });
     }
   }
 
   return NextResponse.json({
     ranAt: new Date().toISOString(),
     results,
-  });
+  }, { status: results.length && results.every(({ ok }) => !ok) ? 502 : 200 });
 }

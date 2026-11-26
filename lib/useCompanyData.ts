@@ -33,7 +33,7 @@ export function useCompanySnapshot(ticker: string): State {
     setLoading(true);
     setError(null);
 
-    fetch("/api/fundamentals?symbol=" + encodeURIComponent(id), { cache: "no-store" })
+    fetch("/api/stock/" + encodeURIComponent(id), { cache: "no-store" })
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || res.statusText);

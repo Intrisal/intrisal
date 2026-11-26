@@ -62,6 +62,7 @@ export function Dashboard() {
   const [listOpen, setListOpen] = useState(false);
   const [menu, setMenu] = useState<MenuId | null>(null);
   const [query, setQuery] = useState("");
+  const [directoryResults, setDirectoryResults] = useState<{ query: string; rows: [string, string][] } | null>(null);
   const [resultsOpen, setResultsOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
   const [sim, setSim] = useState<SimInput>(SIM_DEFAULT);
@@ -247,7 +248,26 @@ export function Dashboard() {
     setActiveIdx(-1);
   }
 
-  const matches = resultsOpen ? searchCatalog(query) : [];
+  useEffect(() => {
+    const term = query.trim();
+    if (!resultsOpen || term.length < 2) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch("/api/stock/search?q=" + encodeURIComponent(term), { signal: controller.signal })
+        .then((response) => response.ok ? response.json() as Promise<[string, string][]> : [])
+        .then((rows) => {
+          if (!controller.signal.aborted) setDirectoryResults({ query, rows });
+        })
+        .catch(() => undefined);
+    }, 200);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, resultsOpen]);
+
+  const localMatches = searchCatalog(query);
+  const remoteMatches = directoryResults?.query === query ? directoryResults.rows : [];
+  const matches = resultsOpen
+    ? [...localMatches, ...remoteMatches.filter(([ticker]) => !localMatches.some(([local]) => local === ticker))].slice(0, 8)
+    : [];
 
   function pickResult(tk: string) {
     const added = watchlist.indexOf(tk) === -1;
@@ -267,7 +287,8 @@ export function Dashboard() {
       if (!matches.length) return;
       setActiveIdx((idx) => (ev.key === "ArrowDown" ? Math.min(idx + 1, matches.length - 1) : Math.max(idx - 1, 0)));
     } else if (ev.key === "Enter") {
-      if (activeIdx >= 0 && matches[activeIdx]) pickResult(matches[activeIdx][0]);
+      const match = matches[Math.max(0, activeIdx)];
+      if (match) pickResult(match[0]);
     } else if (ev.key === "Escape") {
       closeResults();
       ev.currentTarget.blur();

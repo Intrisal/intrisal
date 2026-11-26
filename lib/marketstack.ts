@@ -29,6 +29,7 @@ export type EodBar = {
   high: number;
   low: number;
   close: number;
+  rawClose?: number;
   volume: number | null;
 };
 
@@ -37,6 +38,7 @@ export type StockHistory = {
   ticker: string;
   dates: string[];
   closes: number[];
+  rawCloses?: (number | null)[];
   price: number;
   change: number;
   high52: number;
@@ -192,6 +194,7 @@ function buildHistory(ticker: string, bars: EodBar[]): StockHistory {
     ticker: ticker.toUpperCase(),
     dates,
     closes,
+    rawCloses: sorted.map((bar) => bar.rawClose ?? null),
     price,
     change,
     high52: year.length ? Math.max(...year) : price,
@@ -229,11 +232,11 @@ function sanitizeHistory(history: StockHistory): StockHistory | null {
 }
 
 /** Fetch ~1y (or plan max) of daily closes for charts + SMAs. Cached ~24h on disk. */
-export async function fetchStockHistory(ticker: string): Promise<StockHistory> {
+export async function fetchStockHistory(ticker: string, requireRawCloses = false): Promise<StockHistory> {
   ensureDisk();
   const id = ticker.trim().toUpperCase();
   const cached = memory.history[id];
-  if (cached && isFresh(cached.at)) {
+  if (cached && isFresh(cached.at) && (!requireRawCloses || cached.value.rawCloses?.some((close) => close != null))) {
     const clean = sanitizeHistory(cached.value);
     if (clean) {
       if (clean !== cached.value) storeHistory(clean);
@@ -265,6 +268,7 @@ export async function fetchStockHistory(ticker: string): Promise<StockHistory> {
         high: isValidClose(row.high) ? row.high : close,
         low: isValidClose(row.low) ? row.low : close,
         close,
+        rawClose: isValidClose(row.close) ? row.close : undefined,
         volume: row.volume ?? null,
       });
     }

@@ -51,6 +51,9 @@ export type EdgarFundamentals = {
   dilutedEps: QuarterlySeries;
   /** Quarterly free cash flow approx (CFO - capex), USD billions */
   freeCashFlow: QuarterlySeries;
+  tax: QuarterlySeries;
+  pretax: QuarterlySeries;
+  balances: Record<string, { debt: number | null; cash: number | null; shares: number | null }>;
   /** Instant shares outstanding (billions) */
   sharesOutstandingBillions: number | null;
   /** Instant cash, USD billions */
@@ -69,6 +72,7 @@ export type EdgarFundamentals = {
 type TickersFile = {
   at: number;
   map: Record<string, number>;
+  names?: Record<string, string>;
 };
 
 function userAgent() {
@@ -120,21 +124,49 @@ function writeJsonFile(file: string, value: unknown) {
 }
 
 /** Load ticker → CIK map (cached 7 days). */
-export async function loadCikMap(): Promise<Record<string, number>> {
+let tickerDirectory: TickersFile | undefined;
+let tickerRequest: Promise<TickersFile> | undefined;
+
+async function fetchTickerDirectory(): Promise<TickersFile> {
   const cached = readJsonFile<TickersFile>(TICKERS_FILE);
-  if (cached && Date.now() - cached.at < TICKERS_TTL_MS && cached.map) return cached.map;
+  if (cached?.names && Date.now() - cached.at < TICKERS_TTL_MS) return cached;
 
   const res = await secFetch(TICKERS_URL);
   const raw = (await res.json()) as Record<string, { cik_str: number; ticker: string; title: string }>;
   const map: Record<string, number> = {};
+  const names: Record<string, string> = {};
   for (const row of Object.values(raw)) {
     if (!row?.ticker) continue;
     map[row.ticker.toUpperCase()] = row.cik_str;
+    names[row.ticker.toUpperCase()] = row.title;
   }
   // Intrisal catalog aliases
   if (map["BRK-B"] && !map["BRK.B"]) map["BRK.B"] = map["BRK-B"];
-  writeJsonFile(TICKERS_FILE, { at: Date.now(), map });
-  return map;
+  const directory = { at: Date.now(), map, names };
+  writeJsonFile(TICKERS_FILE, directory);
+  return directory;
+}
+
+async function getTickerDirectory() {
+  if (tickerDirectory && Date.now() - tickerDirectory.at < TICKERS_TTL_MS) return tickerDirectory;
+  tickerRequest ??= fetchTickerDirectory().then((directory) => {
+    tickerDirectory = directory;
+    return directory;
+  }).finally(() => { tickerRequest = undefined; });
+  return tickerRequest;
+}
+
+export async function loadCikMap() {
+  return (await getTickerDirectory()).map;
+}
+
+export async function searchEdgarTickers(query: string) {
+  const term = query.toUpperCase();
+  const { names } = await getTickerDirectory();
+  return Object.entries(names ?? {})
+    .filter(([ticker, name]) => ticker.startsWith(term) || name.toUpperCase().includes(term))
+    .sort(([a], [b]) => Number(b === term) - Number(a === term) || a.length - b.length || a.localeCompare(b))
+    .slice(0, 8);
 }
 
 export async function resolveCik(ticker: string): Promise<number | null> {
@@ -151,11 +183,11 @@ type CompanyFacts = {
   facts?: Record<string, Record<string, { units?: Record<string, FactPoint[]> }>>;
 };
 
-async function loadCompanyFacts(cik: number): Promise<CompanyFacts> {
+async function loadCompanyFacts(cik: number, refresh = false): Promise<CompanyFacts> {
   ensureDir(FACTS_DIR);
   const file = path.join(FACTS_DIR, `CIK${String(cik).padStart(10, "0")}.json`);
   const cached = readJsonFile<{ at: number; body: CompanyFacts }>(file);
-  if (cached && Date.now() - cached.at < FACTS_TTL_MS) return cached.body;
+  if (!refresh && cached && Date.now() - cached.at < FACTS_TTL_MS) return cached.body;
 
   const res = await secFetch(FACTS_URL(cik));
   const body = (await res.json()) as CompanyFacts;
@@ -374,12 +406,12 @@ function seriesFromPoints(points: FactPoint[], scale: (n: number) => number): Qu
  * Build fundamentals from company facts. Does not call Marketstack —
  * pass live price later to compute market cap / EV / yield.
  */
-export async function fetchEdgarFundamentals(ticker: string): Promise<EdgarFundamentals | null> {
+export async function fetchEdgarFundamentals(ticker: string, refresh = false): Promise<EdgarFundamentals | null> {
   const id = ticker.trim().toUpperCase();
   const cik = await resolveCik(id);
   if (cik == null) return null;
 
-  const facts = await loadCompanyFacts(cik);
+  const facts = await loadCompanyFacts(cik, refresh);
   const revenuePts = pickBestUnit(
     facts,
     ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"],
@@ -394,11 +426,19 @@ export async function fetchEdgarFundamentals(ticker: string): Promise<EdgarFunda
     ["USD"],
   );
   const cashPts = pickUnit(facts, ["CashAndCashEquivalentsAtCarryingValue"], ["USD"]);
-  const debtPts = pickUnit(
-    facts,
-    ["LongTermDebt", "LongTermDebtNoncurrent", "LongTermDebtCurrent"],
-    ["USD"],
+  const debtTotal = pickUnit(facts, ["LongTermDebt"], ["USD"]);
+  const debtLong = pickUnit(facts, ["LongTermDebtNoncurrent"], ["USD"]);
+  const debtCurrent = pickUnit(facts, ["LongTermDebtCurrent"], ["USD"]);
+  const shortBorrowings = pickUnit(facts, ["ShortTermBorrowings"], ["USD"]);
+  const sharePts = [
+    ...pickUnit(facts, ["CommonStockSharesOutstanding", "EntityCommonStockSharesOutstanding"], ["shares"]),
+    ...(facts.facts?.dei?.EntityCommonStockSharesOutstanding?.units?.shares ?? []),
+  ];
+  const averageShares = seriesFromPoints(
+    pickBestUnit(facts, ["WeightedAverageNumberOfSharesOutstandingBasic", "WeightedAverageNumberOfDilutedSharesOutstanding"], ["shares"]),
+    toBillions,
   );
+  const averageSharesByDate = new Map(averageShares.ends.map((date, index) => [date, averageShares.values[index]]));
   const equityPts = pickUnit(
     facts,
     ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
@@ -417,7 +457,7 @@ export async function fetchEdgarFundamentals(ticker: string): Promise<EdgarFunda
   // FCF ≈ CFO − |CapEx| on matching quarter ends
   const cfoQ = quarterlyPoints(cfoPts);
   const capexByEnd = new Map(quarterlyPoints(capexPts).map((p) => [p.end, Math.abs(p.val)]));
-  const fcfPoints: FactPoint[] = cfoQ.map((p) => ({
+  const fcfPoints: FactPoint[] = cfoQ.filter((p) => capexByEnd.has(p.end)).map((p) => ({
     ...p,
     val: p.val - (capexByEnd.get(p.end) ?? 0),
   }));
@@ -425,18 +465,25 @@ export async function fetchEdgarFundamentals(ticker: string): Promise<EdgarFunda
 
   const sharesVal = latestSharesOutstanding(facts);
   const cash = latestInstant(cashPts);
-  // Sum distinct debt concepts' latest instants carefully — use max of available long-term debt tags' latest
-  let debtBillions: number | null = null;
-  for (const tag of ["LongTermDebt", "LongTermDebtNoncurrent"]) {
-    const pts = pickUnit(facts, [tag], ["USD"]);
-    const latest = latestInstant(pts);
-    if (latest) {
-      debtBillions = (debtBillions ?? 0) + toBillions(latest.val);
-      break; // prefer a single consolidated long-term debt line
+  const byDate = (points: FactPoint[]) => {
+    const map = new Map<string, number>();
+    for (const point of points.filter((point) => !point.start).sort((a, b) => (a.filed ?? "").localeCompare(b.filed ?? ""))) {
+      map.set(point.end, toBillions(point.val));
     }
+    return map;
+  };
+  const [total, long, current, short, cashByDate, sharesByDate] =
+    [debtTotal, debtLong, debtCurrent, shortBorrowings, cashPts, sharePts].map(byDate);
+  const balances: EdgarFundamentals["balances"] = {};
+  for (const date of new Set([...revenue.ends, ...operatingIncome.ends])) {
+    const longTerm = total.get(date) ??
+      (long.has(date) || current.has(date) ? (long.get(date) ?? 0) + (current.get(date) ?? 0) : null);
+    balances[date] = {
+      debt: longTerm !== null || short.has(date) ? (longTerm ?? 0) + (short.get(date) ?? 0) : null,
+      cash: cashByDate.get(date) ?? null,
+      shares: sharesByDate.get(date) ?? averageSharesByDate.get(date) ?? null,
+    };
   }
-  const shortDebt = latestInstant(pickUnit(facts, ["LongTermDebtCurrent", "ShortTermBorrowings"], ["USD"]));
-  if (shortDebt) debtBillions = (debtBillions ?? 0) + toBillions(shortDebt.val);
 
   const equity = latestInstant(equityPts);
 
@@ -462,9 +509,12 @@ export async function fetchEdgarFundamentals(ticker: string): Promise<EdgarFunda
     operatingIncome,
     dilutedEps,
     freeCashFlow,
+    tax: seriesFromPoints(pickBestUnit(facts, ["IncomeTaxExpenseBenefit"], ["USD"]), toBillions),
+    pretax: seriesFromPoints(pickBestUnit(facts, ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"], ["USD"]), toBillions),
+    balances,
     sharesOutstandingBillions: sharesVal != null ? sharesVal / 1e9 : null,
     cashBillions: cash ? toBillions(cash.val) : null,
-    debtBillions,
+    debtBillions: lastReportEnd ? balances[lastReportEnd]?.debt ?? null : null,
     equityBillions: equity ? toBillions(equity.val) : null,
     dividendPerShare,
     lastReportEnd,

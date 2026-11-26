@@ -6,6 +6,7 @@
 import { estimateNextEarningsDate, fetchEdgarFundamentals, type EdgarFundamentals, type QuarterlySeries } from "@/lib/edgar";
 import { sample, type Sample } from "@/lib/market";
 import { fetchStockHistory } from "@/lib/marketstack";
+import { calculateValuations, hasStockStore, readPrices, readTicker, readValuations, saveFundamentals, savePrices, saveValuations, type ValuationPoint } from "@/lib/stockStore";
 
 export type CompanySnapshot = {
   ticker: string;
@@ -30,8 +31,10 @@ export type CompanySnapshot = {
   operatingIncomeHistory: number[];
   epsHistory: number[];
   fcfHistory: number[];
+  filingDates?: { revenue: string[]; operatingIncome: string[]; eps: string[]; fcf: string[] };
   /** Quarterly EV/NOPAT series for valuation chart */
   evNopatHistory: number[];
+  valuationPoints?: ValuationPoint[];
   sources: {
     prices: "marketstack" | "sample";
     fundamentals: "edgar" | "sample";
@@ -104,16 +107,6 @@ function nopatFromOpinc(opincBillions: number, taxRate = 0.21) {
   return opincBillions * (1 - taxRate);
 }
 
-async function safePrice(ticker: string): Promise<{ price: number; change: number; source: "marketstack" | "sample" }> {
-  try {
-    const history = await fetchStockHistory(ticker);
-    return { price: history.price, change: history.change, source: "marketstack" };
-  } catch {
-    const s = sample(ticker);
-    return { price: s.price, change: s.change, source: "sample" };
-  }
-}
-
 function fromSample(ticker: string, price: number, change: number, priceSource: "marketstack" | "sample"): CompanySnapshot {
   const s = sample(ticker);
   return {
@@ -148,6 +141,7 @@ function buildFromEdgar(
   price: number,
   change: number,
   priceSource: "marketstack" | "sample",
+  valuationPoints: ValuationPoint[],
 ): CompanySnapshot {
   const revTtm = ttm(edgar.revenue);
   const opTtm = ttm(edgar.operatingIncome);
@@ -165,22 +159,7 @@ function buildFromEdgar(
       : null;
   const evNopat = enterpriseValue != null && nopat && nopat > 0 ? enterpriseValue / nopat : null;
 
-  // Rough quarterly EV/NOPAT using trailing 4Q NOPAT + *current* EV (no historical prices).
-  // Drop early tiny-NOPAT outliers so the average isn't dominated by ancient periods.
-  const op = edgar.operatingIncome.values;
-  const evNopatHistory: number[] = [];
-  if (enterpriseValue != null && op.length >= 4) {
-    const windows: number[] = [];
-    for (let i = 3; i < op.length; i++) {
-      windows.push(nopatFromOpinc(op.slice(i - 3, i + 1).reduce((a, b) => a + b, 0)));
-    }
-    const latestNopat = windows[windows.length - 1] || 0;
-    const floor = Math.max(0.05, latestNopat * 0.08);
-    for (const n of windows) {
-      if (n < floor) continue;
-      evNopatHistory.push(enterpriseValue / n);
-    }
-  }
+  const evNopatHistory = valuationPoints.map((point) => point.ev_nopat);
 
   const peTtm = epsTtm && epsTtm !== 0 ? price / epsTtm : null;
   const dividendYieldPercent =
@@ -217,7 +196,14 @@ function buildFromEdgar(
     operatingIncomeHistory: rollingTtm(edgar.operatingIncome),
     epsHistory: rollingTtm(edgar.dilutedEps),
     fcfHistory: rollingTtm(edgar.freeCashFlow),
-    evNopatHistory: evNopatHistory.slice(-40),
+    filingDates: {
+      revenue: edgar.revenue.ends.slice(3).slice(-61),
+      operatingIncome: edgar.operatingIncome.ends.slice(3).slice(-61),
+      eps: edgar.dilutedEps.ends.slice(3).slice(-61),
+      fcf: edgar.freeCashFlow.ends.slice(3).slice(-61),
+    },
+    evNopatHistory,
+    valuationPoints,
     sources: { prices: priceSource, fundamentals: "edgar" },
   };
 }
@@ -243,33 +229,72 @@ export function snapshotToSample(snap: CompanySnapshot): Sample {
   };
 }
 
-export async function getCompanySnapshot(ticker: string): Promise<CompanySnapshot> {
-  const id = ticker.trim().toUpperCase();
-  const { price, change, source: priceSource } = await safePrice(id);
+const pending = new Map<string, Promise<CompanySnapshot>>();
 
-  try {
-    const edgar = await fetchEdgarFundamentals(id);
-    if (!edgar) {
-      return fromSample(id, price, change, priceSource);
-    }
-    if (edgar.revenue.values.length >= 4) {
-      return buildFromEdgar(id, edgar, price, change, priceSource);
-    }
+const fresh = (at: string | null | undefined) =>
+  Boolean(at && Date.now() - Date.parse(at) < 23 * 60 * 60 * 1000);
 
-    // Partial coverage (e.g. foreign issuers with annual 20-F only, no quarterly XBRL):
-    // still apply shares outstanding so market cap is not the sample placeholder.
-    const snap = fromSample(id, price, change, priceSource);
-    if (edgar.sharesOutstandingBillions != null && edgar.sharesOutstandingBillions > 0) {
-      snap.marketCapBillions = price * edgar.sharesOutstandingBillions;
+async function loadSnapshot(id: string, refreshEdgar: boolean): Promise<CompanySnapshot> {
+  const configured = hasStockStore();
+  const stored = configured ? await readTicker(id).catch((error) => {
+    console.error("Could not read stock cache", error);
+    return undefined;
+  }) : undefined;
+  let history = stored ? await readPrices(id).catch(() => null) : null;
+  let priceChanged = false;
+  if (!refreshEdgar && (!history || !fresh(stored?.prices_fetched_at))) {
+    const fetched = await fetchStockHistory(id, true).catch(() => null);
+    if (fetched) {
+      history = fetched;
+      priceChanged = true;
+      if (configured) await savePrices(id, fetched).catch((error) => console.error("Could not save prices", error));
     }
-    if (edgar.debtBillions != null && edgar.equityBillions && edgar.equityBillions > 0) {
-      snap.de = (edgar.debtBillions / edgar.equityBillions).toFixed(2);
-    }
-    if (edgar.dividendPerShare != null && price > 0) {
-      snap.dividendYieldPercent = (edgar.dividendPerShare / price) * 100;
-    }
-    return snap;
-  } catch {
-    return fromSample(id, price, change, priceSource);
   }
+
+  let edgar = stored?.edgar_snapshot ?? null;
+  let fundamentalsChanged = false;
+  if (refreshEdgar || !edgar) {
+    try {
+      const fetched = await fetchEdgarFundamentals(id, refreshEdgar);
+      if (fetched && fetched.revenue.values.length >= 4) {
+        edgar = fetched;
+        fundamentalsChanged = true;
+        if (configured) await saveFundamentals(id, fetched);
+      }
+    } catch (error) {
+      console.error("EDGAR refresh failed for " + id, error);
+      if (refreshEdgar) throw error;
+    }
+  }
+
+  const priceSource = history ? "marketstack" : "sample";
+  const fallback = sample(id);
+  if (!edgar) return fromSample(id, history?.price ?? fallback.price, history?.change ?? fallback.change, priceSource);
+
+  const points = calculateValuations(edgar, history);
+  let valuations = points;
+  if (configured && (priceChanged || fundamentalsChanged)) {
+    await saveValuations(id, points).catch((error) => {
+      if (refreshEdgar) throw error;
+      console.error("Could not save valuations", error);
+    });
+  }
+  if (configured && (!priceChanged && !fundamentalsChanged || points.length < 2)) {
+    const cached = await readValuations(id).catch(() => []);
+    if (cached.length > points.length) valuations = cached;
+  }
+  return buildFromEdgar(id, edgar, history?.price ?? fallback.price, history?.change ?? fallback.change, priceSource, valuations);
+}
+
+export function getCompanySnapshot(ticker: string) {
+  const id = ticker.trim().toUpperCase();
+  const existing = pending.get(id);
+  if (existing) return existing;
+  const request = loadSnapshot(id, false).finally(() => pending.delete(id));
+  pending.set(id, request);
+  return request;
+}
+
+export async function refreshCompanyFilings(ticker: string) {
+  return (await loadSnapshot(ticker, true)).sources.fundamentals === "edgar";
 }

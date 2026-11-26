@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type KeyboardEvent } from "react";
-import { fmt, sample } from "@/lib/market";
+import { fmt } from "@/lib/market";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 
 const PERIODS = [1, 2, 5, 10, 15] as const;
@@ -40,9 +40,10 @@ function padHistory(values: number[], minLen: number) {
   return [...Array(minLen - values.length).fill(first), ...values];
 }
 
-function MetricChart({ label, values, unit, activeIndex, previewIndex, onPreview, onSelect }: {
+function MetricChart({ label, values, dates, unit, activeIndex, previewIndex, onPreview, onSelect }: {
   label: string;
   values: number[];
+  dates: string[];
   unit: Unit;
   activeIndex: number;
   previewIndex: number | null;
@@ -106,14 +107,14 @@ function MetricChart({ label, values, unit, activeIndex, previewIndex, onPreview
         const index = Math.round(tick * (values.length - 1) / 3);
         const x = tick === 3 ? right : left + index * step;
         return <text key={tick} x={x} y={210} textAnchor={tick === 0 ? "start" : tick === 3 ? "end" : "middle"}>
-          {tick === 3 ? "Latest" : `${values.length - 1 - index}q ago`}
+          {dates[index] ? quarterLabelFromEnd(dates[index]) : ""}
         </text>;
       })}
     </svg>
   );
 }
 
-function MetricCard({ label, values, unit, sourceNote }: { label: string; values: number[]; unit: Unit; sourceNote: string }) {
+function MetricCard({ label, values, dates, unit, sourceNote }: { label: string; values: number[]; dates: string[]; unit: Unit; sourceNote: string }) {
   const [period, setPeriod] = useState<Period>(5);
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
@@ -121,7 +122,8 @@ function MetricCard({ label, values, unit, sourceNote }: { label: string; values
   const needed = period * 4 + 1;
   const displayedValues = values.slice(-needed);
   const last = displayedValues.length - 1;
-  const activeIndex = preview ?? selected ?? last;
+  const activeIndex = Math.min(preview ?? selected ?? last, last);
+  const displayedDates = dates.slice(-needed);
 
   function selectPeriod(years: Period) {
     if (years === period) return;
@@ -144,13 +146,13 @@ function MetricCard({ label, values, unit, sourceNote }: { label: string; values
   return (
     <article className="panel fundamental-card" data-expanded={expanded}>
       <header className="fundamental-card-header">
-        <div><h3>{label.replace(/^TTM\s+/, "")}</h3><p>TTM · {sourceNote}</p></div>
+        <div><h3>{label.replace(/^TTM\s+/, "")}</h3><p>{displayedDates[activeIndex] ? quarterLabelFromEnd(displayedDates[activeIndex]) : sourceNote} · TTM</p></div>
         <button type="button" aria-expanded={expanded} aria-label={(expanded ? "Shrink " : "Expand ") + label} onClick={() => setExpanded(!expanded)}>
           {expanded ? "Shrink" : "Expand"}
         </button>
       </header>
       <strong className="fundamental-value">{formatValue(displayedValues[activeIndex], unit)}</strong>
-      <MetricChart label={label} values={displayedValues} unit={unit} activeIndex={activeIndex} previewIndex={preview}
+      <MetricChart label={label} values={displayedValues} dates={displayedDates} unit={unit} activeIndex={activeIndex} previewIndex={preview}
         onPreview={setPreview} onSelect={setSelected} />
       {unit === "percent" && <p className="fundamental-range-label">Margin change</p>}
       <div className="fundamental-ranges" role="group" aria-label={label + " chart period"}>
@@ -168,7 +170,7 @@ function MetricCard({ label, values, unit, sourceNote }: { label: string; values
 
 export function FundamentalSummary({ ticker }: { ticker: string }) {
   const { snapshot, loading } = useCompanySnapshot(ticker);
-  const s = snapshot ?? null;
+  const s = snapshot?.sources.fundamentals === "edgar" ? snapshot : null;
   const items = [
     { label: "TTM Revenue", value: s?.revBillions, unit: "billions" as const },
     { label: "TTM Diluted EPS", value: s?.epsTtm, unit: "perShare" as const },
@@ -189,35 +191,36 @@ export function FundamentalSummary({ ticker }: { ticker: string }) {
 
 export function Fundamentals({ ticker }: { ticker: string }) {
   const { snapshot, loading } = useCompanySnapshot(ticker);
-  const fallback = sample(ticker);
-  const sourceNote = loading && !snapshot ? "Loading…" : "TTM";
-
-  const revenue = snapshot?.revenueHistory?.length
-    ? snapshot.revenueHistory
-    : [fallback.rev * 0.7, fallback.rev * 0.8, fallback.rev * 0.9, fallback.rev];
-  const operatingIncome = snapshot?.operatingIncomeHistory?.length
-    ? snapshot.operatingIncomeHistory
-    : [fallback.opinc * 0.7, fallback.opinc * 0.8, fallback.opinc * 0.9, fallback.opinc];
-  const eps = snapshot?.epsHistory?.length
-    ? snapshot.epsHistory
-    : [fallback.eps * 0.7, fallback.eps * 0.8, fallback.eps * 0.9, fallback.eps];
-  const cashFlow = snapshot?.fcfHistory?.length
-    ? snapshot.fcfHistory
-    : [fallback.fcf * 0.7, fallback.fcf * 0.8, fallback.fcf * 0.9, fallback.fcf];
+  if (loading && !snapshot) return <p className="panel" role="status">Loading quarterly filings…</p>;
+  if (snapshot?.sources.fundamentals !== "edgar") return <p className="panel">Quarterly filings are unavailable for {ticker}.</p>;
+  const sourceNote = "SEC filings";
+  const revenue = snapshot.revenueHistory;
+  const operatingIncome = snapshot.operatingIncomeHistory;
+  const eps = snapshot.epsHistory;
+  const cashFlow = snapshot.fcfHistory;
+  const dates = snapshot.filingDates;
+  const revenueByDate = new Map((dates?.revenue ?? []).map((date, index) => [date, revenue[index]]));
+  function margin(values: number[], quarters: string[]) {
+    const points = quarters.flatMap((date, index) => {
+      const sales = revenueByDate.get(date);
+      return sales ? [{ date, value: values[index] / sales * 100 }] : [];
+    });
+    return { dates: points.map(({ date }) => date), values: points.map(({ value }) => value) };
+  }
 
   const metrics = [
-    { label: "TTM Revenue", values: revenue, unit: "billions" as const },
-    { label: "TTM Diluted EPS", values: eps, unit: "perShare" as const },
-    { label: "TTM Operating Income", values: operatingIncome, unit: "billions" as const },
-    { label: "TTM Free Cash Flow", values: cashFlow, unit: "billions" as const },
+    { label: "TTM Revenue", values: revenue, dates: dates?.revenue ?? [], unit: "billions" as const },
+    { label: "TTM Diluted EPS", values: eps, dates: dates?.eps ?? [], unit: "perShare" as const },
+    { label: "TTM Operating Income", values: operatingIncome, dates: dates?.operatingIncome ?? [], unit: "billions" as const },
+    { label: "TTM Free Cash Flow", values: cashFlow, dates: dates?.fcf ?? [], unit: "billions" as const },
     {
       label: "TTM Operating Margin",
-      values: operatingIncome.map((value, index) => (revenue[index] ? (value / revenue[index]) * 100 : 0)),
+      ...margin(operatingIncome, dates?.operatingIncome ?? []),
       unit: "percent" as const,
     },
     {
       label: "TTM Free Cash Flow Margin",
-      values: cashFlow.map((value, index) => (revenue[index] ? (value / revenue[index]) * 100 : 0)),
+      ...margin(cashFlow, dates?.fcf ?? []),
       unit: "percent" as const,
     },
   ];

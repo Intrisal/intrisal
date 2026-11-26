@@ -1,78 +1,25 @@
 "use client";
 
 import { useId, useState } from "react";
-import { fmt, hashStr, rng, sample, series } from "@/lib/market";
+import { fmt } from "@/lib/market";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
-
-const QUARTERS = 40;
-const LATEST_QUARTER = 2026 * 4 + 2;
-const TICKS = [0, 8, 16, 24, 32, 39];
-
-function quarterLabel(index: number, count = QUARTERS) {
-  const quarter = LATEST_QUARTER - (count - 1 - index);
-  return `Q${(quarter % 4) + 1} ${Math.floor(quarter / 4)}`;
-}
+import { quarterLabelFromEnd } from "@/components/Fundamentals";
 
 function multiple(value: number) {
   return `${fmt(value, 1)}x`;
 }
 
-type QuarterPoint = { value: number; price: number; nopat: number };
-
-function sampleValuationHistory(ticker: string): QuarterPoint[] {
-  const stock = sample(ticker);
-  const random = rng(hashStr(ticker + ":valuation"));
-  const phase = random() * Math.PI * 2;
-  const prices = series(ticker, "valuation-quarterly", QUARTERS);
-  const deviations = prices.slice(0, -1).map((_, index) =>
-    Math.sin(index * 0.22 + phase) * 0.13 +
-    Math.sin(index * 0.61 + phase) * 0.05 +
-    (random() - 0.5) * 0.08,
-  );
-  const meanDeviation = deviations.reduce((sum, value) => sum + value, 0) / deviations.length;
-  const priorAverage = (stock.avg * QUARTERS - stock.evn) / (QUARTERS - 1);
-  const multiples = [
-    ...deviations.map((value) => priorAverage * (1 + value - meanDeviation)),
-    stock.evn,
-  ];
-
-  return multiples.map((value, index) => ({
-    value,
-    price: prices[index],
-    nopat: (stock.opinc * 0.79) / (1 + stock.growth / 100) ** ((QUARTERS - 1 - index) / 4),
-  }));
-}
-
-function fromSnapshot(
-  values: number[],
-  price: number,
-  nopatTtm: number,
-): QuarterPoint[] {
-  const n = values.length;
-  return values.map((value, index) => ({
-    value,
-    price,
-    // Scale NOPAT roughly with the multiple path when only current EV is known
-    nopat: nopatTtm * (value > 0 && values[n - 1] > 0 ? values[n - 1] / value : 1),
-  }));
-}
-
 export function ValuationHistory({ ticker }: { ticker: string }) {
   const id = useId();
-  const { snapshot } = useCompanySnapshot(ticker);
+  const { snapshot, loading } = useCompanySnapshot(ticker);
   const [hovered, setHovered] = useState<number | null>(null);
 
-  const live =
-    snapshot?.evNopatHistory && snapshot.evNopatHistory.length >= 8
-      ? fromSnapshot(
-          snapshot.evNopatHistory.slice(-QUARTERS),
-          snapshot.price,
-          snapshot.opincBillions != null ? snapshot.opincBillions * 0.79 : sample(ticker).opinc * 0.79,
-        )
-      : null;
-  const quarters = live ?? sampleValuationHistory(ticker);
+  const quarters = snapshot?.valuationPoints?.map((point) => ({
+    quarter: point.quarter, value: point.ev_nopat, price: point.close, nopat: point.nopat,
+  })) ?? [];
   const count = quarters.length;
-  const active = hovered ?? count - 1;
+  if (count < 2) return <p className="panel">{loading ? "Loading valuation history…" : "Not enough reported financials and historical prices to calculate valuation history."}</p>;
+  const active = Math.min(hovered ?? count - 1, count - 1);
   const values = quarters.map(({ value }) => value);
   const average = values.reduce((sum, value) => sum + value, 0) / count;
   const low = Math.min(...values);
@@ -80,7 +27,7 @@ export function ValuationHistory({ ticker }: { ticker: string }) {
   const latest = quarters[count - 1];
   const current = quarters[active];
   const difference = (latest.value / average - 1) * 100;
-  const tickIndexes = TICKS.map((t) => Math.min(count - 1, Math.round((t / 39) * (count - 1))));
+  const tickIndexes = [...new Set(Array.from({ length: 5 }, (_, i) => Math.round(i * (count - 1) / 4)))];
 
   const left = 46;
   const right = 784;
@@ -147,7 +94,7 @@ export function ValuationHistory({ ticker }: { ticker: string }) {
             y={272}
             textAnchor={index === 0 ? "start" : index === count - 1 ? "end" : "middle"}
           >
-            {quarterLabel(index, count).slice(-4)}
+            {quarterLabelFromEnd(quarters[index].quarter).slice(-4)}
           </text>
         ))}
         <path className="valuation-area" data-side="above" d={fill} clipPath={`url(#${id}-above)`} />
@@ -174,7 +121,7 @@ export function ValuationHistory({ ticker }: { ticker: string }) {
         <span>History average · {multiple(average)}</span>
       </div>
       <p className="valuation-quarter">
-        <strong>{quarterLabel(active, count)}</strong>
+        <strong>{quarterLabelFromEnd(current.quarter)}</strong>
         <span>
           EV/NOPAT <strong>{multiple(current.value)}</strong>
         </span>
@@ -196,14 +143,14 @@ export function ValuationHistory({ ticker }: { ticker: string }) {
           <dd>{multiple(high)}</dd>
         </div>
         <div>
-          <dt>Today vs average</dt>
+          <dt>Latest quarter vs average</dt>
           <dd>
             {multiple(latest.value)} vs {multiple(average)}
           </dd>
         </div>
         <div>
           <dt>Latest quarter</dt>
-          <dd>{quarterLabel(count - 1, count)}</dd>
+          <dd>{quarterLabelFromEnd(latest.quarter)}</dd>
         </div>
       </dl>
     </article>
