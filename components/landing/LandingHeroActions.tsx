@@ -1,7 +1,32 @@
-import Link from "next/link";
+"use client";
 
-/** Hero CTAs — separate /signup and /login pages hold the actual forms. */
+import Link from "next/link";
+import { navigateWithCurtain } from "@/lib/routeTransition";
+import { useSessionUser } from "@/lib/useSessionUser";
+
+/** Hero CTAs — guests create/sign in; signed-in users open the platform. */
 export function LandingHeroActions() {
+  const { user, loading } = useSessionUser();
+
+  if (loading) {
+    return <div className="landing-hero-actions" aria-hidden="true" style={{ minHeight: 92 }} />;
+  }
+
+  if (user) {
+    return (
+      <div className="landing-hero-actions">
+        <button
+          type="button"
+          className="landing-btn landing-btn-primary"
+          onClick={() => void navigateWithCurtain("/home", "to-platform")}
+        >
+          Open platform
+        </button>
+        <p className="landing-signed-as">Signed in as {user.name}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="landing-hero-actions">
       <Link href="/signup" className="landing-btn landing-btn-primary">

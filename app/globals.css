@@ -232,7 +232,25 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .menu.right-menu { right: 0; }
       .menu h3 { margin: 0 0 4px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
       .menu p { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+      .menu .profile-user-name {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+      }
+      .menu .profile-user-email {
+        margin: 2px 0 12px;
+        font-size: 12.5px;
+        color: var(--ink-3);
+        word-break: break-word;
+      }
       .menu .row-label { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); margin: 10px 0 6px; }
+      .menu-signout-block {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+      }
       .menu-link {
         display: block;
         width: 100%;
@@ -249,6 +267,18 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         text-align: left;
         cursor: pointer;
         transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      .menu-link.menu-signout {
+        margin: 0;
+        border-color: color-mix(in srgb, #ff8c7c 42%, var(--line));
+        color: #ff8c7c;
+        background: color-mix(in srgb, #ff8c7c 10%, transparent);
+      }
+      .menu-link.menu-signout:hover,
+      .menu-link.menu-signout:focus-visible {
+        border-color: color-mix(in srgb, #ff8c7c 70%, var(--line));
+        background: color-mix(in srgb, #ff8c7c 18%, transparent);
+        color: #ffb4a8;
       }
       .menu-link:hover,
       .menu-link:focus-visible {
@@ -1286,10 +1316,64 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
           animation: none !important;
         }
       }
+      /* Landing ↔ platform hop */
+      .route-curtain {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        pointer-events: auto;
+        background:
+          radial-gradient(ellipse 70% 50% at 50% -10%, rgba(252, 243, 234, 0.08), transparent 60%),
+          #100e11;
+      }
+      .route-curtain--to-platform {
+        transform: translate3d(-100%, 0, 0);
+      }
+      .route-curtain--to-landing {
+        transform: translate3d(100%, 0, 0);
+      }
+      .route-curtain--to-platform.is-covering {
+        animation: route-curtain-cover-right 0.52s cubic-bezier(0.22, 0.82, 0.2, 1) forwards;
+      }
+      .route-curtain--to-landing.is-covering {
+        animation: route-curtain-cover-left 0.52s cubic-bezier(0.22, 0.82, 0.2, 1) forwards;
+      }
+      .route-curtain--to-platform.is-arrive.is-covering {
+        animation: none;
+        transform: translate3d(0, 0, 0);
+      }
+      .route-curtain--to-landing.is-arrive.is-covering {
+        animation: none;
+        transform: translate3d(0, 0, 0);
+      }
+      .route-curtain--to-platform.is-clearing {
+        animation: route-curtain-clear-right 0.52s cubic-bezier(0.22, 0.82, 0.2, 1) forwards;
+      }
+      .route-curtain--to-landing.is-clearing {
+        animation: route-curtain-clear-left 0.52s cubic-bezier(0.22, 0.82, 0.2, 1) forwards;
+      }
+      @keyframes route-curtain-cover-right {
+        from { transform: translate3d(-100%, 0, 0); }
+        to { transform: translate3d(0, 0, 0); }
+      }
+      @keyframes route-curtain-cover-left {
+        from { transform: translate3d(100%, 0, 0); }
+        to { transform: translate3d(0, 0, 0); }
+      }
+      @keyframes route-curtain-clear-right {
+        from { transform: translate3d(0, 0, 0); }
+        to { transform: translate3d(100%, 0, 0); }
+      }
+      @keyframes route-curtain-clear-left {
+        from { transform: translate3d(0, 0, 0); }
+        to { transform: translate3d(-100%, 0, 0); }
+      }
+
       @media (prefers-reduced-motion: reduce) {
-        * { transition: none !important; }
+        *:not(.route-curtain) { transition: none !important; }
         #stars-deep, .aurora::before, .aurora::after,
-        .section-stage, .stock-analysis-switch, .stock-analysis-panels {
+        .section-stage, .stock-analysis-switch, .stock-analysis-panels,
+        .route-curtain {
           animation: none !important;
         }
       }

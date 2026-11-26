@@ -256,16 +256,36 @@ html:has(.landing) {
   color: var(--landing-ink-mute);
 }
 
+.landing-profile-user {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--landing-ink);
+}
+
+.landing-profile-email {
+  margin: 2px 0 10px;
+  font-size: 12.5px;
+  color: var(--landing-ink-mute);
+  word-break: break-word;
+}
+
 .landing-profile-link {
   display: block;
+  width: 100%;
   margin: 0 0 6px;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--landing-stroke);
+  background: transparent;
   color: var(--landing-ink);
   text-decoration: none;
+  text-align: left;
+  font: inherit;
   font-size: 13.5px;
   font-weight: 600;
+  cursor: pointer;
 }
 
 .landing-profile-link:last-child {
@@ -275,6 +295,39 @@ html:has(.landing) {
 .landing-profile-link:hover,
 .landing-profile-link[aria-current="page"] {
   background: var(--landing-hover);
+}
+
+.landing-profile-signout-block {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.landing-profile-signout {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 140, 124, 0.42);
+  background: rgba(255, 140, 124, 0.1);
+  color: #ffb4a8;
+  text-align: left;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.landing-profile-signout:hover,
+.landing-profile-signout:focus-visible {
+  background: rgba(255, 140, 124, 0.18);
+  border-color: rgba(255, 140, 124, 0.7);
+  outline: none;
+}
+
+button.landing-topbar-cta {
+  font: inherit;
 }
 
 .landing-topbar-cta {
@@ -511,6 +564,13 @@ html:has(.landing) {
   flex-direction: column;
   align-items: center;
   gap: 12px;
+}
+
+.landing-signed-as {
+  margin: 0;
+  color: var(--landing-ink-dim);
+  font-size: 14px;
+  letter-spacing: -0.01em;
 }
 
 .landing-auth {

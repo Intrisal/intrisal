@@ -7,6 +7,7 @@ import { LandingTopbar } from "@/components/landing/LandingTopbar";
 import { LandingShooters } from "@/components/landing/LandingShooters";
 import { decideLandingSky, LANDING_INTRO_MS, SKY_PAN_MS } from "@/components/landing/intro";
 import { WordmarkIntro } from "@/components/landing/WordmarkIntro";
+import { RouteArrive } from "@/components/RouteArrive";
 import { Stars } from "@/components/Stars";
 import "@/components/landing/landing.css";
 
@@ -49,6 +50,7 @@ export function LandingPage() {
       }
       data-theme="dark"
     >
+      <RouteArrive kind="landing" />
       <div className="landing-cosmos" aria-hidden="true" key={skyMode}>
         <Stars />
         <div className="aurora" />

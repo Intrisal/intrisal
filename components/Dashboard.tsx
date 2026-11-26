@@ -19,6 +19,9 @@ import { Stars } from "@/components/Stars";
 import { DEFAULT_WATCHLIST, SIM_DEFAULT, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, type SimInput } from "@/lib/market";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
+import { RouteArrive } from "@/components/RouteArrive";
+import { navigateWithCurtain } from "@/lib/routeTransition";
+import { signOutAndReload, useSessionUser } from "@/lib/useSessionUser";
 
 type ThemeChoice = "auto" | "light" | "dark";
 type MenuId = "profile" | "help";
@@ -77,6 +80,7 @@ export function Dashboard() {
   const watchDockStart = useRef<Map<string, DOMRect> | null>(null);
   const toastTimer = useRef<number | null>(null);
   const { quotes } = useQuotes(watchlist);
+  const { user } = useSessionUser();
 
   useLayoutEffect(() => {
     const dock = watchDockRef.current;
@@ -319,6 +323,7 @@ export function Dashboard() {
 
   return (
     <>
+      <RouteArrive kind="platform" />
       <Stars />
       <div className="aurora" aria-hidden="true" />
       <div className="shell">
@@ -335,11 +340,26 @@ export function Dashboard() {
             </button>
             <div className={"menu left-menu" + (menu === "profile" ? " open" : "")} id="profileMenu" role="menu" aria-label="Profile menu" onClick={(ev) => ev.stopPropagation()}>
               <h3>Profile</h3>
-              <p>Signed-in accounts arrive with the full v2 build. Appearance lives here for now.</p>
+              {user ? (
+                <>
+                  <p className="profile-user-name">{user.name}</p>
+                  <p className="profile-user-email">{user.email}</p>
+                </>
+              ) : (
+                <p>Appearance and page switching live here.</p>
+              )}
               <div className="row-label">Pages</div>
-              <a className="menu-link" href="/" role="menuitem">
+              <button
+                type="button"
+                className="menu-link"
+                role="menuitem"
+                onClick={() => {
+                  setMenu(null);
+                  void navigateWithCurtain("/", "to-landing");
+                }}
+              >
                 Landing page
-              </a>
+              </button>
               <a className="menu-link" href="/home" role="menuitem" aria-current="page">
                 Platform
               </a>
@@ -350,6 +370,18 @@ export function Dashboard() {
                   </button>
                 ))}</div>
               <p style={{ margin: "12px 0 0" }}>Auto follows the time of day — light in the day, dark at night.</p>
+              {user ? (
+                <div className="menu-signout-block">
+                  <button
+                    type="button"
+                    className="menu-link menu-signout"
+                    role="menuitem"
+                    onClick={() => void signOutAndReload()}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div><div className="right">
             <button className="icon-btn" id="helpBtn" aria-label="Help" aria-haspopup="true" aria-expanded={menu === "help"} onClick={(ev) => toggleMenu("help", ev)}>

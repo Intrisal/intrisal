@@ -12,6 +12,8 @@ import {
   type DemoSignal,
   type DemoStock,
 } from "@/components/landing/demoData";
+import { navigateWithCurtain } from "@/lib/routeTransition";
+import { useSessionUser } from "@/lib/useSessionUser";
 
 type Size = { w: number; h: number };
 
@@ -515,17 +517,29 @@ export function LandingDemos() {
 /** Closing band: one last way into the platform, set on a planet's horizon, with the footer below it. */
 export function LandingClose() {
   const [ctaRef, ctaInView] = useInView<HTMLDivElement>(0.35);
+  const { user, loading } = useSessionUser();
 
   return (
     <div className="landing-end">
       <div className="landing-horizon" aria-hidden="true" />
       <section className="landing-cta" aria-label="Enter Intrisal">
         <div className={"landing-cta-inner landing-reveal" + (ctaInView ? " is-inview" : "")} ref={ctaRef}>
-          <h2>Look up your first stock.</h2>
-          <a href="/signup" className="landing-btn landing-btn-primary landing-btn-lg">
-            Create account
-            <ArrowIcon />
-          </a>
+          <h2>{user ? "Back to your watchlist." : "Look up your first stock."}</h2>
+          {loading ? null : user ? (
+            <button
+              type="button"
+              className="landing-btn landing-btn-primary landing-btn-lg"
+              onClick={() => void navigateWithCurtain("/home", "to-platform")}
+            >
+              Open platform
+              <ArrowIcon />
+            </button>
+          ) : (
+            <a href="/signup" className="landing-btn landing-btn-primary landing-btn-lg">
+              Create account
+              <ArrowIcon />
+            </a>
+          )}
         </div>
       </section>
       <footer className="landing-foot">

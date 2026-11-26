@@ -3,14 +3,13 @@ import { getSessionFromCookieHeader } from "@/lib/authSession";
 
 /**
  * Gate the product surface and its data APIs.
- * Signed-in visitors hitting landing/auth pages go straight to /home.
- * Landing + auth + cron stay public. Platform UI files are not modified.
+ * Signed-in users may still visit the landing page; login/signup redirect home.
  */
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const session = await getSessionFromCookieHeader(request.headers.get("cookie"));
 
-  if (session && (pathname === "/" || pathname === "/login" || pathname === "/signup")) {
+  if (session && (pathname === "/login" || pathname === "/signup")) {
     const home = request.nextUrl.clone();
     home.pathname = "/home";
     home.search = "";

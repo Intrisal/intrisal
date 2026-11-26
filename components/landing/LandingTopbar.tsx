@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ProfileIcon } from "@/components/Icons";
+import { navigateWithCurtain } from "@/lib/routeTransition";
+import { signOutAndReload, useSessionUser } from "@/lib/useSessionUser";
 
 /**
  * Landing top bar: the profile control mirrors the platform person menu for page
@@ -11,6 +13,7 @@ import { ProfileIcon } from "@/components/Icons";
 export function LandingTopbar() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const { user } = useSessionUser();
 
   useEffect(() => {
     if (!open) return;
@@ -71,30 +74,79 @@ export function LandingTopbar() {
         </button>
         {open ? (
           <div className="landing-profile-menu" role="menu" aria-label="Profile menu" onClick={(ev) => ev.stopPropagation()}>
-            <p className="landing-profile-kicker">Pages</p>
-            <Link className="landing-profile-link" href="/" role="menuitem" aria-current="page" onClick={() => setOpen(false)}>
-              Landing page
-            </Link>
-            <Link className="landing-profile-link" href="/login" role="menuitem" onClick={() => setOpen(false)}>
-              Sign in
-            </Link>
-            <Link className="landing-profile-link" href="/signup" role="menuitem" onClick={() => setOpen(false)}>
-              Create account
-            </Link>
+            {user ? (
+              <>
+                <p className="landing-profile-kicker">Signed in</p>
+                <p className="landing-profile-user">{user.name}</p>
+                <p className="landing-profile-email">{user.email}</p>
+                <button
+                  type="button"
+                  className="landing-profile-link"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpen(false);
+                    void navigateWithCurtain("/home", "to-platform");
+                  }}
+                >
+                  Open platform
+                </button>
+                <div className="landing-profile-signout-block">
+                  <button
+                    type="button"
+                    className="landing-profile-signout"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpen(false);
+                      void signOutAndReload();
+                    }}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="landing-profile-kicker">Pages</p>
+                <Link className="landing-profile-link" href="/" role="menuitem" aria-current="page" onClick={() => setOpen(false)}>
+                  Landing page
+                </Link>
+                <Link className="landing-profile-link" href="/login" role="menuitem" onClick={() => setOpen(false)}>
+                  Sign in
+                </Link>
+                <Link className="landing-profile-link" href="/signup" role="menuitem" onClick={() => setOpen(false)}>
+                  Create account
+                </Link>
+              </>
+            )}
           </div>
         ) : null}
       </div>
-      <Link
-        className="landing-topbar-cta"
-        href="/login"
-        tabIndex={scrolled ? undefined : -1}
-        aria-hidden={scrolled ? undefined : true}
-      >
-        Sign in
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M3 8h10M9 4l4 4-4 4" />
-        </svg>
-      </Link>
+      {user ? (
+        <button
+          type="button"
+          className="landing-topbar-cta"
+          tabIndex={scrolled ? undefined : -1}
+          aria-hidden={scrolled ? undefined : true}
+          onClick={() => void navigateWithCurtain("/home", "to-platform")}
+        >
+          Open platform
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 8h10M9 4l4 4-4 4" />
+          </svg>
+        </button>
+      ) : (
+        <Link
+          className="landing-topbar-cta"
+          href="/login"
+          tabIndex={scrolled ? undefined : -1}
+          aria-hidden={scrolled ? undefined : true}
+        >
+          Sign in
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 8h10M9 4l4 4-4 4" />
+          </svg>
+        </Link>
+      )}
     </header>
   );
 }
