@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type CSSProperties } from "react";
 import { AnimatedPrice, useAnimatedNumber } from "@/components/AnimatedPrice";
+import { ChartReveal } from "@/components/ChartReveal";
 import { fmt } from "@/lib/market";
 import type { CompanySnapshot } from "@/lib/companyData";
 import { useStockHistory } from "@/lib/useMarketData";
@@ -95,15 +96,17 @@ function PriceChart({
           </g>
         );
       })}
-      {lines.map((line, index) => (
-        <polyline
-          key={index}
-          className={["stock-close", "stock-sma-short", "stock-sma-long"][index]}
-          points={line
-            .map((value, i) => `${xAt(i / Math.max(1, line.length - 1)).toFixed(2)},${yAt(value).toFixed(2)}`)
-            .join(" ")}
-        />
-      ))}
+      <ChartReveal left={left} right={right} top={top} bottom={bottom}>
+        {lines.map((line, index) => (
+          <polyline
+            key={index}
+            className={["stock-close", "stock-sma-short", "stock-sma-long"][index]}
+            points={line
+              .map((value, i) => `${xAt(i / Math.max(1, line.length - 1)).toFixed(2)},${yAt(value).toFixed(2)}`)
+              .join(" ")}
+          />
+        ))}
+      </ChartReveal>
       {Array.from({ length: tickCount }, (_, tick) => {
         const progress = tick / (tickCount - 1);
         const index = Math.min(dates.length - 1, Math.round(progress * (dates.length - 1)));

@@ -18,6 +18,8 @@ const TICKERS_FILE = path.join(CACHE_DIR, "sec-tickers.json");
 const FACTS_DIR = path.join(CACHE_DIR, "sec-facts");
 const TICKERS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FACTS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const EPS_SPLIT_BASIS_VERSION = 3;
+export type ReportingCurrency = "USD" | "EUR";
 
 /** Minimum gap between SEC requests (ms). */
 const MIN_GAP_MS = 250;
@@ -47,11 +49,14 @@ export type EdgarFundamentals = {
   entityName: string;
   asOf: string;
   filingAccession?: string;
+  epsSplitBasisVersion?: number;
+  epsSplitBasis?: string;
+  reportingCurrency?: ReportingCurrency;
   /** Quarterly revenue, USD billions */
   revenue: QuarterlySeries;
   /** Quarterly operating income, USD billions */
   operatingIncome: QuarterlySeries;
-  /** Quarterly diluted EPS, USD/share */
+  /** Diluted EPS per share. The legacy ASML 6-K series is already trailing 12 months. */
   dilutedEps: QuarterlySeries;
   /** Quarterly free cash flow approx (CFO - capex), USD billions */
   freeCashFlow: QuarterlySeries;
@@ -70,7 +75,7 @@ export type EdgarFundamentals = {
   dividendPerShare: number | null;
   /** Last period end date from income statement */
   lastReportEnd: string | null;
-  source: "edgar";
+  source: "edgar" | "edgar-6k";
 };
 
 type TickersFile = {
@@ -323,7 +328,7 @@ function isAnnualDuration(p: FactPoint) {
  * Derive the missing quarter: Q4 = FY − (Q1+Q2+Q3) when exactly three
  * in-year quarters exist (common for MSFT and peers).
  */
-function deriveMissingQuarters(quarters: FactPoint[], allPoints: FactPoint[]): FactPoint[] {
+function deriveMissingQuarters(quarters: FactPoint[], allPoints: FactPoint[], additive: boolean): FactPoint[] {
   const byEnd = new Map<string, FactPoint>();
   for (const q of quarters) {
     if (!q.end || typeof q.val !== "number") continue;
@@ -355,9 +360,9 @@ function deriveMissingQuarters(quarters: FactPoint[], allPoints: FactPoint[]): F
     if (inYear.length !== 3) continue;
     const sum3 = inYear.reduce((s, p) => s + p.val, 0);
     const q4 = annual.val - sum3;
-    // Sanity: Q4 should be positive and in a plausible band vs the other quarters
+    // Per-share data is not strictly additive because the weighted share count can change.
     const avg = sum3 / 3;
-    if (!(q4 > 0) || q4 > avg * 3 || q4 < avg * 0.15) continue;
+    if (!additive && (!(q4 > 0) || q4 > avg * 3 || q4 < avg * 0.15)) continue;
 
     const lastQ = inYear[inYear.length - 1];
     const start =
@@ -386,7 +391,7 @@ function deriveMissingQuarters(quarters: FactPoint[], allPoints: FactPoint[]): F
  * Prefer CY*Qn frames, also keep duration-based quarters, then fill Q4
  * gaps from annual filings when XBRL omits the fourth quarter.
  */
-function quarterlyPoints(points: FactPoint[]): FactPoint[] {
+function quarterlyPoints(points: FactPoint[], additive = false): FactPoint[] {
   const framed = points.filter((p) => p.frame && /^CY\d{4}Q[1-4]$/.test(p.frame));
   const duration = points.filter((p) => !p.frame && isQuarterDuration(p));
 
@@ -405,7 +410,7 @@ function quarterlyPoints(points: FactPoint[]): FactPoint[] {
     }
   }
 
-  return deriveMissingQuarters([...byEnd.values()], points);
+  return deriveMissingQuarters([...byEnd.values()], points, additive);
 }
 
 function latestInstant(points: FactPoint[]): FactPoint | null {
@@ -451,12 +456,179 @@ function toBillions(usd: number) {
   return usd / 1e9;
 }
 
-function seriesFromPoints(points: FactPoint[], scale: (n: number) => number): QuarterlySeries {
-  const q = quarterlyPoints(points);
+function seriesFromPoints(points: FactPoint[], scale: (n: number) => number, additive = false): QuarterlySeries {
+  const q = quarterlyPoints(points, additive);
   return {
     ends: q.map((p) => p.end),
     values: q.map((p) => scale(p.val)),
   };
+}
+
+function consolidatedQuarters(facts: CompanyFacts, concepts: string[], currency: ReportingCurrency) {
+  const quarters = new Map<string, number>();
+  for (const concept of concepts) {
+    for (const point of quarterlyPoints(pickUnit(facts, [concept], [currency]), true)) {
+      if (!quarters.has(point.end)) quarters.set(point.end, point.val);
+    }
+  }
+  return quarters;
+}
+
+function seriesFromQuarterMap(quarters: Map<string, number>): QuarterlySeries {
+  const ends = [...quarters.keys()].sort();
+  return { ends, values: ends.map((end) => toBillions(quarters.get(end)!)) };
+}
+
+function revenueSeries(facts: CompanyFacts, currency: ReportingCurrency): QuarterlySeries {
+  const quarters = consolidatedQuarters(facts, [
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "Revenues", "SalesRevenueNet", "Revenue",
+    "RevenueFromContractWithCustomerIncludingAssessedTax",
+  ], currency);
+
+  const serviceByFiling = new Map<string, number>();
+  for (const point of pickUnit(facts, ["SalesRevenueServicesNet"], [currency])) {
+    if (point.accn && isQuarterDuration(point)) {
+      serviceByFiling.set(`${point.accn}:${point.start}:${point.end}`, point.val);
+    }
+  }
+  const componentQuarters = new Map<string, FactPoint>();
+  for (const point of pickUnit(facts, ["SalesRevenueGoodsNet"], [currency])) {
+    if (!point.accn || !isQuarterDuration(point)) continue;
+    const services = serviceByFiling.get(`${point.accn}:${point.start}:${point.end}`);
+    if (services == null) continue;
+    const existing = componentQuarters.get(point.end);
+    if (!existing || (point.filed ?? "") >= (existing.filed ?? "")) {
+      componentQuarters.set(point.end, { ...point, val: point.val + services });
+    }
+  }
+  const comparable = [...componentQuarters.values()].filter(({ end }) => quarters.has(end));
+  // Only fill gaps from components after confirming that they reconcile to
+  // this issuer's consolidated total in comparable periods.
+  if (comparable.length >= 2 && comparable.every(({ end, val }) => {
+    const total = quarters.get(end)!;
+    return Math.abs(val - total) <= Math.max(Math.abs(total) * 0.005, 1);
+  })) {
+    for (const { end, val } of componentQuarters.values()) {
+      if (!quarters.has(end)) quarters.set(end, val);
+    }
+  }
+  return seriesFromQuarterMap(quarters);
+}
+
+function cashFlowQuarters(points: FactPoint[]) {
+  const quarters = new Map(points.filter(isQuarterDuration).sort(
+    (a, b) => (a.filed ?? "").localeCompare(b.filed ?? ""),
+  ).map((point) => [point.end, point]));
+  const byFiscalStart = new Map<string, Map<string, FactPoint>>();
+  for (const point of points) {
+    const days = daysBetween(point.start, point.end);
+    if (!point.start || days == null || days < 70 || days > 380 || !Number.isFinite(point.val)) continue;
+    const ends = byFiscalStart.get(point.start) ?? new Map<string, FactPoint>();
+    const saved = ends.get(point.end);
+    if (!saved || (point.filed ?? "") >= (saved.filed ?? "")) ends.set(point.end, point);
+    byFiscalStart.set(point.start, ends);
+  }
+  // Cash flow statements often give year-to-date figures. Difference adjacent
+  // filings with the same fiscal-year start to recover each standalone quarter.
+  for (const ends of byFiscalStart.values()) {
+    const cumulative = [...ends.values()].sort((a, b) => a.end.localeCompare(b.end));
+    for (let index = 1; index < cumulative.length; index++) {
+      const previous = cumulative[index - 1];
+      const current = cumulative[index];
+      const gap = daysBetween(previous.end, current.end);
+      if (gap == null || gap < 70 || gap > 110 || quarters.has(current.end)) continue;
+      const start = new Date(previous.end + "T00:00:00Z");
+      start.setUTCDate(start.getUTCDate() + 1);
+      quarters.set(current.end, { ...current, start: start.toISOString().slice(0, 10), val: current.val - previous.val });
+    }
+  }
+  return [...quarters.values()].sort((a, b) => a.end.localeCompare(b.end));
+}
+
+function splitAdjustedEps(facts: CompanyFacts, eps: FactPoint[]) {
+  const tags = pickUnit(facts, ["StockholdersEquityNoteStockSplitConversionRatio1"], ["pure"]);
+  const today = new Date().toISOString().slice(0, 10);
+  const activeTags = tags.filter(({ end, val }) => end <= today && Number.isFinite(val) && val > 0 && val !== 1);
+  const ratios = [...new Set(activeTags.map(({ val }) => val))];
+  const weightedShares = pickUnit(facts, [
+    "WeightedAverageNumberOfDilutedSharesOutstanding",
+    "DilutedWeightedAverageNumberOfOrdinarySharesOutstanding",
+  ], ["shares"]);
+  const periodKey = (point: FactPoint) => `${point.start}:${point.end}`;
+  const filingKey = (point: FactPoint) => point.accn ?? point.filed;
+  const epsByFiling = new Map(eps.map((point) => [`${periodKey(point)}:${filingKey(point)}`, point.val]));
+  const sharesByPeriod = new Map<string, FactPoint[]>();
+  for (const point of weightedShares) {
+    if (!point.start || !point.filed || point.filed > today || point.val <= 0 ||
+        (!isQuarterDuration(point) && !isAnnualDuration(point))) continue;
+    const key = periodKey(point);
+    const period = sharesByPeriod.get(key) ?? [];
+    period.push(point);
+    sharesByPeriod.set(key, period);
+  }
+
+  type SplitEvidence = { ratio: number; before: string; after: string; period: string; tag?: number };
+  const evidence: SplitEvidence[] = [];
+  for (const [period, shares] of sharesByPeriod) {
+    shares.sort((a, b) => a.filed!.localeCompare(b.filed!));
+    for (let i = 1; i < shares.length; i++) {
+      const previous = shares[i - 1];
+      const current = shares[i];
+      if (previous.filed === current.filed) continue;
+      const observed = current.val / previous.val;
+      const exact = (ratio: number) => Math.abs(observed / ratio - 1) <= 0.005;
+      const tag = ratios.find((ratio) => exact(ratio) || exact(1 / ratio));
+      const size = Math.round(Math.max(observed, 1 / observed));
+      const inferred = observed > 1 ? size : 1 / size;
+      const ratio = tag === undefined ? inferred : exact(tag) ? tag : 1 / tag;
+      if (ratio === 1 || !exact(ratio)) continue;
+      if (tag === undefined) {
+        // Require matching EPS restatements to distinguish untagged splits from revised share counts.
+        const oldEps = epsByFiling.get(`${period}:${filingKey(previous)}`);
+        const newEps = epsByFiling.get(`${period}:${filingKey(current)}`);
+        if (oldEps == null || newEps == null || Math.abs(newEps) < 0.05 ||
+            Math.abs(oldEps / ratio - newEps) > Math.max(0.01, Math.abs(newEps) * 0.04)) continue;
+      }
+      evidence.push({ ratio, before: previous.filed!, after: current.filed!, period, tag });
+    }
+  }
+
+  const transitions: (SplitEvidence & { periods: Set<string> })[] = [];
+  for (const item of evidence.sort((a, b) => a.after.localeCompare(b.after))) {
+    const match = transitions.find((event) =>
+      event.ratio === item.ratio && item.before < event.after && event.before < item.after,
+    );
+    if (match) {
+      if (item.before > match.before) match.before = item.before;
+      match.periods.add(item.period);
+    } else {
+      transitions.push({ ...item, periods: new Set([item.period]) });
+    }
+  }
+  const confirmed = transitions.filter((event) => event.tag !== undefined || event.periods.size >= 2);
+  const events = confirmed
+    .filter((event) => event.tag !== undefined || !confirmed.some((other) =>
+      other.tag !== undefined && event.before < other.after && other.before < event.after,
+    ))
+    .map(({ after, ratio }) => ({ date: after, ratio }));
+
+  for (const ratio of ratios) {
+    if (confirmed.some((event) => event.tag === ratio)) continue;
+    // A single date can establish the basis when the restated comparative is unavailable.
+    const dates = new Set(activeTags.filter((point) => point.val === ratio).map((point) => point.end));
+    if (dates.size === 1) events.push({ date: [...dates][0], ratio });
+  }
+
+  const points = eps.map((point) => {
+    // A comparative value filed after the split is already on the new basis.
+    // Normalize each submission before choosing a quarter or subtracting annual totals.
+    const basisDate = point.filed ?? point.end;
+    const factor = events.reduce((total, event) => basisDate < event.date ? total * event.ratio : total, 1);
+    return factor === 1 ? point : { ...point, val: point.val / factor };
+  });
+  const basis = events.sort((a, b) => a.date.localeCompare(b.date)).map(({ ratio }) => ratio).join(",") || "1";
+  return { points, basis };
 }
 
 /**
@@ -478,24 +650,20 @@ export async function fetchEdgarFundamentals(
   )) {
     throw new Error("The latest SEC filing is not yet indexed in Company Facts");
   }
-  const revenuePts = pickBestUnit(
-    facts,
-    ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"],
-    ["USD"],
-  );
-  const opPts = pickBestUnit(facts, ["OperatingIncomeLoss"], ["USD"]);
-  const epsPts = pickBestUnit(facts, ["EarningsPerShareDiluted"], ["USD/shares"]);
-  const cfoPts = pickBestUnit(facts, ["NetCashProvidedByUsedInOperatingActivities"], ["USD"]);
-  const capexPts = pickBestUnit(
-    facts,
-    ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
-    ["USD"],
-  );
-  const cashPts = pickUnit(facts, ["CashAndCashEquivalentsAtCarryingValue"], ["USD"]);
-  const debtTotal = pickUnit(facts, ["LongTermDebt"], ["USD"]);
-  const debtLong = pickUnit(facts, ["LongTermDebtNoncurrent"], ["USD"]);
-  const debtCurrent = pickUnit(facts, ["LongTermDebtCurrent"], ["USD"]);
-  const shortBorrowings = pickUnit(facts, ["ShortTermBorrowings"], ["USD"]);
+  const usdRevenue = revenueSeries(facts, "USD");
+  const eurRevenue = revenueSeries(facts, "EUR");
+  const reportingCurrency = eurRevenue.ends.length >= 4 && eurRevenue.ends.length > usdRevenue.ends.length ? "EUR" : "USD";
+  const revenue = reportingCurrency === "EUR" ? eurRevenue : usdRevenue;
+  const money = [reportingCurrency];
+  const perShare = [`${reportingCurrency}/shares`];
+  const epsPts = pickBestUnit(facts, ["EarningsPerShareDiluted", "DilutedEarningsLossPerShare"], perShare);
+  const cfoPts = pickBestUnit(facts, ["NetCashProvidedByUsedInOperatingActivities", "CashFlowsFromUsedInOperatingActivities"], money);
+  const capexConcepts = ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"];
+  const cashPts = pickUnit(facts, ["CashAndCashEquivalentsAtCarryingValue", "CashAndCashEquivalents"], money);
+  const debtTotal = pickUnit(facts, ["LongTermDebt"], money);
+  const debtLong = pickUnit(facts, ["LongTermDebtNoncurrent"], money);
+  const debtCurrent = pickUnit(facts, ["LongTermDebtCurrent"], money);
+  const shortBorrowings = pickUnit(facts, ["ShortTermBorrowings"], money);
   const sharePts = [
     ...pickUnit(facts, ["CommonStockSharesOutstanding", "EntityCommonStockSharesOutstanding"], ["shares"]),
     ...(facts.facts?.dei?.EntityCommonStockSharesOutstanding?.units?.shares ?? []),
@@ -508,26 +676,34 @@ export async function fetchEdgarFundamentals(
   const equityPts = pickUnit(
     facts,
     ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-    ["USD"],
+    money,
   );
   const divPts = pickUnit(
     facts,
     ["CommonStockDividendsPerShareDeclared", "CommonStockDividendsPerShareCashPaid"],
-    ["USD/shares"],
+    perShare,
   );
 
-  const revenue = seriesFromPoints(revenuePts, toBillions);
-  const operatingIncome = seriesFromPoints(opPts, toBillions);
-  const dilutedEps = seriesFromPoints(epsPts, (n) => n);
+  const operatingIncome = seriesFromQuarterMap(consolidatedQuarters(
+    facts, ["OperatingIncomeLoss", "ProfitLossFromOperatingActivities"], reportingCurrency,
+  ));
+  const { points: adjustedEps, basis: epsSplitBasis } = splitAdjustedEps(facts, epsPts);
+  const dilutedEps = seriesFromPoints(adjustedEps, (n) => n);
 
   // FCF ≈ CFO − |CapEx| on matching quarter ends
-  const cfoQ = quarterlyPoints(cfoPts);
-  const capexByEnd = new Map(quarterlyPoints(capexPts).map((p) => [p.end, Math.abs(p.val)]));
-  const fcfPoints: FactPoint[] = cfoQ.filter((p) => capexByEnd.has(p.end)).map((p) => ({
-    ...p,
-    val: p.val - (capexByEnd.get(p.end) ?? 0),
-  }));
-  const freeCashFlow = seriesFromPoints(fcfPoints, toBillions);
+  const cfoQ = cashFlowQuarters(cfoPts);
+  const capexByEnd = new Map(cashFlowQuarters(pickBestUnit(facts, capexConcepts, money))
+    .map((p) => [p.end, Math.abs(p.val)]));
+  for (const concept of capexConcepts) {
+    for (const point of cashFlowQuarters(pickUnit(facts, [concept], money))) {
+      if (!capexByEnd.has(point.end)) capexByEnd.set(point.end, Math.abs(point.val));
+    }
+  }
+  const matchedCashFlow = cfoQ.filter((p) => capexByEnd.has(p.end));
+  const freeCashFlow = {
+    ends: matchedCashFlow.map(({ end }) => end),
+    values: matchedCashFlow.map(({ end, val }) => toBillions(val - capexByEnd.get(end)!)),
+  };
 
   const sharesVal = latestSharesOutstanding(facts);
   const cash = latestInstant(cashPts);
@@ -572,12 +748,15 @@ export async function fetchEdgarFundamentals(
     entityName: facts.entityName || id,
     asOf: new Date().toISOString().slice(0, 10),
     filingAccession: filing?.accession,
+    epsSplitBasisVersion: EPS_SPLIT_BASIS_VERSION,
+    epsSplitBasis,
+    reportingCurrency,
     revenue,
     operatingIncome,
     dilutedEps,
     freeCashFlow,
-    tax: seriesFromPoints(pickBestUnit(facts, ["IncomeTaxExpenseBenefit"], ["USD"]), toBillions),
-    pretax: seriesFromPoints(pickBestUnit(facts, ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"], ["USD"]), toBillions),
+    tax: seriesFromPoints(pickBestUnit(facts, ["IncomeTaxExpenseBenefit", "IncomeTaxExpenseContinuingOperations"], money), toBillions, true),
+    pretax: seriesFromPoints(pickBestUnit(facts, ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "ProfitLossBeforeTax"], money), toBillions, true),
     balances,
     sharesOutstandingBillions: sharesVal != null ? sharesVal / 1e9 : null,
     cashBillions: cash ? toBillions(cash.val) : null,

@@ -284,8 +284,9 @@ export function Dashboard() {
   }
 
   const isStock = section === "stock";
-  const { snapshot } = useCompanySnapshot(isStock ? selected : "");
+  const { snapshot, loading: snapshotLoading } = useCompanySnapshot(isStock ? selected : "");
   const selectedSnapshot = snapshot?.ticker === selected ? snapshot : null;
+  const selectedSnapshotLoading = snapshotLoading || (snapshot !== null && selectedSnapshot === null);
   const canUseCompanyAnalysis = !isKnownFund(selected) && (
     exchangeOf(selected) !== undefined || selectedSnapshot?.isFund === false
   );
@@ -490,10 +491,17 @@ export function Dashboard() {
             <div key={section === "stock" ? "stock:" + selected : section} className="section-stage">
               {section === "stock" ? (
                 <>
-                  <div hidden={stockAnalysis !== "graph"}>
+                  <div className="stock-analysis-pane" hidden={stockAnalysis !== "graph"}>
                     <StockDetail ticker={selected} snapshot={selectedSnapshot} />
                   </div>
-                  {stockAnalysis !== "graph" && <StockAnalysis key={stockAnalysis} mode={stockAnalysis} selected={selected} />}
+                  {canUseCompanyAnalysis && <>
+                    <div className="stock-analysis-pane" hidden={stockAnalysis !== "fundamental"}>
+                      <StockAnalysis mode="fundamental" selected={selected} snapshot={selectedSnapshot} loading={selectedSnapshotLoading} />
+                    </div>
+                    <div className="stock-analysis-pane" hidden={stockAnalysis !== "valuation"}>
+                      <StockAnalysis mode="valuation" selected={selected} snapshot={selectedSnapshot} loading={selectedSnapshotLoading} />
+                    </div>
+                  </>}
                 </>
               ) : (
                 <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />

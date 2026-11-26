@@ -899,7 +899,14 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .stock-identity strong { font-size: clamp(21px, 2.6vw, 32px); line-height: 1.1; }
       .stock-identity-text > span { color: var(--ink-2); font-size: 12px; font-weight: 650; letter-spacing: 0.08em; }
       .layout.stock .section-stage { padding-top: 16px; }
-      .stock-analysis-panels { margin-top: 0; animation: stock-analysis-appear 0.24s ease both; }
+      .stock-analysis-panels { margin-top: 0; }
+      @media (prefers-reduced-motion: no-preference) {
+        .stock-analysis-pane:not([hidden]) { animation: stock-analysis-enter 220ms ease-out; }
+      }
+      @keyframes stock-analysis-enter {
+        from { opacity: 0.78; transform: translateY(4px); }
+        to { opacity: 1; transform: none; }
+      }
       .stock-analysis-panels[data-analysis="fundamental"] { display: block; }
       .stock-analysis-panels[data-analysis="valuation"] { grid-template-columns: minmax(0, 1fr); }
       .valuation-history {
@@ -943,6 +950,17 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .valuation-caption { margin: 8px 0 12px; color: var(--ink-2); font-size: 12px; }
       .valuation-plot { display: block; width: 100%; height: auto; overflow: visible; }
+      @media (prefers-reduced-motion: no-preference) {
+        .chart-reveal-window {
+          transform-box: fill-box;
+          transform-origin: left center;
+          animation: chart-reveal 1.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+        }
+      }
+      @keyframes chart-reveal {
+        from { transform: scaleX(0); }
+        to { transform: scaleX(1); }
+      }
       .valuation-plot text { fill: var(--ink-2); font-size: 12px; }
       .valuation-gridline { stroke: var(--line); }
       .valuation-average { stroke: var(--ink-2); stroke-dasharray: 5 4; opacity: 0.8; }
@@ -993,7 +1011,6 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         min-height: 0; padding: clamp(13px, 1.5vw, 22px);
       }
       [data-theme="dark"] .fundamental-card { --fundamental-bar: #f6b644; }
-      .fundamental-card[data-expanded="true"] { grid-column: 1 / -1; }
       .fundamental-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
       .fundamental-card-header h3 { margin: 0; font-size: 16px; line-height: 1.25; }
       .fundamental-card-header p,
@@ -1003,10 +1020,13 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         border: 1px solid var(--line); border-radius: 9px; background: var(--hover);
         color: var(--ink); font: inherit; font-size: 11px; cursor: pointer;
       }
-      .fundamental-card-header button { padding: 6px 8px; min-height: 32px; }
+      .fundamental-card .fundamental-chart-action {
+        display: grid; place-items: center; flex: none;
+        width: 38px; height: 38px; padding: 0; border-radius: 10px;
+      }
+      .fundamental-chart-action svg { display: block; width: 19px; height: 19px; }
       .fundamental-card button:is(:hover, :focus-visible, [aria-pressed="true"]) { border-color: var(--focus); }
       .fundamental-plot { display: block; width: 100%; height: auto; margin: 12px auto; }
-      .fundamental-card[data-expanded="true"] .fundamental-plot { max-width: 850px; }
       .fundamental-plot line { stroke: var(--line); }
       .fundamental-plot text { fill: var(--ink-2); font-size: 13px; }
       .fundamental-bar { fill: var(--fundamental-bar); opacity: 0.86; }
@@ -1015,6 +1035,36 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .fundamental-range-label { margin-top: auto; padding-top: 2px; }
       .fundamental-ranges { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-top: 8px; }
       .fundamental-ranges button { display: grid; gap: 3px; padding: 5px 1px; min-height: 42px; font-variant-numeric: tabular-nums; }
+      html:has(.fundamental-dialog[open]) { overflow: hidden; }
+      .fundamental-dialog {
+        width: min(1100px, calc(100% - 32px)); max-width: none;
+        max-height: calc(100dvh - 32px); margin: auto; padding: 0; overflow: auto;
+        overscroll-behavior: contain;
+        border: 1px solid var(--line-strong); border-radius: 18px;
+        background: var(--panel); color: var(--ink); box-shadow: var(--shadow);
+      }
+      .fundamental-dialog::backdrop { background: rgb(0 0 0 / 72%); }
+      .fundamental-dialog-content { padding: clamp(14px, 2.5vw, 28px); }
+      .fundamental-dialog h2 { margin: 0; font-size: clamp(19px, 2.3vw, 28px); line-height: 1.2; }
+      .fundamental-dialog-value {
+        display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px;
+        margin-top: 14px; color: var(--ink-2); font-size: 13px;
+      }
+      .fundamental-dialog-value .fundamental-value { margin: 0; color: var(--ink); }
+      .fundamental-dialog .fundamental-plot line { vector-effect: non-scaling-stroke; }
+      .fundamental-dialog .fundamental-plot text { font-size: 5.5px; }
+      .fundamental-dialog .fundamental-ranges {
+        grid-template-columns: repeat(5, minmax(0, 1fr)); max-width: 440px; gap: 6px;
+      }
+      @media (max-width: 900px) {
+        .fundamental-dialog .fundamental-plot text { font-size: 7px; }
+      }
+      @media (max-width: 640px) {
+        .fundamental-dialog { width: calc(100% - 20px); max-height: calc(100dvh - 20px); }
+        .fundamental-dialog .fundamental-plot text { font-size: 12px; }
+        .fundamental-dialog .fundamental-plot [data-extra-tick="true"] { display: none; }
+        .fundamental-card .fundamental-chart-action { width: 44px; height: 44px; }
+      }
       @media (max-width: 1050px) {
         .fundamental-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }

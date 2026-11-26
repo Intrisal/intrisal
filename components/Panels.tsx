@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { AnimatedPrice } from "@/components/AnimatedPrice";
 import { Fundamentals } from "@/components/Fundamentals";
 import { ValuationHistory } from "@/components/ValuationHistory";
+import type { CompanySnapshot } from "@/lib/companyData";
 import { fmt, hashStr, nameOf, projectSim, rng, sample, series, type SimInput } from "@/lib/market";
 import { useCompanySnapshot, useCompanySnapshots } from "@/lib/useCompanyData";
 import { useQuotes, useStockHistory } from "@/lib/useMarketData";
@@ -139,7 +140,7 @@ function ValuationPanel({ watchlist, selected, onSelect }: { watchlist: string[]
     return {
       pe: snap?.peTtm ?? fallback.fpe,
       evn: snap?.evNopat ?? fallback.evn,
-      avg: snap?.evNopatAvg ?? fallback.avg,
+      avg: snap?.evNopatAvg ?? null,
       live: snap?.sources.fundamentals === "edgar",
     };
   };
@@ -156,7 +157,7 @@ function ValuationPanel({ watchlist, selected, onSelect }: { watchlist: string[]
             <th>Ticker</th>
             <th className="num">P/E (TTM)</th>
             <th className="num">EV/NOPAT</th>
-            <th className="num">Hist Avg</th>
+            <th className="num">10Y Avg</th>
           </tr>
         </thead>
         <tbody>
@@ -164,7 +165,7 @@ function ValuationPanel({ watchlist, selected, onSelect }: { watchlist: string[]
             const s = row(tk);
             return (
               <tr key={tk} data-tk={tk} className={tk === selected ? "sel" : undefined} onClick={() => onSelect(tk)}>
-                <td className="tk">{tk}</td><td className="num mono">{fmt(s.pe, 1)}x</td><td className="num mono">{fmt(s.evn, 1)}x</td><td className="num mono">{fmt(s.avg, 1)}x</td>
+                <td className="tk">{tk}</td><td className="num mono">{fmt(s.pe, 1)}x</td><td className="num mono">{fmt(s.evn, 1)}x</td><td className="num mono">{s.avg == null ? "—" : `${fmt(s.avg, 1)}x`}</td>
               </tr>
             );
           })}
@@ -175,11 +176,11 @@ function ValuationPanel({ watchlist, selected, onSelect }: { watchlist: string[]
   );
 }
 
-function BarRow({ label, val, max, suffix }: { label: string; val: number; max: number; suffix: string }) {
-  const pct = Math.max(4, Math.min(100, (val / max) * 100));
+function BarRow({ label, val, max, suffix }: { label: string; val: number | null; max: number; suffix: string }) {
+  const pct = val == null ? 0 : Math.max(4, Math.min(100, (val / max) * 100));
   return (
     <div className="bar-row">
-      <span>{label}</span><div className="bar-track"><div className="bar-fill" style={{ width: pct + "%" }} /></div><span className="mono" style={{ textAlign: "right" }}>{fmt(val, 1)}{suffix}</span>
+      <span>{label}</span><div className="bar-track"><div className="bar-fill" style={{ width: pct + "%" }} /></div><span className="mono" style={{ textAlign: "right" }}>{val == null ? "—" : fmt(val, 1) + suffix}</span>
     </div>
   );
 }
@@ -191,7 +192,7 @@ function ValuationDetailPanel({ selected, watchlist, showStockName = true }: { s
   const s = {
     fpe: snapshot?.peTtm ?? fallback.fpe,
     evn: snapshot?.evNopat ?? fallback.evn,
-    avg: snapshot?.evNopatAvg ?? fallback.avg,
+    avg: snapshot?.evNopatAvg ?? null,
   };
   const evs = watchlist.map(function (tk) {
     const snap = snapshots[tk.toUpperCase()];
@@ -208,7 +209,7 @@ function ValuationDetailPanel({ selected, watchlist, showStockName = true }: { s
       <PanelHead title={showStockName ? "Valuation — " + selected : "Valuation"} sub={showStockName ? nameOf(selected) : undefined} />
       <BarRow label="P/E (TTM)" val={s.fpe} max={50} suffix="x" />
       <BarRow label="EV/NOPAT" val={s.evn} max={55} suffix="x" />
-      <BarRow label="History avg" val={s.avg} max={55} suffix="x" />
+      <BarRow label="10Y average" val={s.avg} max={55} suffix="x" />
       <BarRow label="Median" val={med} max={55} suffix="x" />
       <p style={{ fontSize: "14.5px", lineHeight: 1.6, color: "var(--ink-2)", margin: "14px 0 0" }}>
         {verdict} EV/NOPAT is enterprise value divided by after-tax operating income — the v2 headline multiple.
@@ -365,7 +366,7 @@ function LearnPanels() {
           <strong>Why not trailing P/E?</strong> One-off equity gains and losses can swing a company&apos;s reported earnings without changing the business underneath. Operating income comes straight from the core business, so the multiple tracks the business, not the noise.
         </p>
         <p>
-          <strong>How it&apos;s used here:</strong> each stock&apos;s EV/NOPAT is compared against its own 10-year average. A multiple well below its history can mean room for multiple expansion; one far above it leaves no cushion if growth disappoints.
+          <strong>How it&apos;s used here:</strong> each stock&apos;s EV/NOPAT is compared with its own ten-year average using the available quarterly data. A multiple well below its history can mean room for multiple expansion; one far above it leaves no cushion if growth disappoints.
         </p>
         <div className="foot">From the v2 method notes.</div>
       </article>,
@@ -385,16 +386,18 @@ function LearnPanels() {
   ];
 }
 
-export function StockAnalysis({ mode, selected }: {
+export function StockAnalysis({ mode, selected, snapshot, loading }: {
   mode: "fundamental" | "valuation";
   selected: string;
+  snapshot: CompanySnapshot | null;
+  loading: boolean;
 }) {
   return (
     <section className="panels stock-analysis-panels" data-analysis={mode} aria-label={mode === "fundamental" ? "Stock fundamentals" : "Stock valuation"}>
       {mode === "fundamental" ? (
-        <Fundamentals ticker={selected} />
+        <Fundamentals ticker={selected} snapshot={snapshot} loading={loading} />
       ) : (
-        <ValuationHistory key={selected} ticker={selected} />
+        <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} />
       )}
     </section>
   );

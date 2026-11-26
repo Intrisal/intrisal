@@ -3,21 +3,25 @@
  * for Graph Analysis / Fundamental / Valuation.
  */
 
-import { fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries } from "@/lib/edgar";
+import { EPS_SPLIT_BASIS_VERSION, fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries, type ReportingCurrency } from "@/lib/edgar";
 import { isKnownFund, sample, type Sample } from "@/lib/market";
 import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuations, saveFundamentals, saveValuations, type ValuationPoint } from "@/lib/stockStore";
+
+const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 
 export type CompanySnapshot = {
   ticker: string;
   price: number;
   change: number;
   priceAsOf?: string;
+  reportingCurrency?: ReportingCurrency;
   isFund?: boolean;
   /** Trailing P/E when from filings; may stand in for UI "Fwd P/E" with a footnote */
   peTtm: number | null;
   evNopat: number | null;
-  /** 10Y-ish average EV/NOPAT from quarterly history when available */
+  /** Average of available quarterly multiples in the ten years ending at the latest valuation quarter. */
   evNopatAvg: number | null;
+  evNopatAverageQuarters?: number;
   revBillions: number | null;
   growthYoY: number | null;
   epsTtm: number | null;
@@ -93,13 +97,20 @@ function yoyGrowth(series: QuarterlySeries): number | null {
   return ((now / prior) - 1) * 100;
 }
 
-/** Rolling four-quarter TTM for flow metrics (revenue, opinc, FCF, EPS). */
-function rollingTtm(series: QuarterlySeries, maxPoints = 61): number[] {
-  const out: number[] = [];
+/** Keep each TTM total and its filing period together, skipping gaps in the source. */
+function rollingTtm(series: QuarterlySeries): QuarterlySeries {
+  const ends: string[] = [];
+  const values: number[] = [];
   for (let i = 3; i < series.values.length; i++) {
-    out.push(series.values.slice(i - 3, i + 1).reduce((a, b) => a + b, 0));
+    const quarters = series.ends.slice(i - 3, i + 1);
+    if (quarters.slice(1).some((end, index) => {
+      const gap = (Date.parse(end) - Date.parse(quarters[index])) / 86_400_000;
+      return gap < 70 || gap > 110;
+    })) continue;
+    ends.push(series.ends[i]);
+    values.push(series.values.slice(i - 3, i + 1).reduce((a, b) => a + b, 0));
   }
-  return out.slice(-maxPoints);
+  return { ends: ends.slice(-61), values: values.slice(-61) };
 }
 
 function nopatFromOpinc(opincBillions: number, taxRate = 0.21) {
@@ -114,7 +125,7 @@ function fromSample(ticker: string, price: number, change: number, priceSource: 
     change,
     peTtm: s.fpe,
     evNopat: s.evn,
-    evNopatAvg: s.avg,
+    evNopatAvg: null,
     revBillions: s.rev,
     growthYoY: s.growth,
     epsTtm: s.eps,
@@ -142,7 +153,21 @@ function buildFromEdgar(
 ): CompanySnapshot {
   const revTtm = ttm(edgar.revenue);
   const opTtm = ttm(edgar.operatingIncome);
-  const epsTtm = ttm(edgar.dilutedEps);
+  const eps = canUseDilutedEps(ticker, edgar) ? edgar.dilutedEps : null;
+  const asmlEpsIsTtm = ticker === "ASML" && edgar.source === "edgar-6k";
+  const revenueHistory = rollingTtm(edgar.revenue);
+  const operatingHistory = rollingTtm(edgar.operatingIncome);
+  let epsHistory: QuarterlySeries = { ends: [], values: [] };
+  if (eps) {
+    // The existing ASML 6-K backfill stores a trailing 12-month figure at each quarter end.
+    epsHistory = asmlEpsIsTtm
+      ? { ends: eps.ends.slice(-61), values: eps.values.slice(-61) }
+      : rollingTtm(eps);
+  }
+  const cashFlowHistory = rollingTtm(edgar.freeCashFlow);
+  const epsTtm = epsHistory.values.at(-1) ?? null;
+  const reportingCurrency = edgar.reportingCurrency ?? "USD";
+  const compatiblePriceCurrency = priceSource === "marketstack" && reportingCurrency === "USD";
   const fcfTtm = ttm(edgar.freeCashFlow);
   const growthYoY = yoyGrowth(edgar.revenue);
 
@@ -151,29 +176,37 @@ function buildFromEdgar(
 
   const nopat = opTtm != null ? nopatFromOpinc(opTtm) : null;
   const enterpriseValue =
-    marketCapBillions != null
+    compatiblePriceCurrency && marketCapBillions != null
       ? marketCapBillions + (edgar.debtBillions ?? 0) - (edgar.cashBillions ?? 0)
       : null;
   const evNopat = enterpriseValue != null && nopat && nopat > 0 ? enterpriseValue / nopat : null;
 
+  if (reportingCurrency !== "USD") valuationPoints = [];
   const evNopatHistory = valuationPoints.map((point) => point.ev_nopat);
+  const latestQuarter = valuationPoints.at(-1)?.quarter;
+  // Exclude the matching quarter ten years earlier, giving 40 points when coverage is complete.
+  const start = latestQuarter ? `${Number(latestQuarter.slice(0, 4)) - 10}${latestQuarter.slice(4)}` : null;
+  const benchmark = start ? valuationPoints.filter(({ quarter }) => quarter > start) : [];
 
-  const peTtm = priceSource === "marketstack" && epsTtm ? price / epsTtm : null;
+  const peTtm = compatiblePriceCurrency && (!asmlEpsIsTtm || edgar.reportingCurrency === "USD") && epsTtm
+    ? price / epsTtm
+    : null;
   const dividendPerShare = edgar.dividendPerShare ?? 0;
   const dividendYieldPercent = dividendPerShare === 0
     ? 0
-    : priceSource === "marketstack" && price > 0 ? (dividendPerShare / price) * 100 : null;
+    : compatiblePriceCurrency && price > 0 ? (dividendPerShare / price) * 100 : null;
 
   return {
     ticker: ticker.toUpperCase(),
+    reportingCurrency,
     price,
     change,
     peTtm,
     evNopat,
-    evNopatAvg:
-      evNopatHistory.length > 0
-        ? evNopatHistory.reduce((a, b) => a + b, 0) / evNopatHistory.length
-        : evNopat,
+    evNopatAvg: benchmark.length > 0
+      ? benchmark.reduce((total, { ev_nopat }) => total + ev_nopat, 0) / benchmark.length
+      : null,
+    evNopatAverageQuarters: benchmark.length,
     revBillions: revTtm,
     growthYoY,
     epsTtm,
@@ -182,20 +215,20 @@ function buildFromEdgar(
     de:
       edgar.debtBillions != null && edgar.equityBillions && edgar.equityBillions > 0
         ? (edgar.debtBillions / edgar.equityBillions).toFixed(2)
-        : edgar.debtBillions != null && marketCapBillions && marketCapBillions > 0
+        : compatiblePriceCurrency && edgar.debtBillions != null && marketCapBillions && marketCapBillions > 0
           ? (edgar.debtBillions / marketCapBillions).toFixed(2)
           : null,
     marketCapBillions,
     dividendYieldPercent,
-    revenueHistory: rollingTtm(edgar.revenue),
-    operatingIncomeHistory: rollingTtm(edgar.operatingIncome),
-    epsHistory: rollingTtm(edgar.dilutedEps),
-    fcfHistory: rollingTtm(edgar.freeCashFlow),
+    revenueHistory: revenueHistory.values,
+    operatingIncomeHistory: operatingHistory.values,
+    epsHistory: epsHistory.values,
+    fcfHistory: cashFlowHistory.values,
     filingDates: {
-      revenue: edgar.revenue.ends.slice(3).slice(-61),
-      operatingIncome: edgar.operatingIncome.ends.slice(3).slice(-61),
-      eps: edgar.dilutedEps.ends.slice(3).slice(-61),
-      fcf: edgar.freeCashFlow.ends.slice(3).slice(-61),
+      revenue: revenueHistory.ends,
+      operatingIncome: operatingHistory.ends,
+      eps: epsHistory.ends,
+      fcf: cashFlowHistory.ends,
     },
     evNopatHistory,
     valuationPoints,
@@ -236,24 +269,24 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
   ]) : [undefined, null];
 
   let edgar = isFund ? null : stored?.edgar_snapshot ?? null;
-  let valuations: ValuationPoint[] = [];
-  if (!edgar && !isFund) {
+  let valuations = edgar ? await readValuations(id).catch(() => []) : [];
+  if (!isFund && !canUseDilutedEps(id, edgar)) {
     try {
-      const fetched = await fetchEdgarFundamentals(id);
+      const needsEpsRefresh = Boolean(edgar);
+      const fetched = await fetchEdgarFundamentals(id, needsEpsRefresh);
       if (fetched && fetched.revenue.values.length >= 4) {
-        edgar = fetched;
-        const history = quote ? await readPrices(id).catch(() => null) : null;
-        valuations = calculateValuations(fetched, history);
-        if (configured) {
-          await saveValuations(id, valuations);
-          await saveFundamentals(id, fetched);
+        // Preserve the last accession checked by the cron. A request does not check submissions.
+        fetched.filingAccession = edgar?.filingAccession;
+        edgar = configured ? await saveFundamentals(id, fetched) : fetched;
+        if (!needsEpsRefresh) {
+          const history = quote ? await readPrices(id).catch(() => null) : null;
+          valuations = calculateValuations(edgar, history);
+          if (configured) await saveValuations(id, valuations);
         }
       }
     } catch (error) {
       console.error("EDGAR backfill failed for " + id, error);
     }
-  } else if (edgar) {
-    valuations = await readValuations(id).catch(() => []);
   }
 
   const priceSource = quote ? "marketstack" : "sample";
@@ -276,12 +309,19 @@ export function getCompanySnapshot(ticker: string, isFund = isKnownFund(ticker))
   return request;
 }
 
+function canUseDilutedEps(ticker: string, edgar: EdgarFundamentals | null | undefined) {
+  return edgar?.epsSplitBasisVersion === EPS_SPLIT_BASIS_VERSION
+    || (EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(ticker) && Boolean(edgar?.dilutedEps.values.length));
+}
+
 export async function refreshCompanyFilings(ticker: string) {
   const stored = await readTicker(ticker);
   const previous = stored?.edgar_snapshot;
   const cik = previous?.cik ?? await resolveCik(ticker);
   const accession = cik ? await latestFinancialFiling(cik) : undefined;
-  if (!cik || !accession || accession === previous?.filingAccession) {
+  if (!cik || !accession || (
+    accession === previous?.filingAccession && canUseDilutedEps(ticker, previous)
+  )) {
     await markFilingsChecked(ticker);
     return previous ? "unchanged" : "unavailable";
   }
@@ -290,8 +330,8 @@ export async function refreshCompanyFilings(ticker: string) {
     await markFilingsChecked(ticker);
     return "unavailable";
   }
+  const merged = await saveFundamentals(ticker, filing);
   const history = await readPrices(ticker);
-  await saveValuations(ticker, calculateValuations(filing, history));
-  await saveFundamentals(ticker, filing);
+  await saveValuations(ticker, calculateValuations(merged, history));
   return "updated";
 }

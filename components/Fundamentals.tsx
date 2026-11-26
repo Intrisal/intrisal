@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
+import type { CompanySnapshot } from "@/lib/companyData";
+import type { ReportingCurrency } from "@/lib/edgar";
 import { fmt } from "@/lib/market";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 
@@ -16,39 +18,72 @@ function quarterLabelFromEnd(iso: string) {
   return `Q${q} ${d.getUTCFullYear()}`;
 }
 
-function formatValue(value: number, unit: Unit, decimals = 2) {
+function formatValue(value: number, unit: Unit, decimals = 2, currency: ReportingCurrency = "USD") {
   if (unit === "percent") return fmt(value, decimals) + "%";
-  return "$" + fmt(value, decimals) + (unit === "billions" ? "B" : "");
+  return (value < 0 ? "-" : "") + (currency === "EUR" ? "€" : "$")
+    + fmt(Math.abs(value), decimals) + (unit === "billions" ? "B" : "");
 }
 
-function periodChange(values: number[], years: Period, unit: Unit) {
-  if (values.length < years * 4 + 1) return 0;
-  const latest = values[values.length - 1];
-  const start = values[values.length - 1 - years * 4];
-  if (!start) return 0;
-  return unit === "percent" ? latest - start : ((latest / start) ** (1 / years) - 1) * 100;
+function metricAxis(values: number[]) {
+  const low = Math.min(0, ...values);
+  const high = Math.max(0, ...values);
+  const span = high - low || 1;
+  const targetStep = span / 5;
+  const exponent = Math.floor(Math.log10(targetStep));
+  const magnitude = 10 ** exponent;
+  const multiplier = [1, 2, 2.5, 5, 10].find((size) => size >= targetStep / magnitude) ?? 10;
+  const interval = multiplier * magnitude;
+  const first = Math.floor(low / interval);
+  const last = Math.ceil((high === low ? 1 : high) / interval);
+  const roundedMin = first * interval;
+  const roundedMax = last * interval;
+  // Prefer a round edge when it closely matches the data, otherwise fit the edge to the bar.
+  const min = low - roundedMin <= span * 0.02 ? roundedMin : low;
+  const max = high === low ? 1 : roundedMax - high <= span * 0.02 ? roundedMax : high;
+  const ticks = Array.from({ length: last - first + 1 }, (_, index) => (first + index) * interval)
+    .filter((value) => value - min >= interval * 0.65 && max - value >= interval * 0.65);
+  const decimals = Math.min(12, Math.max(0, -exponent + (multiplier === 2.5 ? 1 : multiplier === 10 ? -1 : 0)));
+  return {
+    min,
+    max,
+    ticks: [min, ...ticks, max],
+    decimals,
+  };
+}
+
+function periodStart(latest: string, years: Period) {
+  return `${Number(latest.slice(0, 4)) - years}${latest.slice(4)}`;
+}
+
+function periodChange(values: number[], dates: string[], years: Period, unit: Unit) {
+  const latestDate = dates.at(-1);
+  const latest = values.at(-1);
+  if (!latestDate || latest == null) return null;
+  const target = Date.parse(periodStart(latestDate, years));
+  // Fiscal calendars may shift a week between comparable quarters.
+  const index = dates.findIndex((date) => Math.abs(Date.parse(date) - target) <= 28 * 86_400_000);
+  if (index < 0) return null;
+  const start = values[index];
+  if (unit === "percent") return latest - start;
+  if (start <= 0 || latest <= 0) return null;
+  return ((latest / start) ** (1 / years) - 1) * 100;
 }
 
 function formatChange(value: number, unit: Unit) {
   return (value > 0 ? "+" : "") + fmt(value, 1) + (unit === "percent" ? " pp" : "%");
 }
 
-function padHistory(values: number[], minLen: number) {
-  if (values.length >= minLen) return values;
-  if (!values.length) return values;
-  const first = values[0];
-  return [...Array(minLen - values.length).fill(first), ...values];
-}
-
-function MetricChart({ label, values, dates, unit, activeIndex, previewIndex, onPreview, onSelect }: {
+function MetricChart({ label, values, dates, unit, currency, activeIndex, previewIndex, onPreview, onSelect, expanded = false }: {
   label: string;
   values: number[];
   dates: string[];
   unit: Unit;
+  currency: ReportingCurrency;
   activeIndex: number;
   previewIndex: number | null;
   onPreview: (index: number | null) => void;
   onSelect: (index: number) => void;
+  expanded?: boolean;
 }) {
   const [keyboardActive, setKeyboardActive] = useState(false);
   const highlightedIndex = previewIndex ?? (keyboardActive ? activeIndex : null);
@@ -57,11 +92,10 @@ function MetricChart({ label, values, dates, unit, activeIndex, previewIndex, on
   const top = 14;
   const bottom = 191;
   const step = (right - left) / Math.max(1, values.length);
-  const peak = Math.max(...values, 0.01);
-  const magnitude = 10 ** Math.floor(Math.log10(peak / 4));
-  const interval = Math.ceil(peak / (4 * magnitude)) * magnitude;
-  const max = interval * 4;
-  const axisDecimals = Math.max(0, -Math.floor(Math.log10(interval || 1)));
+  const axis = metricAxis(values);
+  const yAt = (value: number) => bottom - (value - axis.min) / (axis.max - axis.min) * (bottom - top);
+  const zero = yAt(0);
+  const tickCount = expanded && values.length >= 7 ? 7 : Math.min(values.length, 4);
 
   function browseQuarters(event: KeyboardEvent<SVGSVGElement>) {
     const last = values.length - 1;
@@ -83,30 +117,35 @@ function MetricChart({ label, values, dates, unit, activeIndex, previewIndex, on
     <svg className="fundamental-plot" viewBox="0 0 384 220" role="group" tabIndex={0}
       aria-label={label + " by quarter. Use the arrow keys to select a quarter."}
       onKeyDown={browseQuarters} onBlur={() => setKeyboardActive(false)}>
-      {[0, 1, 2, 3, 4].map((tick) => {
-        const y = bottom - tick * (bottom - top) / 4;
-        return <g key={tick}>
+      {axis.ticks.map((value, index) => {
+        const y = yAt(value);
+        return <g key={index}>
           <line x1={left} x2={right} y1={y} y2={y} />
-          <text x={left - 5} y={y} textAnchor="end" dominantBaseline="middle">{formatValue(tick * interval, unit, axisDecimals)}</text>
+          <text x={left - 5} y={y} textAnchor="end" dominantBaseline="middle">
+            {formatValue(value, unit, Math.abs(value - Number(value.toFixed(axis.decimals))) < 1e-10
+              ? axis.decimals : Math.min(12, axis.decimals + 2), currency)}
+          </text>
         </g>;
       })}
       <g onPointerLeave={() => onPreview(null)}>
         {values.map((value, index) => {
-          const height = value / max * (bottom - top);
+          const y = yAt(value);
           const x = left + index * step;
           return (
             <g key={index} onPointerEnter={() => { setKeyboardActive(false); onPreview(index); }} onClick={() => onSelect(index)}>
               <rect className="fundamental-bar" data-active={index === highlightedIndex}
-                x={x} y={bottom - height} width={step * 0.8} height={Math.max(0, height)} rx={Math.min(2, step / 4)} />
+                x={x} y={Math.min(y, zero)} width={step * 0.8} height={Math.abs(y - zero)} rx={Math.min(2, step / 4)} />
               <rect className="fundamental-bar-target" x={x} y={top} width={step} height={bottom - top} />
             </g>
           );
         })}
       </g>
-      {[0, 1, 2, 3].map((tick) => {
-        const index = Math.round(tick * (values.length - 1) / 3);
-        const x = tick === 3 ? right : left + index * step;
-        return <text key={tick} x={x} y={210} textAnchor={tick === 0 ? "start" : tick === 3 ? "end" : "middle"}>
+      {Array.from({ length: tickCount }, (_, tick) => {
+        const lastTick = tick === tickCount - 1;
+        const index = Math.round(tick * (values.length - 1) / (tickCount - 1));
+        const x = lastTick ? right : left + index * step;
+        return <text key={tick} x={x} y={210} data-extra-tick={tickCount === 7 && tick % 2 === 1}
+          textAnchor={tick === 0 ? "start" : lastTick ? "end" : "middle"}>
           {dates[index] ? quarterLabelFromEnd(dates[index]) : ""}
         </text>;
       })}
@@ -114,16 +153,24 @@ function MetricChart({ label, values, dates, unit, activeIndex, previewIndex, on
   );
 }
 
-function MetricCard({ label, values, dates, unit, sourceNote }: { label: string; values: number[]; dates: string[]; unit: Unit; sourceNote: string }) {
-  const [period, setPeriod] = useState<Period>(5);
+function MetricCard({ label, values, dates, unit, currency, sourceNote }: {
+  label: string; values: number[]; dates: string[]; unit: Unit; currency: ReportingCurrency; sourceNote: string;
+}) {
+  const dialogId = useId();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [period, setPeriod] = useState<Period>(15);
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
   const [preview, setPreview] = useState<number | null>(null);
-  const needed = period * 4 + 1;
-  const displayedValues = values.slice(-needed);
+  const latestDate = dates.at(-1);
+  const cutoff = latestDate ? Date.parse(periodStart(latestDate, period)) - 7 * 86_400_000 : null;
+  const start = cutoff === null ? 0 : Math.max(0, dates.findIndex((date) => Date.parse(date) >= cutoff));
+  const displayedValues = values.slice(start);
   const last = displayedValues.length - 1;
   const activeIndex = Math.min(preview ?? selected ?? last, last);
-  const displayedDates = dates.slice(-needed);
+  const displayedDates = dates.slice(start);
+  const quarter = displayedDates[activeIndex] ? quarterLabelFromEnd(displayedDates[activeIndex]) : null;
+  const title = label.replace(/^TTM\s+/, "");
 
   function selectPeriod(years: Period) {
     if (years === period) return;
@@ -143,27 +190,73 @@ function MetricCard({ label, values, dates, unit, sourceNote }: { label: string;
     );
   }
 
-  return (
-    <article className="panel fundamental-card" data-expanded={expanded}>
-      <header className="fundamental-card-header">
-        <div><h3>{label.replace(/^TTM\s+/, "")}</h3><p>{displayedDates[activeIndex] ? quarterLabelFromEnd(displayedDates[activeIndex]) : sourceNote} · TTM</p></div>
-        <button type="button" aria-expanded={expanded} aria-label={(expanded ? "Shrink " : "Expand ") + label} onClick={() => setExpanded(!expanded)}>
-          {expanded ? "Shrink" : "Expand"}
-        </button>
-      </header>
-      <strong className="fundamental-value">{formatValue(displayedValues[activeIndex], unit)}</strong>
-      <MetricChart label={label} values={displayedValues} dates={displayedDates} unit={unit} activeIndex={activeIndex} previewIndex={preview}
-        onPreview={setPreview} onSelect={setSelected} />
-      {unit === "percent" && <p className="fundamental-range-label">Margin change</p>}
+  function chart(isExpanded: boolean) {
+    return <MetricChart label={label} values={displayedValues} dates={displayedDates} unit={unit} currency={currency}
+      activeIndex={activeIndex} previewIndex={preview} onPreview={setPreview} onSelect={setSelected} expanded={isExpanded} />;
+  }
+
+  const periodControls = (
       <div className="fundamental-ranges" role="group" aria-label={label + " chart period"}>
         {PERIODS.map((years) => {
-          const change = periodChange(padHistory(values, years * 4 + 1), years, unit);
+          const change = periodChange(values, dates, years, unit);
           return <button key={years} type="button" aria-pressed={years === period} onClick={() => selectPeriod(years)}>
             <span>{years}Y</span>
-            <strong className={change < 0 ? "chg-dn" : "chg-up"}>{formatChange(change, unit)}</strong>
+            <strong className={change == null ? undefined : change < 0 ? "chg-dn" : "chg-up"}>
+              {change == null ? "—" : formatChange(change, unit)}
+            </strong>
           </button>;
         })}
       </div>
+  );
+
+  return (
+    <article className="panel fundamental-card">
+      <header className="fundamental-card-header">
+        <div><h3>{title}</h3><p>{quarter ?? sourceNote} · TTM</p></div>
+        <button type="button" className="fundamental-chart-action" aria-haspopup="dialog"
+          aria-controls={dialogId} aria-label={"Expand " + title + " chart"}
+          onClick={() => {
+            dialogRef.current?.showModal();
+            setPreview(null);
+            setExpanded(true);
+          }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 9V4h5m6 0h5v5m0 6v5h-5m-6 0H4v-5M4 4l5 5m11-5l-5 5m5 11-5-5M4 20l5-5" />
+          </svg>
+        </button>
+      </header>
+      <strong className="fundamental-value">{formatValue(displayedValues[activeIndex], unit, 2, currency)}</strong>
+      {chart(false)}
+      {unit === "percent" && <p className="fundamental-range-label">Margin change</p>}
+      {periodControls}
+
+      <dialog id={dialogId} ref={dialogRef} className="fundamental-dialog" aria-labelledby={dialogId + "-title"}
+        onClick={(event) => { if (event.target === event.currentTarget) event.currentTarget.close(); }}
+        onClose={() => { setExpanded(false); setPreview(null); }}>
+        <div className="fundamental-dialog-content">
+          <header className="fundamental-card-header">
+            <div>
+              <h2 id={dialogId + "-title"}>Quarterly {label}</h2>
+              <p>Trailing 12 months · {sourceNote}</p>
+            </div>
+            <button type="button" className="fundamental-chart-action" aria-label={"Close " + title + " chart"}
+              onClick={() => dialogRef.current?.close()}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+            </button>
+          </header>
+          {expanded && <>
+            <div className="fundamental-dialog-value">
+              {quarter && <span>{quarter}</span>}
+              <strong className="fundamental-value">{formatValue(displayedValues[activeIndex], unit, 2, currency)}</strong>
+            </div>
+            {chart(true)}
+            <p className="fundamental-range-label">{unit === "percent" ? "Margin change" : "Compound annual growth"}</p>
+            {periodControls}
+          </>}
+        </div>
+      </dialog>
     </article>
   );
 }
@@ -182,15 +275,18 @@ export function FundamentalSummary({ ticker }: { ticker: string }) {
       {items.map(({ label, value, unit }) => (
         <div key={label}>
           <dt>{label}</dt>
-          <dd>{loading && value == null ? "…" : value == null ? "—" : formatValue(value, unit)}</dd>
+          <dd>{loading && value == null ? "…" : value == null ? "—" : formatValue(value, unit, 2, s?.reportingCurrency)}</dd>
         </div>
       ))}
     </dl>
   );
 }
 
-export function Fundamentals({ ticker }: { ticker: string }) {
-  const { snapshot, loading } = useCompanySnapshot(ticker);
+export function Fundamentals({ ticker, snapshot, loading }: {
+  ticker: string;
+  snapshot: CompanySnapshot | null;
+  loading: boolean;
+}) {
   if (loading && !snapshot) return <p className="panel" role="status">Loading quarterly filings…</p>;
   if (snapshot?.sources.fundamentals !== "edgar") return <p className="panel">Quarterly filings are unavailable for {ticker}.</p>;
   const sourceNote = "SEC filings";
@@ -228,7 +324,7 @@ export function Fundamentals({ ticker }: { ticker: string }) {
   return (
     <div className="fundamental-grid">
       {metrics.map((metric) => (
-        <MetricCard key={metric.label} {...metric} sourceNote={sourceNote} />
+        <MetricCard key={metric.label} {...metric} currency={snapshot.reportingCurrency ?? "USD"} sourceNote={sourceNote} />
       ))}
     </div>
   );

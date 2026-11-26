@@ -1,27 +1,32 @@
 "use client";
 
 import { useId, useState } from "react";
+import { ChartReveal } from "@/components/ChartReveal";
 import { fmt } from "@/lib/market";
-import { useCompanySnapshot } from "@/lib/useCompanyData";
+import type { CompanySnapshot } from "@/lib/companyData";
 import { quarterLabelFromEnd } from "@/components/Fundamentals";
 
 function multiple(value: number) {
   return `${fmt(value, 1)}x`;
 }
 
-export function ValuationHistory({ ticker }: { ticker: string }) {
+export function ValuationHistory({ ticker, snapshot, loading }: {
+  ticker: string;
+  snapshot: CompanySnapshot | null;
+  loading: boolean;
+}) {
   const id = useId();
-  const { snapshot, loading } = useCompanySnapshot(ticker);
   const [hovered, setHovered] = useState<number | null>(null);
 
   const quarters = snapshot?.valuationPoints?.map((point) => ({
     quarter: point.quarter, value: point.ev_nopat, price: point.close, nopat: point.nopat,
   })) ?? [];
   const count = quarters.length;
-  if (count < 2) return <p className="panel">{loading ? "Loading valuation history…" : "Not enough reported financials and historical prices to calculate valuation history."}</p>;
+  const average = snapshot?.evNopatAvg;
+  const benchmarkQuarters = snapshot?.evNopatAverageQuarters;
+  if (count < 2 || average == null) return <p className="panel">{loading ? "Loading valuation history…" : "Not enough reported financials and historical prices to calculate valuation history."}</p>;
   const active = Math.min(hovered ?? count - 1, count - 1);
   const values = quarters.map(({ value }) => value);
-  const average = values.reduce((sum, value) => sum + value, 0) / count;
   const low = Math.min(...values);
   const high = Math.max(...values);
   const latest = quarters[count - 1];
@@ -56,16 +61,19 @@ export function ValuationHistory({ ticker }: { ticker: string }) {
         </div>
         <span className="valuation-badge" data-side={difference <= 0 ? "below" : "above"}>
           {difference > 0 ? "+" : ""}
-          {fmt(difference, 1)}% vs history avg
+          {fmt(difference, 1)}% vs 10Y avg
         </span>
       </div>
-      <p className="valuation-caption">Quarterly history</p>
+      <p className="valuation-caption">
+        Quarterly history{benchmarkQuarters != null && benchmarkQuarters < 40
+          ? ` · 10Y average uses ${benchmarkQuarters} available quarters` : ""}
+      </p>
 
       <svg
         className="valuation-plot"
         viewBox="0 0 800 278"
         role="img"
-        aria-label={`${ticker} EV/NOPAT over ${count} quarters with a dashed average`}
+        aria-label={`${ticker} EV/NOPAT over ${count} quarters with a dashed ten-year average`}
         onPointerLeave={() => setHovered(null)}
       >
         <defs>
@@ -97,12 +105,14 @@ export function ValuationHistory({ ticker }: { ticker: string }) {
             {quarterLabelFromEnd(quarters[index].quarter).slice(-4)}
           </text>
         ))}
-        <path className="valuation-area" data-side="above" d={fill} clipPath={`url(#${id}-above)`} />
-        <path className="valuation-area" data-side="below" d={fill} clipPath={`url(#${id}-below)`} />
         <line className="valuation-average" x1={left} x2={right} y1={baseline} y2={baseline} />
-        <path className="valuation-line" d={line} />
-        <line className="valuation-gridline" x1={x(active)} x2={x(active)} y1={top} y2={bottom} />
-        <circle className="valuation-point" cx={x(active)} cy={y(current.value)} r={4} />
+        <ChartReveal left={left} right={right} top={top} bottom={bottom}>
+          <path className="valuation-area" data-side="above" d={fill} clipPath={`url(#${id}-above)`} />
+          <path className="valuation-area" data-side="below" d={fill} clipPath={`url(#${id}-below)`} />
+          <path className="valuation-line" d={line} />
+          <line className="valuation-gridline" x1={x(active)} x2={x(active)} y1={top} y2={bottom} />
+          <circle className="valuation-point" cx={x(active)} cy={y(current.value)} r={4} />
+        </ChartReveal>
         {quarters.map((_, index) => (
           <rect
             key={index}
@@ -118,7 +128,7 @@ export function ValuationHistory({ ticker }: { ticker: string }) {
 
       <div className="valuation-legend">
         <span>EV/NOPAT by quarter</span>
-        <span>History average · {multiple(average)}</span>
+        <span>10Y average · {multiple(average)}</span>
       </div>
       <p className="valuation-quarter">
         <strong>{quarterLabelFromEnd(current.quarter)}</strong>
@@ -143,7 +153,7 @@ export function ValuationHistory({ ticker }: { ticker: string }) {
           <dd>{multiple(high)}</dd>
         </div>
         <div>
-          <dt>Latest quarter vs average</dt>
+          <dt>Latest quarter vs 10Y avg</dt>
           <dd>
             {multiple(latest.value)} vs {multiple(average)}
           </dd>

@@ -127,22 +127,18 @@ function valuesByDate(series: QuarterlySeries) {
 }
 
 export async function saveFundamentals(ticker: string, edgar: EdgarFundamentals) {
-  await upsert("tickers", "ticker", [{ ticker, cik: edgar.cik, name: edgar.entityName }]);
-  const metrics = {
-    revenue: valuesByDate(edgar.revenue), operating_income: valuesByDate(edgar.operatingIncome),
-    diluted_eps: valuesByDate(edgar.dilutedEps), free_cash_flow: valuesByDate(edgar.freeCashFlow),
-    tax: valuesByDate(edgar.tax), pretax: valuesByDate(edgar.pretax),
-  };
-  const dates = new Set(Object.values(metrics).flatMap((series) => [...series.keys()]));
-  await upsert("fundamentals_quarterly", "ticker,quarter", [...dates].map((quarter) => ({
-    ticker, quarter, ...(edgar.balances[quarter] ?? { debt: null, cash: null, shares: null }),
-    ...Object.fromEntries(Object.entries(metrics).map(([name, series]) => [name, series.get(quarter) ?? null])),
-  })));
-  await upsert("tickers", "ticker", [{ ticker, edgar_snapshot: edgar, edgar_fetched_at: new Date().toISOString() }]);
+  // Database triggers merge with the existing snapshot and update quarterly rows together.
+  const [stored] = await rest<Pick<StoredTicker, "edgar_snapshot">[]>(
+    "tickers", { on_conflict: "ticker", select: "edgar_snapshot" },
+    [{ ticker, cik: edgar.cik, name: edgar.entityName, edgar_snapshot: edgar, edgar_fetched_at: new Date().toISOString() }],
+    "POST", "resolution=merge-duplicates,return=representation",
+  );
+  if (!stored?.edgar_snapshot) throw new Error("Supabase did not return the merged financial snapshot");
+  return stored.edgar_snapshot;
 }
 
 export function calculateValuations(edgar: EdgarFundamentals, history: StockHistory | null): ValuationPoint[] {
-  if (!history) return [];
+  if (!history || edgar.reportingCurrency === "EUR") return [];
   const { ends, values } = edgar.operatingIncome;
   const tax = valuesByDate(edgar.tax);
   const pretax = valuesByDate(edgar.pretax);
