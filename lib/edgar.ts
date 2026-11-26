@@ -76,10 +76,8 @@ type TickersFile = {
 };
 
 function userAgent() {
-  return (
-    process.env.SEC_USER_AGENT?.trim() ||
-    "Intrisal contact@intrisal.com"
-  );
+  const raw = process.env.SEC_USER_AGENT?.replace(/[\r\n]+/g, " ").trim();
+  return raw || "Intrisal contact@intrisal.com";
 }
 
 async function secFetch(url: string): Promise<Response> {
