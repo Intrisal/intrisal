@@ -91,7 +91,7 @@ export async function claimPriceRefresh(ticker: string, now: Date) {
   return rows.length > 0;
 }
 
-export async function readPrices(ticker: string, maxRows = 1500): Promise<StockHistory | null> {
+export async function readPrices(ticker: string, maxRows = 3000): Promise<StockHistory | null> {
   const rows: PriceRow[] = [];
   while (rows.length < maxRows) {
     const limit = Math.min(1000, maxRows - rows.length);
