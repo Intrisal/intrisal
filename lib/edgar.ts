@@ -202,11 +202,16 @@ export async function lookupStockKind(ticker: string): Promise<"company" | "fund
   return Object.hasOwn(directory.map, ticker) ? "company" : null;
 }
 
+// Alphabet's convertible preferred depositary shares are outside stock search.
+const SEARCH_EXCLUDED_TICKERS = new Set(["GOOGM", "GOOGN"]);
+
 export async function searchEdgarTickers(query: string) {
   const term = query.toUpperCase();
+  if (SEARCH_EXCLUDED_TICKERS.has(term)) return [];
   const { names } = await getTickerDirectory();
   const matches = Object.entries(names ?? {})
-    .filter(([ticker, name]) => ticker.startsWith(term) || name.toUpperCase().includes(term));
+    .filter(([ticker, name]) => !SEARCH_EXCLUDED_TICKERS.has(ticker)
+      && (ticker.startsWith(term) || name.toUpperCase().includes(term)));
   if (/^[A-Z][A-Z0-9]{1,7}$/.test(term) && !matches.some(([ticker]) => ticker === term)) {
     const funds = await loadFundSymbols().catch(() => null);
     if (funds?.has(term)) matches.push([term, "Fund"]);

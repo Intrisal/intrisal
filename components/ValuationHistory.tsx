@@ -6,6 +6,9 @@ import { fmt } from "@/lib/market";
 import type { CompanySnapshot } from "@/lib/companyData";
 import { quarterLabelFromEnd } from "@/components/Fundamentals";
 
+const DAY_MS = 86_400_000;
+const VALUATION_MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+
 function multiple(value: number) {
   return `${fmt(value, 1)}x`;
 }
@@ -41,11 +44,10 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   const bottom = 248;
   const step = (right - left) / Math.max(1, count - 1);
   const dates = quarters.map(({ quarter }) => Date.parse(quarter));
-  const decadeEnd = dates[count - 1];
-  const decadeStart = new Date(decadeEnd);
-  decadeStart.setUTCFullYear(decadeStart.getUTCFullYear() - 10);
-  const dateX = (date: number) => left + (right - left) * (date - decadeStart.getTime()) / (decadeEnd - decadeStart.getTime());
-  const hoverWidth = review ? (right - left) / 40 : step;
+  const firstDate = dates[0];
+  const dateSpan = dates[count - 1] - firstDate;
+  const dateX = (date: number) => left + (right - left) * (date - firstDate) / dateSpan;
+  const hoverWidth = review ? Math.min(step, (right - left) * 90 * DAY_MS / dateSpan) : step;
   const padding = (high - low) * 0.13 || 1;
   const min = low - padding;
   const max = high + padding;
@@ -55,7 +57,7 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   const segments: { start: number; end: number; path: string }[] = [];
   for (const [index, value] of values.entries()) {
     const segment = segments.at(-1);
-    if (!segment || (review && dates[index] - dates[index - 1] > 110 * 86_400_000)) {
+    if (!segment || (review && dates[index] - dates[index - 1] > 110 * DAY_MS)) {
       segments.push({ start: index, end: index, path: `M ${x(index)} ${y(value)}` });
     } else {
       const mid = (x(index - 1) + x(index)) / 2;
@@ -109,11 +111,11 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
             </g>
           );
         })}
-        {review ? Array.from({ length: 6 }, (_, index) => {
-          const date = new Date(decadeEnd);
-          date.setUTCFullYear(date.getUTCFullYear() - (5 - index) * 2);
-          return <text key={index} x={dateX(date.getTime())} y={272} textAnchor={index === 0 ? "start" : index === 5 ? "end" : "middle"}>
-            {date.getUTCFullYear()}
+        {review ? tickIndexes.map((_, index) => {
+          const progress = index / (tickIndexes.length - 1);
+          const date = new Date(firstDate + dateSpan * progress);
+          return <text key={index} x={dateX(date.getTime())} y={272} textAnchor={progress === 0 ? "start" : progress === 1 ? "end" : "middle"}>
+            {dateSpan >= 4 * 365 * DAY_MS ? date.getUTCFullYear() : VALUATION_MONTH_FORMAT.format(date)}
           </text>;
         }) : tickIndexes.map((index) => (
           <text
