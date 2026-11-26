@@ -60,7 +60,12 @@ export function LoginForm() {
         </label>
 
         <label className="landing-auth-row">
-          <span>Password</span>
+          <span className="landing-auth-label-row">
+            <span>Password</span>
+            <Link href="/forgot-password" className="landing-auth-forgot">
+              Forgot password?
+            </Link>
+          </span>
           <input
             name="password"
             type="password"

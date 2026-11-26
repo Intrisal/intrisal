@@ -9,7 +9,13 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const session = await getSessionFromCookieHeader(request.headers.get("cookie"));
 
-  if (session && (pathname === "/login" || pathname === "/signup")) {
+  if (
+    session &&
+    (pathname === "/login" ||
+      pathname === "/signup" ||
+      pathname === "/forgot-password" ||
+      pathname === "/reset-password")
+  ) {
     const home = request.nextUrl.clone();
     home.pathname = "/home";
     home.search = "";
@@ -40,6 +46,8 @@ export const config = {
     "/",
     "/login",
     "/signup",
+    "/forgot-password",
+    "/reset-password",
     "/home",
     "/home/:path*",
     "/api/stock/:path*",
