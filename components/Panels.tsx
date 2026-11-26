@@ -108,18 +108,20 @@ function WatchPanel({ watchlist, selected, onSelect }: { watchlist: string[]; se
           <tr>
             <th>Ticker</th>
             <th className="num">Price</th>
-            <th className="num">Today</th>
+            <th className="num">Last session</th>
           </tr>
         </thead>
         <tbody>
           {watchlist.map(function (tk) {
             const live = quotes[tk];
-            const s = sample(tk);
-            const price = live?.source === "marketstack" ? live.price : s.price;
-            const change = live?.source === "marketstack" ? live.change : s.change;
+            const quote = live?.source === "marketstack" ? live : null;
             return (
               <tr key={tk} data-tk={tk} className={tk === selected ? "sel" : undefined} onClick={() => onSelect(tk)}>
-                <td className="tk">{tk}</td><td className="num mono"><AnimatedPrice price={price} /></td><td className="num mono"><Chg c={change} /></td>
+                <td className="tk">{tk}</td>
+                <td className="num mono" title={quote ? "Close as of " + quote.date : undefined}>
+                  {quote ? <AnimatedPrice price={quote.price} /> : "—"}
+                </td>
+                <td className="num mono">{quote ? <Chg c={quote.change} /> : "—"}</td>
               </tr>
             );
           })}

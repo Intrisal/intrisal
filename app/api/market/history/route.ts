@@ -1,26 +1,25 @@
 import { NextResponse } from "next/server";
-import { fetchStockHistory, hasMarketstackKey } from "@/lib/marketstack";
+import { hasStockStore, readPrices } from "@/lib/stockStore";
 
 export const dynamic = "force-dynamic";
 
-/** GET /api/market/history?symbol=NVDA — daily closes for charts (server-side Marketstack). */
+/** GET /api/market/history?symbol=NVDA — stored daily closes for charts. */
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim() ?? "";
-  if (!symbol) {
-    return NextResponse.json({ error: "symbol is required" }, { status: 400 });
+  const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase() ?? "";
+  if (!/^[A-Z][A-Z0-9]{0,7}(?:[.-][A-Z0-9]{1,3})?$/.test(symbol)) {
+    return NextResponse.json({ error: "A valid symbol is required" }, { status: 400 });
   }
-  if (!hasMarketstackKey()) {
-    return NextResponse.json({ error: "MARKETSTACK_API_KEY is not configured" }, { status: 503 });
+  if (!hasStockStore()) {
+    return NextResponse.json({ error: "Price storage is not configured" }, { status: 503 });
   }
 
   try {
-    const history = await fetchStockHistory(symbol);
+    const history = await readPrices(symbol);
+    if (!history) return NextResponse.json({ error: "No stored prices for " + symbol }, { status: 404 });
     return NextResponse.json(history, {
-      // Short browser cache — EOD is stable, but bad upstream bars must not stick for an hour.
       headers: { "Cache-Control": "private, max-age=120, must-revalidate" },
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load history";
-    return NextResponse.json({ error: message }, { status: 502 });
+  } catch {
+    return NextResponse.json({ error: "Could not read stored price history" }, { status: 502 });
   }
 }

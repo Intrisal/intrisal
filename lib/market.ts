@@ -36,6 +36,12 @@ export const CATALOG: readonly CatalogEntry[] = [
 
 export const DEFAULT_WATCHLIST = ["VFV", "META", "GOOG", "MSFT", "AMZN", "NFLX", "NVDA", "ASML"];
 
+const FUND_TICKERS = new Set(["VFV", "QQQ", "SPY"]);
+
+export function isKnownFund(ticker: string) {
+  return FUND_TICKERS.has(ticker.trim().toUpperCase());
+}
+
 export type Sample = {
   price: number;
   change: number;
@@ -49,7 +55,6 @@ export type Sample = {
   opinc: number;
   de: string;
   marketCapBillions: number | null;
-  nextEarningsDate: string | null;
   dividendYieldPercent: number;
 };
 
@@ -91,12 +96,12 @@ export function sample(tk: string): Sample {
   const avg = evn * (0.82 + r() * 0.4);
   const rev = 18 + r() * 380;
   const growth = 4 + r() * 26;
-  const isFund = tk === "VFV" || tk === "QQQ" || tk === "SPY";
+  const isFund = isKnownFund(tk);
   const snapshotRandom = rng(hashStr(tk + ":snapshot"));
   const sharesBillions = 0.15 + snapshotRandom() * 5;
-  // Dates are fixed to the demo calendar so they agree across renders.
-  const earningsDay = 25 + Math.floor(snapshotRandom() * 25);
-  const yieldRoll = snapshotRandom();
+  const [, yieldRoll, positiveYield] = [
+    snapshotRandom(), snapshotRandom(), snapshotRandom(),
+  ];
   return {
     price,
     change,
@@ -110,8 +115,7 @@ export function sample(tk: string): Sample {
     opinc: rev * (0.18 + r() * 0.22),
     de: (r() * 1.6).toFixed(2),
     marketCapBillions: isFund ? null : price * sharesBillions,
-    nextEarningsDate: isFund ? null : new Date(Date.UTC(2027, 0, earningsDay)).toISOString().slice(0, 10),
-    dividendYieldPercent: !isFund && yieldRoll < 0.3 ? 0 : 0.2 + snapshotRandom() * 3.5,
+    dividendYieldPercent: !isFund && yieldRoll < 0.3 ? 0 : 0.2 + positiveYield * 3.5,
   };
 }
 

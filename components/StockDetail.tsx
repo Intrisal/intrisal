@@ -2,14 +2,14 @@
 
 import { useMemo, useState, type CSSProperties } from "react";
 import { AnimatedPrice, useAnimatedNumber } from "@/components/AnimatedPrice";
-import { fmt, sample } from "@/lib/market";
-import { useCompanySnapshot } from "@/lib/useCompanyData";
+import { fmt } from "@/lib/market";
+import type { CompanySnapshot } from "@/lib/companyData";
 import { useStockHistory } from "@/lib/useMarketData";
 
 const RANGES = { "3M": 63, "6M": 126, "1Y": 252, "5Y": 1050, "All": 1260 };
 type Range = keyof typeof RANGES;
 const RANGE_OPTIONS = Object.keys(RANGES) as Range[];
-const EARNINGS_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
+const CLOSE_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
 });
 const CHART_MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" });
@@ -123,11 +123,9 @@ function PriceChart({
   );
 }
 
-export function StockDetail({ ticker }: { ticker: string }) {
+export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: CompanySnapshot | null }) {
   const [range, setRange] = useState<Range>("1Y");
   const { history, loading, error } = useStockHistory(ticker);
-  const { snapshot } = useCompanySnapshot(ticker);
-  const fallback = sample(ticker);
 
   const chart = useMemo(() => {
     const closes = history?.closes ?? [];
@@ -142,24 +140,26 @@ export function StockDetail({ ticker }: { ticker: string }) {
     return { closes, shortSma, longSma, dates };
   }, [history]);
 
-  const price = history?.price ?? snapshot?.price ?? fallback.price;
+  const price = history?.price ?? (snapshot?.sources.prices === "marketstack" ? snapshot.price : null);
+  const priceDate = history?.asOf ?? snapshot?.priceAsOf;
+  const hasFilings = snapshot?.sources.fundamentals === "edgar";
   // Never substitute sample placeholders for filing-backed fields — show N/A instead of a fake number.
-  const marketCapBillions = snapshot?.marketCapBillions ?? null;
-  const nextEarningsDate = snapshot?.nextEarningsDate ?? null;
-  const dividendYieldPercent = snapshot?.dividendYieldPercent ?? null;
-  const earningsEstimated = snapshot?.nextEarningsEstimated ?? false;
+  const marketCapBillions = hasFilings ? snapshot.marketCapBillions : null;
+  const dividendYieldPercent = hasFilings ? snapshot.dividendYieldPercent : null;
   const short = chart.shortSma[chart.shortSma.length - 1] ?? price;
   const long = chart.longSma[chart.longSma.length - 1] ?? price;
-  const signal = price < long ? "Strong Buy" : price < short ? "Buy" : "Hold";
+  const signal = price === null || short === null || long === null || chart.closes.length < 2
+    ? null : price < long ? "Strong Buy" : price < short ? "Buy" : "Hold";
   const signalClass = signal === "Hold" ? "stock-neutral" : "stock-positive";
 
   const yearSlice = Math.min(RANGES["1Y"], chart.closes.length);
   const year = chart.closes.slice(-yearSlice).filter((value) => value > 0 && Number.isFinite(value));
   const lowCandidate = history?.low52 && history.low52 > 0 ? history.low52 : null;
   const highCandidate = history?.high52 && history.high52 > 0 ? history.high52 : null;
-  const low = lowCandidate ?? (year.length ? Math.min(...year) : price * 0.85);
-  const high = highCandidate ?? (year.length ? Math.max(...year) : price * 1.15);
-  const position = high > low ? ((price - low) / (high - low)) * 100 : 50;
+  const low = lowCandidate ?? (year.length ? Math.min(...year) : null);
+  const high = highCandidate ?? (year.length ? Math.max(...year) : null);
+  const position = price !== null && low !== null && high !== null && high > low
+    ? Math.max(0, Math.min(100, ((price - low) / (high - low)) * 100)) : 50;
 
   let cross: { name: string; up: boolean } | undefined;
   for (let i = chart.shortSma.length - 1; i > 0; i--) {
@@ -201,7 +201,7 @@ export function StockDetail({ ticker }: { ticker: string }) {
           </div>
         </div>
         {loading && !history ? (
-          <p className="stock-chart-status">Loading Marketstack prices…</p>
+          <p className="stock-chart-status">Loading closing prices…</p>
         ) : rangeCloses.length > 1 ? (
           <PriceChart
             ticker={ticker}
@@ -221,27 +221,20 @@ export function StockDetail({ ticker }: { ticker: string }) {
       <aside className="stock-snapshot" aria-label="Latest snapshot">
         <h2>Latest snapshot</h2>
         <div className="stock-snapshot-price">
-          <AnimatedPrice price={price} />
+          {price === null ? "—" : <AnimatedPrice price={price} />}
         </div>
+        {priceDate && <time className="stock-snapshot-date" dateTime={priceDate}>
+          Close as of {CLOSE_DATE_FORMAT.format(new Date(priceDate + "T00:00:00Z"))}
+        </time>}
         <dl>
           <div>
             <dt>Signal</dt>
-            <dd className={signalClass}>{signal === "Hold" ? signal : <SnapshotGlow label={signal} />}</dd>
+            <dd className={signal ? signalClass : undefined}>{signal === null ? "—" : signal === "Hold" ? signal : <SnapshotGlow label={signal} />}</dd>
           </div>
           <div>
             <dt>Market trend</dt>
             <dd className={cross ? (cross.up ? "stock-positive" : "stock-negative") : undefined}>
-              {cross?.up ? <SnapshotGlow label={cross.name} /> : (cross?.name ?? "No crossover yet")}
-            </dd>
-          </div>
-          <div>
-            <dt>Next earnings{earningsEstimated ? " (est.)" : ""}</dt>
-            <dd>
-              {nextEarningsDate ? (
-                <time dateTime={nextEarningsDate}>{EARNINGS_DATE_FORMAT.format(new Date(nextEarningsDate + "T00:00:00Z"))}</time>
-              ) : (
-                "N/A"
-              )}
+              {cross?.up ? <SnapshotGlow label={cross.name} /> : (cross?.name ?? (chart.closes.length ? "No crossover yet" : "—"))}
             </dd>
           </div>
           <div>
@@ -260,7 +253,7 @@ export function StockDetail({ ticker }: { ticker: string }) {
           </div>
           <div>
             <dt>52-Week Range</dt>
-            <dd className="stock-range">
+            {low !== null && high !== null ? <dd className="stock-range">
               <div className="stock-range-track" aria-hidden="true">
                 <span style={{ left: position + "%" }} />
               </div>
@@ -268,7 +261,7 @@ export function StockDetail({ ticker }: { ticker: string }) {
                 <span>${fmt(low, 2)}</span>
                 <span>${fmt(high, 2)}</span>
               </div>
-            </dd>
+            </dd> : <dd>—</dd>}
           </div>
         </dl>
       </aside>

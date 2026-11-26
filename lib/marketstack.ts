@@ -1,21 +1,5 @@
-/**
- * Server-only Marketstack client. Keep MARKETSTACK_API_KEY off the client.
- *
- * Quota model (Free ≈ 100 calls/month):
- * - EOD prices only change once per trading day, so we persist them to disk and
- *   reuse until the next UTC day (or MARKETSTACK_CACHE_HOURS if set).
- * - Opening a stock and loading the watchlist should share one history fetch
- *   when possible (history also seeds the quote cache).
- * - Slow fields (earnings, dividend yield, fundamentals) are NOT fetched here yet;
- *   when added they should be stored until their own refresh rule says so.
- */
-
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import path from "path";
-
+// Marketstack is called by the scheduled price worker.
 const BASE = "https://api.marketstack.com/v2";
-/** Default: keep EOD payloads for a full day — prices do not change intraday on Free EOD. */
-const DEFAULT_CACHE_HOURS = 24;
 
 /** Intrisal tickers → Marketstack symbols (periods become hyphens; TSX needs .TO). */
 const SYMBOL_MAP: Record<string, string> = {
@@ -55,56 +39,8 @@ export type StockQuote = {
   source: "marketstack" | "unavailable";
 };
 
-type CacheEntry<T> = { at: number; value: T };
-
-type DiskCache = {
-  history: Record<string, CacheEntry<StockHistory>>;
-  quotes: Record<string, CacheEntry<StockQuote>>;
-};
-
-const memory: DiskCache = { history: {}, quotes: {} };
-const CACHE_DIR = path.join(process.cwd(), ".cache");
-const CACHE_FILE = path.join(CACHE_DIR, "marketstack.json");
-
 function apiKey() {
   return process.env.MARKETSTACK_API_KEY?.trim() ?? "";
-}
-
-function cacheTtlMs() {
-  const hours = Number(process.env.MARKETSTACK_CACHE_HOURS);
-  const resolved = Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_CACHE_HOURS;
-  return resolved * 60 * 60 * 1000;
-}
-
-function isFresh(at: number) {
-  return Date.now() - at < cacheTtlMs();
-}
-
-function loadDiskCache() {
-  try {
-    if (!existsSync(CACHE_FILE)) return;
-    const parsed = JSON.parse(readFileSync(CACHE_FILE, "utf8")) as DiskCache;
-    if (parsed.history) Object.assign(memory.history, parsed.history);
-    if (parsed.quotes) Object.assign(memory.quotes, parsed.quotes);
-  } catch {
-    /* ignore corrupt cache */
-  }
-}
-
-let diskLoaded = false;
-function ensureDisk() {
-  if (diskLoaded) return;
-  diskLoaded = true;
-  loadDiskCache();
-}
-
-function persistDisk() {
-  try {
-    if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
-    writeFileSync(CACHE_FILE, JSON.stringify(memory), "utf8");
-  } catch {
-    /* serverless / read-only fs — memory cache still helps within the process */
-  }
 }
 
 export function marketstackSymbol(ticker: string) {
@@ -115,6 +51,8 @@ export function marketstackSymbol(ticker: string) {
 export function hasMarketstackKey() {
   return Boolean(apiKey());
 }
+
+export class MarketstackQuotaError extends Error {}
 
 async function marketstackGet<T>(pathName: string, params: Record<string, string>): Promise<T> {
   const key = apiKey();
@@ -129,10 +67,15 @@ async function marketstackGet<T>(pathName: string, params: Record<string, string
   const res = await fetch(url.toString(), {
     headers: { Accept: "application/json" },
     cache: "no-store",
+    signal: AbortSignal.timeout(6_000),
   });
 
+  if (res.status === 429) throw new MarketstackQuotaError("Marketstack rate or usage limit reached");
   const body = (await res.json()) as T & { error?: { code?: string; message?: string } };
   if (!res.ok || body.error) {
+    if (["usage_limit_reached", "rate_limit_reached"].includes(body.error?.code ?? "")) {
+      throw new MarketstackQuotaError("Marketstack rate or usage limit reached");
+    }
     const message = body.error?.message || res.statusText || "Marketstack request failed";
     throw new Error(message);
   }
@@ -161,16 +104,6 @@ function yearsAgoIso(years: number) {
   const d = new Date();
   d.setUTCFullYear(d.getUTCFullYear() - years);
   return d.toISOString().slice(0, 10);
-}
-
-function quoteFromHistory(history: StockHistory): StockQuote {
-  return {
-    ticker: history.ticker,
-    price: history.price,
-    change: history.change,
-    date: history.asOf,
-    source: history.source,
-  };
 }
 
 function isValidClose(close: number | null | undefined): close is number {
@@ -204,158 +137,25 @@ function buildHistory(ticker: string, bars: EodBar[]): StockHistory {
   };
 }
 
-function storeHistory(history: StockHistory) {
-  const entry = { at: Date.now(), value: history };
-  memory.history[history.ticker] = entry;
-  // One history call also satisfies quote needs for that ticker.
-  memory.quotes[history.ticker] = { at: entry.at, value: quoteFromHistory(history) };
-  persistDisk();
-}
-
-function sanitizeHistory(history: StockHistory): StockHistory | null {
-  const pairs = history.dates
-    .map((date, index) => ({ date, close: history.closes[index] }))
-    .filter((row) => isValidClose(row.close));
-  if (pairs.length < 2) return null;
-  if (pairs.length === history.closes.length) return history;
-  return buildHistory(
-    history.ticker,
-    pairs.map((row) => ({
-      date: row.date,
-      open: row.close,
-      high: row.close,
-      low: row.close,
-      close: row.close,
-      volume: null,
-    })),
-  );
-}
-
-/** Fetch ~1y (or plan max) of daily closes for charts + SMAs. Cached ~24h on disk. */
-export async function fetchStockHistory(ticker: string, requireRawCloses = false): Promise<StockHistory> {
-  ensureDisk();
-  const id = ticker.trim().toUpperCase();
-  const cached = memory.history[id];
-  if (cached && isFresh(cached.at) && (!requireRawCloses || cached.value.rawCloses?.some((close) => close != null))) {
-    const clean = sanitizeHistory(cached.value);
-    if (clean) {
-      if (clean !== cached.value) storeHistory(clean);
-      return clean;
-    }
-  }
-
-  const symbol = marketstackSymbol(id);
-  const bars: EodBar[] = [];
-  let offset = 0;
-  const limit = 1000;
-  const dateFrom = yearsAgoIso(5);
-
-  for (let page = 0; page < 3; page++) {
-    const json = await marketstackGet<EodResponse>("/eod", {
-      symbols: symbol,
-      date_from: dateFrom,
-      sort: "ASC",
-      limit: String(limit),
-      offset: String(offset),
-    });
-    const batch = json.data ?? [];
-    for (const row of batch) {
-      const close = row.adj_close ?? row.close;
-      if (!isValidClose(close) || !row.date) continue;
-      bars.push({
-        date: toDay(row.date),
-        open: isValidClose(row.open) ? row.open : close,
-        high: isValidClose(row.high) ? row.high : close,
-        low: isValidClose(row.low) ? row.low : close,
-        close,
-        rawClose: isValidClose(row.close) ? row.close : undefined,
-        volume: row.volume ?? null,
-      });
-    }
-    const total = json.pagination?.total ?? bars.length;
-    offset += batch.length;
-    if (offset >= total || batch.length === 0) break;
-  }
-
-  if (!bars.length) {
-    throw new Error("No Marketstack bars for " + id);
-  }
-
-  const history = buildHistory(id, bars);
-  storeHistory(history);
-  return history;
-}
-
-/** Latest price + day change. Uses history cache first — no extra Marketstack call. */
-export async function fetchQuotes(tickers: string[]): Promise<Record<string, StockQuote>> {
-  ensureDisk();
-  const ids = [...new Set(tickers.map((tk) => tk.trim().toUpperCase()).filter(Boolean))];
-  const out: Record<string, StockQuote> = {};
-  const missing: string[] = [];
-
-  for (const id of ids) {
-    const fromHistory = memory.history[id];
-    if (fromHistory && isFresh(fromHistory.at)) {
-      out[id] = quoteFromHistory(fromHistory.value);
-      continue;
-    }
-    const cached = memory.quotes[id];
-    if (cached && isFresh(cached.at)) {
-      out[id] = cached.value;
-      continue;
-    }
-    missing.push(id);
-  }
-
-  if (!missing.length) return out;
-
-  // One batched EOD call for all missing tickers (not one call per ticker).
-  const symbols = missing.map(marketstackSymbol).join(",");
-  const from = new Date();
-  from.setUTCDate(from.getUTCDate() - 14);
-  const recent = await marketstackGet<EodResponse>("/eod", {
-    symbols,
-    date_from: from.toISOString().slice(0, 10),
-    sort: "DESC",
-    limit: String(Math.max(40, missing.length * 8)),
+/** One request per symbol. Overlap the most recent stored day to capture corrections. */
+export async function fetchStockHistory(ticker: string, lastDate?: string): Promise<StockHistory | null> {
+  const earliest = yearsAgoIso(1);
+  const dateFrom = lastDate && lastDate > earliest ? lastDate : earliest;
+  const data = await marketstackGet<EodResponse>("/eod", {
+    symbols: marketstackSymbol(ticker),
+    date_from: dateFrom,
+    sort: "ASC",
+    limit: "1000",
   });
-
-  const bySymbol = new Map<string, EodBar[]>();
-  for (const row of recent.data ?? []) {
-    const close = row.adj_close ?? row.close;
-    if (typeof close !== "number" || !row.date || !row.symbol) continue;
-    const list = bySymbol.get(row.symbol) ?? [];
-    list.push({
-      date: toDay(row.date),
-      open: row.open ?? close,
-      high: row.high ?? close,
-      low: row.low ?? close,
-      close,
-      volume: row.volume ?? null,
+  const bars = new Map<string, EodBar>();
+  for (const row of data.data ?? []) {
+    if (!isValidClose(row.close) || !row.date) continue;
+    const date = toDay(row.date);
+    const close = isValidClose(row.adj_close) ? row.adj_close : row.close;
+    bars.set(date, {
+      date, close, rawClose: row.close,
+      open: row.open ?? close, high: row.high ?? close, low: row.low ?? close, volume: row.volume ?? null,
     });
-    bySymbol.set(row.symbol, list);
   }
-
-  for (const id of missing) {
-    const symbol = marketstackSymbol(id);
-    const bars = (bySymbol.get(symbol) ?? []).sort((a, b) => b.date.localeCompare(a.date));
-    if (!bars.length) {
-      out[id] = { ticker: id, price: 0, change: 0, date: "", source: "unavailable" };
-      continue;
-    }
-    const price = bars[0].close;
-    const prev = bars[1]?.close ?? price;
-    const quote: StockQuote = {
-      ticker: id,
-      price,
-      change: prev ? ((price - prev) / prev) * 100 : 0,
-      date: bars[0].date,
-      source: "marketstack",
-    };
-    memory.quotes[id] = { at: Date.now(), value: quote };
-    out[id] = quote;
-  }
-
-  persistDisk();
-  return out;
+  return bars.size ? buildHistory(ticker, [...bars.values()]) : null;
 }

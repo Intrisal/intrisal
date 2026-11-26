@@ -1,5 +1,5 @@
 import type { EdgarFundamentals, QuarterlySeries } from "@/lib/edgar";
-import type { StockHistory } from "@/lib/marketstack";
+import { marketstackSymbol, type StockHistory, type StockQuote } from "@/lib/marketstack";
 
 export type ValuationPoint = { quarter: string; close: number; ev: number; nopat: number; ev_nopat: number };
 type StoredTicker = {
@@ -13,19 +13,22 @@ export function hasStockStore() {
   return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
-async function rest<T>(table: string, query: Record<string, string>, rows?: object[]): Promise<T> {
+async function rest<T>(
+  table: string, query: Record<string, string>, rows?: object | object[],
+  method = rows ? "POST" : "GET", prefer = "resolution=merge-duplicates,return=minimal",
+): Promise<T> {
   const base = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!base || !key) throw new Error("Supabase credentials are missing");
   const url = new URL("/rest/v1/" + table, base);
   url.search = new URLSearchParams(query).toString();
   const response = await fetch(url, {
-    method: rows ? "POST" : "GET",
+    method,
     headers: {
       apikey: key,
-      Authorization: "Bearer " + key,
+      ...(key.startsWith("sb_secret_") ? {} : { Authorization: "Bearer " + key }),
       "User-Agent": "Intrisal-server/1.0",
-      ...(rows ? { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" } : {}),
+      ...(rows ? { "Content-Type": "application/json", Prefer: prefer } : {}),
     },
     body: rows ? JSON.stringify(rows) : undefined,
     cache: "no-store",
@@ -33,7 +36,7 @@ async function rest<T>(table: string, query: Record<string, string>, rows?: obje
     signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) throw new Error(`Supabase ${table} HTTP ${response.status}`);
-  return rows ? undefined as T : response.json();
+  return response.status === 204 || (rows && prefer.includes("return=minimal")) ? undefined as T : response.json();
 }
 
 async function upsert(table: string, key: string, rows: object[]) {
@@ -54,17 +57,50 @@ export async function trackedTickers() {
   return rows.map(({ ticker }) => ticker);
 }
 
-export async function readPrices(ticker: string): Promise<StockHistory | null> {
-  const rows = await rest<{ date: string; close: number; adjusted_close: number | null }[]>("price_history", {
-    ticker: "eq." + ticker, select: "date,close,adjusted_close", order: "date.desc", limit: "1000",
+type PriceRow = { date: string; close: number; adjusted_close: number | null };
+
+function priceRows(ticker: string, limit: number, before?: string) {
+  return rest<PriceRow[]>("price_history", {
+    ticker: "eq." + ticker, select: "date,close,adjusted_close", order: "date.desc", limit: String(limit),
+    ...(before ? { date: "lt." + before } : {}),
   });
+}
+
+export async function readLatestPriceDate(ticker: string) {
+  return (await priceRows(ticker, 1))[0]?.date;
+}
+
+export async function readStoredQuotes(tickers: string[]): Promise<Record<string, StockQuote>> {
+  const entries = await Promise.all(tickers.map(async (ticker) => {
+    const [last, previous] = await priceRows(ticker, 2);
+    if (!last) return null;
+    return [ticker, {
+      ticker, price: last.close, change: (last.close / (previous?.close ?? last.close) - 1) * 100,
+      date: last.date, source: "marketstack",
+    } satisfies StockQuote] as const;
+  }));
+  return Object.fromEntries(entries.filter((entry) => entry !== null));
+}
+
+export async function claimPriceRefresh(ticker: string, now: Date) {
+  await rest("tickers", { on_conflict: "ticker" }, [{ ticker }], "POST", "resolution=ignore-duplicates,return=minimal");
+  const today = now.toISOString().slice(0, 10) + "T00:00:00Z";
+  const rows = await rest<{ ticker: string }[]>("tickers", {
+    ticker: "eq." + ticker, or: `(prices_fetched_at.is.null,prices_fetched_at.lt.${today})`, select: "ticker",
+  }, { prices_fetched_at: now.toISOString() }, "PATCH", "return=representation");
+  return rows.length > 0;
+}
+
+export async function readPrices(ticker: string): Promise<StockHistory | null> {
+  const rows = await priceRows(ticker, 1000);
+  if (rows.length === 1000) rows.push(...await priceRows(ticker, 500, rows.at(-1)?.date));
   if (!rows.length) return null;
   const last = rows[0];
   const previous = rows[1]?.close ?? last.close;
   const year = rows.slice(0, 252).map(({ close, adjusted_close }) => adjusted_close ?? close);
   rows.reverse();
   return {
-    ticker, symbol: ticker, dates: rows.map(({ date }) => date),
+    ticker, symbol: marketstackSymbol(ticker), dates: rows.map(({ date }) => date),
     closes: rows.map(({ close, adjusted_close }) => adjusted_close ?? close),
     rawCloses: rows.map(({ close }) => close),
     price: last.close, change: (last.close / previous - 1) * 100,
@@ -73,7 +109,6 @@ export async function readPrices(ticker: string): Promise<StockHistory | null> {
 }
 
 export async function savePrices(ticker: string, history: StockHistory) {
-  await upsert("tickers", "ticker", [{ ticker }]);
   const rows = new Map<string, { ticker: string; date: string; close: number; adjusted_close: number }>();
   for (const [index, date] of history.dates.entries()) {
     const close = history.rawCloses?.[index];
@@ -81,7 +116,10 @@ export async function savePrices(ticker: string, history: StockHistory) {
   }
   if (!rows.size) return;
   await upsert("price_history", "ticker,date", [...rows.values()]);
-  await upsert("tickers", "ticker", [{ ticker, prices_fetched_at: new Date().toISOString() }]);
+}
+
+export function markFilingsChecked(ticker: string) {
+  return upsert("tickers", "ticker", [{ ticker, edgar_fetched_at: new Date().toISOString() }]);
 }
 
 function valuesByDate(series: QuarterlySeries) {

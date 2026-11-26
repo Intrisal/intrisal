@@ -3,15 +3,16 @@
  * for Graph Analysis / Fundamental / Valuation.
  */
 
-import { estimateNextEarningsDate, fetchEdgarFundamentals, type EdgarFundamentals, type QuarterlySeries } from "@/lib/edgar";
-import { sample, type Sample } from "@/lib/market";
-import { fetchStockHistory } from "@/lib/marketstack";
-import { calculateValuations, hasStockStore, readPrices, readTicker, readValuations, saveFundamentals, savePrices, saveValuations, type ValuationPoint } from "@/lib/stockStore";
+import { fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries } from "@/lib/edgar";
+import { isKnownFund, sample, type Sample } from "@/lib/market";
+import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuations, saveFundamentals, saveValuations, type ValuationPoint } from "@/lib/stockStore";
 
 export type CompanySnapshot = {
   ticker: string;
   price: number;
   change: number;
+  priceAsOf?: string;
+  isFund?: boolean;
   /** Trailing P/E when from filings; may stand in for UI "Fwd P/E" with a footnote */
   peTtm: number | null;
   evNopat: number | null;
@@ -24,8 +25,6 @@ export type CompanySnapshot = {
   opincBillions: number | null;
   de: string | null;
   marketCapBillions: number | null;
-  nextEarningsDate: string | null;
-  nextEarningsEstimated: boolean;
   dividendYieldPercent: number | null;
   revenueHistory: number[];
   operatingIncomeHistory: number[];
@@ -123,8 +122,6 @@ function fromSample(ticker: string, price: number, change: number, priceSource: 
     opincBillions: s.opinc,
     de: s.de,
     marketCapBillions: s.marketCapBillions,
-    nextEarningsDate: s.nextEarningsDate,
-    nextEarningsEstimated: false,
     dividendYieldPercent: s.dividendYieldPercent,
     revenueHistory: [],
     operatingIncomeHistory: [],
@@ -150,7 +147,7 @@ function buildFromEdgar(
   const growthYoY = yoyGrowth(edgar.revenue);
 
   const marketCapBillions =
-    edgar.sharesOutstandingBillions != null ? price * edgar.sharesOutstandingBillions : null;
+    priceSource === "marketstack" && edgar.sharesOutstandingBillions != null ? price * edgar.sharesOutstandingBillions : null;
 
   const nopat = opTtm != null ? nopatFromOpinc(opTtm) : null;
   const enterpriseValue =
@@ -161,11 +158,11 @@ function buildFromEdgar(
 
   const evNopatHistory = valuationPoints.map((point) => point.ev_nopat);
 
-  const peTtm = epsTtm && epsTtm !== 0 ? price / epsTtm : null;
-  const dividendYieldPercent =
-    edgar.dividendPerShare != null && price > 0 ? (edgar.dividendPerShare / price) * 100 : 0;
-
-  const next = estimateNextEarningsDate(edgar.lastReportEnd);
+  const peTtm = priceSource === "marketstack" && epsTtm ? price / epsTtm : null;
+  const dividendPerShare = edgar.dividendPerShare ?? 0;
+  const dividendYieldPercent = dividendPerShare === 0
+    ? 0
+    : priceSource === "marketstack" && price > 0 ? (dividendPerShare / price) * 100 : null;
 
   return {
     ticker: ticker.toUpperCase(),
@@ -189,8 +186,6 @@ function buildFromEdgar(
           ? (edgar.debtBillions / marketCapBillions).toFixed(2)
           : null,
     marketCapBillions,
-    nextEarningsDate: next,
-    nextEarningsEstimated: Boolean(next),
     dividendYieldPercent,
     revenueHistory: rollingTtm(edgar.revenue),
     operatingIncomeHistory: rollingTtm(edgar.operatingIncome),
@@ -224,77 +219,79 @@ export function snapshotToSample(snap: CompanySnapshot): Sample {
     opinc: snap.opincBillions ?? fallback.opinc,
     de: snap.de ?? fallback.de,
     marketCapBillions: snap.marketCapBillions,
-    nextEarningsDate: snap.nextEarningsDate,
     dividendYieldPercent: snap.dividendYieldPercent ?? fallback.dividendYieldPercent,
   };
 }
 
 const pending = new Map<string, Promise<CompanySnapshot>>();
 
-const fresh = (at: string | null | undefined) =>
-  Boolean(at && Date.now() - Date.parse(at) < 23 * 60 * 60 * 1000);
-
-async function loadSnapshot(id: string, refreshEdgar: boolean): Promise<CompanySnapshot> {
+async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapshot> {
   const configured = hasStockStore();
-  const stored = configured ? await readTicker(id).catch((error) => {
-    console.error("Could not read stock cache", error);
-    return undefined;
-  }) : undefined;
-  let history = stored ? await readPrices(id).catch(() => null) : null;
-  let priceChanged = false;
-  if (!refreshEdgar && (!history || !fresh(stored?.prices_fetched_at))) {
-    const fetched = await fetchStockHistory(id, true).catch(() => null);
-    if (fetched) {
-      history = fetched;
-      priceChanged = true;
-      if (configured) await savePrices(id, fetched).catch((error) => console.error("Could not save prices", error));
-    }
-  }
+  const [stored, quote] = configured ? await Promise.all([
+    readTicker(id).catch((error) => {
+      console.error("Could not read stock cache", error);
+      return undefined;
+    }),
+    readStoredQuotes([id]).then((quotes) => quotes[id] ?? null).catch(() => null),
+  ]) : [undefined, null];
 
-  let edgar = stored?.edgar_snapshot ?? null;
-  let fundamentalsChanged = false;
-  if (refreshEdgar || !edgar) {
+  let edgar = isFund ? null : stored?.edgar_snapshot ?? null;
+  let valuations: ValuationPoint[] = [];
+  if (!edgar && !isFund) {
     try {
-      const fetched = await fetchEdgarFundamentals(id, refreshEdgar);
+      const fetched = await fetchEdgarFundamentals(id);
       if (fetched && fetched.revenue.values.length >= 4) {
         edgar = fetched;
-        fundamentalsChanged = true;
-        if (configured) await saveFundamentals(id, fetched);
+        const history = quote ? await readPrices(id).catch(() => null) : null;
+        valuations = calculateValuations(fetched, history);
+        if (configured) {
+          await saveValuations(id, valuations);
+          await saveFundamentals(id, fetched);
+        }
       }
     } catch (error) {
-      console.error("EDGAR refresh failed for " + id, error);
-      if (refreshEdgar) throw error;
+      console.error("EDGAR backfill failed for " + id, error);
     }
+  } else if (edgar) {
+    valuations = await readValuations(id).catch(() => []);
   }
 
-  const priceSource = history ? "marketstack" : "sample";
+  const priceSource = quote ? "marketstack" : "sample";
   const fallback = sample(id);
-  if (!edgar) return fromSample(id, history?.price ?? fallback.price, history?.change ?? fallback.change, priceSource);
-
-  const points = calculateValuations(edgar, history);
-  let valuations = points;
-  if (configured && (priceChanged || fundamentalsChanged)) {
-    await saveValuations(id, points).catch((error) => {
-      if (refreshEdgar) throw error;
-      console.error("Could not save valuations", error);
-    });
-  }
-  if (configured && (!priceChanged && !fundamentalsChanged || points.length < 2)) {
-    const cached = await readValuations(id).catch(() => []);
-    if (cached.length > points.length) valuations = cached;
-  }
-  return buildFromEdgar(id, edgar, history?.price ?? fallback.price, history?.change ?? fallback.change, priceSource, valuations);
+  const price = quote?.price ?? fallback.price;
+  const change = quote?.change ?? fallback.change;
+  const snapshot = edgar
+    ? buildFromEdgar(id, edgar, price, change, priceSource, valuations)
+    : fromSample(id, price, change, priceSource);
+  return { ...snapshot, isFund, priceAsOf: quote?.date };
 }
 
-export function getCompanySnapshot(ticker: string) {
+export function getCompanySnapshot(ticker: string, isFund = isKnownFund(ticker)) {
   const id = ticker.trim().toUpperCase();
-  const existing = pending.get(id);
+  const key = isFund ? "fund:" + id : id;
+  const existing = pending.get(key);
   if (existing) return existing;
-  const request = loadSnapshot(id, false).finally(() => pending.delete(id));
-  pending.set(id, request);
+  const request = loadSnapshot(id, isFund).finally(() => pending.delete(key));
+  pending.set(key, request);
   return request;
 }
 
 export async function refreshCompanyFilings(ticker: string) {
-  return (await loadSnapshot(ticker, true)).sources.fundamentals === "edgar";
+  const stored = await readTicker(ticker);
+  const previous = stored?.edgar_snapshot;
+  const cik = previous?.cik ?? await resolveCik(ticker);
+  const accession = cik ? await latestFinancialFiling(cik) : undefined;
+  if (!cik || !accession || accession === previous?.filingAccession) {
+    await markFilingsChecked(ticker);
+    return previous ? "unchanged" : "unavailable";
+  }
+  const filing = await fetchEdgarFundamentals(ticker, true, { cik, accession });
+  if (!filing || filing.revenue.values.length < 4) {
+    await markFilingsChecked(ticker);
+    return "unavailable";
+  }
+  const history = await readPrices(ticker);
+  await saveValuations(ticker, calculateValuations(filing, history));
+  await saveFundamentals(ticker, filing);
+  return "updated";
 }

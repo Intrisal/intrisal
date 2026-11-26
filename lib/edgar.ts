@@ -6,8 +6,10 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
+import { isKnownFund } from "@/lib/market";
 
 const TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
+const FUNDS_URL = "https://www.sec.gov/files/company_tickers_mf.json";
 const FACTS_URL = (cik: number) =>
   `https://data.sec.gov/api/xbrl/companyfacts/CIK${String(cik).padStart(10, "0")}.json`;
 
@@ -31,6 +33,7 @@ export type FactPoint = {
   frame?: string;
   fy?: number;
   fp?: string;
+  accn?: string;
 };
 
 export type QuarterlySeries = {
@@ -43,6 +46,7 @@ export type EdgarFundamentals = {
   cik: number;
   entityName: string;
   asOf: string;
+  filingAccession?: string;
   /** Quarterly revenue, USD billions */
   revenue: QuarterlySeries;
   /** Quarterly operating income, USD billions */
@@ -92,6 +96,7 @@ async function secFetch(url: string): Promise<Response> {
       "Accept-Encoding": "gzip, deflate",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {
     throw new Error(`SEC ${res.status} for ${url}`);
@@ -164,11 +169,44 @@ export async function loadCikMap() {
   return (await getTickerDirectory()).map;
 }
 
+let fundDirectory: { at: number; symbols: Set<string> } | undefined;
+let fundRequest: Promise<Set<string>> | undefined;
+
+async function loadFundSymbols() {
+  if (fundDirectory && Date.now() - fundDirectory.at < TICKERS_TTL_MS) return fundDirectory.symbols;
+  fundRequest ??= (async () => {
+    const response = await secFetch(FUNDS_URL);
+    const { fields, data } = await response.json() as { fields: string[]; data: unknown[][] };
+    const tickerIndex = fields.indexOf("symbol");
+    if (tickerIndex < 0) throw new Error("SEC fund directory has no symbol column");
+    const symbols = new Set(data.map((row) => row[tickerIndex]).filter(
+      (symbol): symbol is string => typeof symbol === "string",
+    ).map((symbol) => symbol.toUpperCase()));
+    fundDirectory = { at: Date.now(), symbols };
+    return symbols;
+  })().finally(() => { fundRequest = undefined; });
+  return fundRequest;
+}
+
+export async function lookupStockKind(ticker: string): Promise<"company" | "fund" | null> {
+  if (isKnownFund(ticker)) return "fund";
+  const directory = await getTickerDirectory();
+  const name = directory.names?.[ticker] ?? "";
+  if (/\b(?:ETFS?|EXCHANGE[- ]TRADED FUND)\b/i.test(name)) return "fund";
+  if ((await loadFundSymbols()).has(ticker)) return "fund";
+  return Object.hasOwn(directory.map, ticker) ? "company" : null;
+}
+
 export async function searchEdgarTickers(query: string) {
   const term = query.toUpperCase();
   const { names } = await getTickerDirectory();
-  return Object.entries(names ?? {})
-    .filter(([ticker, name]) => ticker.startsWith(term) || name.toUpperCase().includes(term))
+  const matches = Object.entries(names ?? {})
+    .filter(([ticker, name]) => ticker.startsWith(term) || name.toUpperCase().includes(term));
+  if (/^[A-Z][A-Z0-9]{1,7}$/.test(term) && !matches.some(([ticker]) => ticker === term)) {
+    const funds = await loadFundSymbols().catch(() => null);
+    if (funds?.has(term)) matches.push([term, "Fund"]);
+  }
+  return matches
     .sort(([a], [b]) => Number(b === term) - Number(a === term) || a.length - b.length || a.localeCompare(b))
     .slice(0, 8);
 }
@@ -176,7 +214,7 @@ export async function searchEdgarTickers(query: string) {
 export async function resolveCik(ticker: string): Promise<number | null> {
   const id = ticker.trim().toUpperCase();
   // ETFs / funds are not in company_tickers the same way for XBRL facts we need.
-  if (id === "VFV" || id === "QQQ" || id === "SPY") return null;
+  if (isKnownFund(id)) return null;
   const map = await loadCikMap();
   return map[id] ?? map[id.replace(/\./g, "-")] ?? null;
 }
@@ -196,6 +234,22 @@ async function loadCompanyFacts(cik: number, refresh = false): Promise<CompanyFa
   const body = (await res.json()) as CompanyFacts;
   writeJsonFile(file, { at: Date.now(), body });
   return body;
+}
+
+export async function latestFinancialFiling(cik: number) {
+  const response = await secFetch(`https://data.sec.gov/submissions/CIK${String(cik).padStart(10, "0")}.json`);
+  const data = await response.json() as {
+    filings?: { recent?: { form: string[]; accessionNumber: string[]; isXBRL?: (number | boolean)[] } };
+  };
+  const recent = data.filings?.recent;
+  if (!recent || !Array.isArray(recent.form) || !Array.isArray(recent.accessionNumber)) {
+    throw new Error("SEC submissions response is missing filing details");
+  }
+  const index = recent.form.findIndex((form, i) =>
+    /^(10-K|10-Q|20-F|40-F)(\/A)?$/.test(form) &&
+    recent.isXBRL?.[i] !== 0 && recent.isXBRL?.[i] !== false && Boolean(recent.accessionNumber[i]),
+  );
+  return index < 0 ? undefined : recent.accessionNumber[index];
 }
 
 function daysBetween(start?: string, end?: string) {
@@ -409,12 +463,21 @@ function seriesFromPoints(points: FactPoint[], scale: (n: number) => number): Qu
  * Build fundamentals from company facts. Does not call Marketstack —
  * pass live price later to compute market cap / EV / yield.
  */
-export async function fetchEdgarFundamentals(ticker: string, refresh = false): Promise<EdgarFundamentals | null> {
+export async function fetchEdgarFundamentals(
+  ticker: string, refresh = false, filing?: { cik: number; accession: string },
+): Promise<EdgarFundamentals | null> {
   const id = ticker.trim().toUpperCase();
-  const cik = await resolveCik(id);
+  const cik = filing?.cik ?? await resolveCik(id);
   if (cik == null) return null;
 
   const facts = await loadCompanyFacts(cik, refresh);
+  if (filing && !Object.values(facts.facts ?? {}).some((taxonomy) =>
+    Object.values(taxonomy).some((concept) => Object.values(concept.units ?? {}).some(
+      (points) => points.some((point) => point.accn === filing.accession),
+    )),
+  )) {
+    throw new Error("The latest SEC filing is not yet indexed in Company Facts");
+  }
   const revenuePts = pickBestUnit(
     facts,
     ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"],
@@ -508,6 +571,7 @@ export async function fetchEdgarFundamentals(ticker: string, refresh = false): P
     cik,
     entityName: facts.entityName || id,
     asOf: new Date().toISOString().slice(0, 10),
+    filingAccession: filing?.accession,
     revenue,
     operatingIncome,
     dilutedEps,
@@ -523,23 +587,4 @@ export async function fetchEdgarFundamentals(ticker: string, refresh = false): P
     lastReportEnd,
     source: "edgar",
   };
-}
-
-/**
- * Rough next-earnings estimate: last report end + ~90 days, rolled forward
- * until the date is in the future (EDGAR has no earnings calendar).
- * Always labeled as estimate in the UI.
- */
-export function estimateNextEarningsDate(lastReportEnd: string | null): string | null {
-  if (!lastReportEnd) return null;
-  const d = new Date(lastReportEnd + "T00:00:00Z");
-  if (!Number.isFinite(d.getTime())) return null;
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() + 90);
-  // Keep stepping a quarter until we're looking ahead (max ~2 years of rolls).
-  for (let i = 0; i < 8 && d.getTime() <= today.getTime(); i++) {
-    d.setUTCDate(d.getUTCDate() + 90);
-  }
-  return d.toISOString().slice(0, 10);
 }

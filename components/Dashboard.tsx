@@ -16,7 +16,8 @@ import {
 import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
-import { DEFAULT_WATCHLIST, SIM_DEFAULT, exchangeOf, fmt, nameOf, sample, searchCatalog, type SimInput } from "@/lib/market";
+import { DEFAULT_WATCHLIST, SIM_DEFAULT, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, type SimInput } from "@/lib/market";
+import { useCompanySnapshot } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 
 type ThemeChoice = "auto" | "light" | "dark";
@@ -57,6 +58,7 @@ export function Dashboard() {
   const [watchlist, setWatchlist] = useState<string[]>(DEFAULT_WATCHLIST);
   const [selected, setSelected] = useState("NVDA");
   const [section, setSection] = useState<Section | "stock">("home");
+  const [revealHomeWordmark, setRevealHomeWordmark] = useState(false);
   const [analysis, setAnalysis] = useState<"graph" | "fundamental" | "valuation">("graph");
   const [range, setRange] = useState("1Y");
   const [listOpen, setListOpen] = useState(false);
@@ -185,7 +187,10 @@ export function Dashboard() {
       const items = watchMotionItems(watchDockRef.current);
       watchDockStart.current = new Map(items.map((item) => [item.dataset.watchMotion!, item.getBoundingClientRect()]));
     }
-    if (name !== section) setListOpen(false);
+    if (name !== section) {
+      setListOpen(false);
+      setRevealHomeWordmark(name === "home");
+    }
     setSection(name);
   }
 
@@ -279,7 +284,21 @@ export function Dashboard() {
   }
 
   const isStock = section === "stock";
-  const wordmark = <h1 className="wordmark"><button type="button" onClick={goHome} aria-label="Intrisal home">Intrisal</button></h1>;
+  const { snapshot } = useCompanySnapshot(isStock ? selected : "");
+  const selectedSnapshot = snapshot?.ticker === selected ? snapshot : null;
+  const canUseCompanyAnalysis = !isKnownFund(selected) && (
+    exchangeOf(selected) !== undefined || selectedSnapshot?.isFund === false
+  );
+  const stockAnalysis = canUseCompanyAnalysis ? analysis : "graph";
+  const wordmark = (
+    <h1 className="wordmark" data-home-reveal={revealHomeWordmark}>
+      <button type="button" onClick={goHome} aria-label="Intrisal home">
+        {Array.from("Intrisal", (letter, index) => (
+          <span key={index} aria-hidden="true" style={{ animationDelay: `${360 + index * 28}ms` }}>{letter}</span>
+        ))}
+      </button>
+    </h1>
+  );
 
   function onSearchKey(ev: React.KeyboardEvent<HTMLInputElement>) {
     if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
@@ -431,12 +450,18 @@ export function Dashboard() {
               <div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Full watchlist">
                 {listOpen && watchlist.map((tk) => {
                   const live = quotes[tk];
-                  const s = sample(tk);
-                  const price = live?.source === "marketstack" ? live.price : s.price;
-                  const change = live?.source === "marketstack" ? live.change : s.change;
-                  const up = change >= 0;
+                  const quote = live?.source === "marketstack" ? live : null;
+                  const up = (quote?.change ?? 0) >= 0;
                   return (
-                    <button type="button" key={tk} onClick={() => openStock(tk)}><span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span><span className="mono"><AnimatedPrice price={price} /></span><span className="mono"><span className={up ? "chg-up" : "chg-dn"}>{up ? "▲" : "▼"} {up ? "+" : ""}{fmt(change, 2)}%</span></span></button>
+                    <button type="button" key={tk} onClick={() => openStock(tk)}>
+                      <span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span>
+                      <span className="mono" title={quote ? "Close as of " + quote.date : undefined}>
+                        {quote ? <AnimatedPrice price={quote.price} /> : "—"}
+                      </span>
+                      <span className="mono">{quote ? <span className={up ? "chg-up" : "chg-dn"}>
+                        {up ? "▲ +" : "▼ "}{fmt(quote.change, 2)}%
+                      </span> : "—"}</span>
+                    </button>
                   );
                 })}
               </div>
@@ -453,19 +478,22 @@ export function Dashboard() {
               </div>
             )}
             {isStock && (
-              <div className="stock-analysis-switch" role="group" aria-label="Stock analysis" data-analysis={analysis}>
-                <button type="button" aria-pressed={analysis === "graph"} onClick={() => setAnalysis("graph")}>Graph Analysis</button>
-                <button type="button" aria-pressed={analysis === "fundamental"} onClick={() => setAnalysis("fundamental")}>Fundamental</button>
-                <button type="button" aria-pressed={analysis === "valuation"} onClick={() => setAnalysis("valuation")}>Valuation</button>
+              <div className="stock-analysis-switch" role="group" aria-label="Stock analysis"
+                data-analysis={stockAnalysis} data-graph-only={!canUseCompanyAnalysis}>
+                <button type="button" aria-pressed={stockAnalysis === "graph"} onClick={() => setAnalysis("graph")}>Graph Analysis</button>
+                {canUseCompanyAnalysis && <>
+                  <button type="button" aria-pressed={stockAnalysis === "fundamental"} onClick={() => setAnalysis("fundamental")}>Fundamental</button>
+                  <button type="button" aria-pressed={stockAnalysis === "valuation"} onClick={() => setAnalysis("valuation")}>Valuation</button>
+                </>}
               </div>
             )}
             <div key={section === "stock" ? "stock:" + selected : section} className="section-stage">
               {section === "stock" ? (
                 <>
-                  <div hidden={analysis !== "graph"}>
-                    <StockDetail ticker={selected} />
+                  <div hidden={stockAnalysis !== "graph"}>
+                    <StockDetail ticker={selected} snapshot={selectedSnapshot} />
                   </div>
-                  {analysis !== "graph" && <StockAnalysis key={analysis} mode={analysis} selected={selected} />}
+                  {stockAnalysis !== "graph" && <StockAnalysis key={stockAnalysis} mode={stockAnalysis} selected={selected} />}
                 </>
               ) : (
                 <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />

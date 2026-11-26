@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
+import { authorizedCron } from "@/lib/cronAuth";
 import { refreshCompanyFilings } from "@/lib/companyData";
 import { hasStockStore, trackedTickers } from "@/lib/stockStore";
 
@@ -10,28 +10,25 @@ export const maxDuration = 60;
  * Refresh filings for stocks previously requested by visitors.
  */
 export async function GET(request: Request) {
-  const secret = process.env.CRON_SECRET?.trim();
-  const expected = Buffer.from(`Bearer ${secret ?? ""}`);
-  const actual = Buffer.from(request.headers.get("authorization") ?? "");
-  if (!secret || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+  if (!authorizedCron(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   if (!hasStockStore()) return NextResponse.json({ error: "Stock storage unavailable" }, { status: 503 });
   const tickers = await trackedTickers().catch(() => null);
   if (!tickers) return NextResponse.json({ error: "Unable to read stock storage" }, { status: 502 });
-  const results: Array<{ ticker: string; ok: boolean }> = [];
+  const results: Array<{ ticker: string; status: string }> = [];
   for (const ticker of tickers) {
     try {
-      results.push({ ticker, ok: await refreshCompanyFilings(ticker) });
+      results.push({ ticker, status: await refreshCompanyFilings(ticker) });
     } catch (error) {
       console.error("Cron filing refresh failed for " + ticker, error);
-      results.push({ ticker, ok: false });
+      results.push({ ticker, status: "error" });
     }
   }
 
   return NextResponse.json({
     ranAt: new Date().toISOString(),
     results,
-  }, { status: results.length && results.every(({ ok }) => !ok) ? 502 : 200 });
+  }, { status: results.length && results.every(({ status }) => status === "error") ? 502 : 200 });
 }
