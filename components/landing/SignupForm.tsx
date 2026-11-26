@@ -148,7 +148,7 @@ export function SignupForm() {
           <span>or</span>
         </div>
 
-        <GoogleAuthButton label="Create account with Google" />
+        <GoogleAuthButton label="Create account with Google" intent="signup" />
       </form>
 
       <p className="landing-auth-footnote">

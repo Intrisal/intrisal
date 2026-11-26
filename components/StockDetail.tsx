@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatedPrice, useAnimatedNumber } from "@/components/AnimatedPrice";
 import { ChartReveal } from "@/components/ChartReveal";
 import { fmt } from "@/lib/market";
@@ -16,12 +16,14 @@ const CLOSE_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
 });
 const CHART_MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" });
-const CHART_MONTH_YEAR_FORMAT = new Intl.DateTimeFormat("en-US", {
-  month: "short", year: "2-digit", timeZone: "UTC",
-});
 const CHART_DAY_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short", day: "numeric", timeZone: "UTC",
 });
+
+/** e.g. Nov '26 — apostrophe marks the abbreviated year. */
+function formatChartMonthYear(date: Date) {
+  return `${CHART_MONTH_FORMAT.format(date)} '${String(date.getUTCFullYear()).slice(-2)}`;
+}
 
 function monthsBefore(date: Date, months: number) {
   const target = new Date(date);
@@ -92,17 +94,22 @@ function PriceChart({
   range,
   quickReveal,
   dates,
+  onScrub,
 }: {
   ticker: string;
   lines: number[][];
   range: Range;
   quickReveal: boolean;
   dates: string[];
+  onScrub?: (index: number | null) => void;
 }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const right = 704;
   const top = 14;
   const bottom = 344;
   // Ignore non-positive glitch values so a bad close cannot pin the axis at $0.
+  const closes = lines[0] ?? [];
   const values = lines.flat().filter((value) => Number.isFinite(value) && value > 0);
   const low = values.length ? Math.min(...values) : 0;
   const high = values.length ? Math.max(...values) : 1;
@@ -118,63 +125,148 @@ function PriceChart({
   const first = range === "10Y"
     ? monthsBefore(new Date(last), RANGE_MONTHS[range]).getTime()
     : timestamps[0];
-  const xAt = (time: number) => left + ((time - first) / (last - first)) * (right - left);
+  const span = Math.max(1, last - first);
+  const xAt = (time: number) => left + ((time - first) / span) * (right - left);
   const yAt = (value: number) => bottom - ((value - min) / (max - min)) * (bottom - top);
   const dateTicks = chartDateTicks(range, new Date(first), new Date(last));
-  const dateFormat = range === "3M" ? CHART_DAY_FORMAT
-    : range === "6M" ? CHART_MONTH_FORMAT : CHART_MONTH_YEAR_FORMAT;
+  const formatTick = (date: Date) => {
+    if (range === "3M") return CHART_DAY_FORMAT.format(date);
+    if (range === "6M") return CHART_MONTH_FORMAT.format(date);
+    return formatChartMonthYear(date);
+  };
+
+  const setScrub = useCallback((index: number | null) => {
+    setHoverIndex(index);
+    onScrub?.(index);
+  }, [onScrub]);
+
+  const indexFromClientX = useCallback((clientX: number) => {
+    const svg = svgRef.current;
+    if (!svg || timestamps.length < 2) return null;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const point = svg.createSVGPoint();
+    point.x = clientX;
+    point.y = 0;
+    const localX = point.matrixTransform(ctm.inverse()).x;
+    const clamped = Math.min(right, Math.max(left, localX));
+    const time = first + ((clamped - left) / (right - left)) * span;
+    let best = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < timestamps.length; i++) {
+      const dist = Math.abs(timestamps[i]! - time);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      }
+    }
+    return best;
+  }, [first, left, right, span, timestamps]);
+
+  function onPointerMove(ev: ReactPointerEvent<SVGSVGElement>) {
+    const index = indexFromClientX(ev.clientX);
+    if (index !== null) setScrub(index);
+  }
+
+  function onPointerLeave() {
+    setScrub(null);
+  }
+
+  const scrub = hoverIndex !== null && closes[hoverIndex] != null ? {
+    index: hoverIndex,
+    x: xAt(timestamps[hoverIndex]!),
+    y: yAt(closes[hoverIndex]!),
+    price: closes[hoverIndex]!,
+    date: dates[hoverIndex]!,
+  } : null;
+  const tipLeft = scrub ? `${(scrub.x / 720) * 100}%` : "0%";
 
   return (
-    <svg
-      className="stock-chart"
-      viewBox="0 0 720 378"
-      role="img"
-      aria-label={ticker + " closing prices with 50-day and 200-day moving averages"}
-    >
-      {Array.from({ length: (max - min) / step + 1 }, (_, tick) => {
-        const value = max - step * tick;
-        const y = yAt(value);
-        return (
-          <g key={tick}>
-            <line x1={left} x2={right} y1={y} y2={y} />
-            <text x={left - 8} y={y} textAnchor="end" dominantBaseline="middle">
-              ${fmt(value, 0)}
+    <div className={"stock-chart-wrap" + (scrub ? " is-scrubbing" : "")}>
+      <svg
+        ref={svgRef}
+        className="stock-chart"
+        viewBox="0 0 720 378"
+        role="img"
+        aria-label={ticker + " closing prices with 50-day and 200-day moving averages. Hover or drag to read a price."}
+        onPointerMove={onPointerMove}
+        onPointerLeave={onPointerLeave}
+        onPointerDown={onPointerMove}
+      >
+        {Array.from({ length: (max - min) / step + 1 }, (_, tick) => {
+          const value = max - step * tick;
+          const y = yAt(value);
+          return (
+            <g key={tick}>
+              <line x1={left} x2={right} y1={y} y2={y} />
+              <text x={left - 8} y={y} textAnchor="end" dominantBaseline="middle">
+                ${fmt(value, 0)}
+              </text>
+            </g>
+          );
+        })}
+        <ChartReveal key={range} left={left} right={right} top={top} bottom={bottom} quick={quickReveal}>
+          {lines.map((line, index) => (
+            <polyline
+              key={index}
+              className={["stock-close", "stock-sma-short", "stock-sma-long"][index]}
+              points={line
+                .map((value, i) => `${xAt(timestamps[i]!).toFixed(2)},${yAt(value).toFixed(2)}`)
+                .join(" ")}
+            />
+          ))}
+        </ChartReveal>
+        {dateTicks.map((date) => {
+          const x = xAt(date.getTime());
+          return (
+            <text
+              key={date.getTime()}
+              x={x}
+              y={370}
+              textAnchor={x > right - 34 ? "end" : x < left + 34 ? "start" : "middle"}
+            >
+              {formatTick(date)}
             </text>
+          );
+        })}
+        {/* Invisible hit target over the plot so scrubbing works over empty space too. */}
+        <rect
+          className="stock-chart-hit"
+          x={left}
+          y={top}
+          width={right - left}
+          height={bottom - top}
+          fill="transparent"
+        />
+        {scrub ? (
+          <g className="stock-chart-scrub" aria-hidden="true">
+            <line className="stock-chart-crosshair" x1={scrub.x} x2={scrub.x} y1={top} y2={bottom} />
+            <circle className="stock-chart-dot" cx={scrub.x} cy={scrub.y} r="5.5" />
           </g>
-        );
-      })}
-      <ChartReveal key={range} left={left} right={right} top={top} bottom={bottom} quick={quickReveal}>
-        {lines.map((line, index) => (
-          <polyline
-            key={index}
-            className={["stock-close", "stock-sma-short", "stock-sma-long"][index]}
-            points={line
-              .map((value, i) => `${xAt(timestamps[i]).toFixed(2)},${yAt(value).toFixed(2)}`)
-              .join(" ")}
-          />
-        ))}
-      </ChartReveal>
-      {dateTicks.map((date) => {
-        const x = xAt(date.getTime());
-        return (
-          <text
-            key={date.getTime()}
-            x={x}
-            y={370}
-            textAnchor={x > right - 34 ? "end" : x < left + 34 ? "start" : "middle"}
-          >
-            {dateFormat.format(date)}
-          </text>
-        );
-      })}
-    </svg>
+        ) : null}
+      </svg>
+      {scrub ? (
+        <div
+          className={"stock-chart-tip" + (scrub.x > (left + right) / 2 ? " is-left" : "")}
+          style={{ left: tipLeft }}
+        >
+          <strong>${fmt(scrub.price, 2)}</strong>
+          <span>{CLOSE_DATE_FORMAT.format(new Date(scrub.date + "T00:00:00Z"))}</span>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
 export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: CompanySnapshot | null }) {
   const [selection, setSelection] = useState<{ range: Range; ticker: string } | null>(null);
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const range = selection?.range ?? "1Y";
   const { history, loading, error } = useStockHistory(ticker);
+
+  useEffect(() => {
+    setScrubIndex(null);
+  }, [ticker, range]);
 
   const chart = useMemo(() => {
     const closes = history?.closes ?? [];
@@ -228,7 +320,13 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
   const rangeShort = chart.shortSma.slice(rangeStart);
   const rangeLong = chart.longSma.slice(rangeStart);
   const rangeReturn =
-    rangeCloses.length > 1 ? (rangeCloses[rangeCloses.length - 1] / rangeCloses[0] - 1) * 100 : 0;
+    rangeCloses.length > 1 ? (rangeCloses[rangeCloses.length - 1]! / rangeCloses[0]! - 1) * 100 : 0;
+  const scrubActive = scrubIndex !== null && scrubIndex >= 0 && scrubIndex < rangeCloses.length;
+  const scrubReturn = scrubActive
+    ? (rangeCloses[scrubIndex]! / rangeCloses[0]! - 1) * 100
+    : rangeReturn;
+  const scrubPrice = scrubActive ? rangeCloses[scrubIndex]! : null;
+  const scrubDate = scrubActive ? rangeDates[scrubIndex]! : null;
 
   return (
     <section className="panel stock-detail" aria-label={ticker + " stock details"}>
@@ -242,15 +340,32 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
           >
             {RANGE_OPTIONS.map((item) => (
               <button type="button" key={item} aria-pressed={item === range} onClick={() => {
-                if (item !== range) setSelection({ range: item, ticker });
+                if (item !== range) {
+                  setScrubIndex(null);
+                  setSelection({ range: item, ticker });
+                }
               }}>
                 {item}
               </button>
             ))}
           </div>
-          <div className="stock-chart-return">
-            <span className="stock-chart-return-label">{range} return</span>
-            {rangeCloses.length > 1 ? <AnimatedReturn value={rangeReturn} /> : <strong>—</strong>}
+          <div className={"stock-chart-return" + (scrubActive ? " is-scrubbing" : "")}>
+            {scrubActive && scrubPrice !== null && scrubDate ? (
+              <>
+                <span className="stock-chart-return-label">
+                  {CLOSE_DATE_FORMAT.format(new Date(scrubDate + "T00:00:00Z"))}
+                  <span className={"stock-chart-scrub-return " + (scrubReturn >= 0 ? "stock-positive" : "stock-negative")}>
+                    {" · "}{formatReturn(scrubReturn)}
+                  </span>
+                </span>
+                <strong className="stock-chart-scrub-price">${fmt(scrubPrice, 2)}</strong>
+              </>
+            ) : (
+              <>
+                <span className="stock-chart-return-label">{range} return</span>
+                {rangeCloses.length > 1 ? <AnimatedReturn value={rangeReturn} /> : <strong>—</strong>}
+              </>
+            )}
           </div>
         </div>
         {loading && !history ? (
@@ -262,6 +377,7 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
             quickReveal={selection?.ticker === ticker}
             dates={rangeDates}
             lines={[rangeCloses, rangeShort, rangeLong]}
+            onScrub={setScrubIndex}
           />
         ) : (
           <p className="stock-chart-status">{error || "No price history available yet."}</p>

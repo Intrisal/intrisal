@@ -60,16 +60,18 @@ export function verifyOAuthState(state: string) {
   }
 }
 
-export function googleAuthorizeUrl(state: string) {
+/** Build Google authorize URL. Pass prompt only when you need account picker (e.g. signup). */
+export function googleAuthorizeUrl(state: string, options?: { prompt?: "select_account" }) {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!.trim(),
     redirect_uri: googleRedirectUri(),
     response_type: "code",
     scope: "openid email profile",
     state,
-    prompt: "select_account",
     access_type: "online",
   });
+  // Omitting prompt lets returning users skip consent after they already Allow'd once.
+  if (options?.prompt) params.set("prompt", options.prompt);
   return `${GOOGLE_AUTH_URL}?${params.toString()}`;
 }
 

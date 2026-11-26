@@ -112,9 +112,15 @@ html:has(.landing) {
 }
 
 .platform-sky .landing-cosmos {
-  /* Suppress the landing twirl; keep landing overscan for the whole pan lifecycle. */
+  /* Direct visits: normal viewport sky. */
+  inset: 0;
   animation: none;
-  transform: translate3d(0, 0, 0) scale(1);
+  transform: none;
+}
+
+/* Arrival from landing: keep auth-sized overscan for the whole session so settle doesn't reflow stars. */
+.platform-sky.is-sky-pan-right .landing-cosmos {
+  inset: -30% -18%;
 }
 
 .platform-sky.is-ready .landing-cosmos {
@@ -122,65 +128,45 @@ html:has(.landing) {
   transform: translate3d(0, 0, 0) scale(1);
 }
 
-/* Open platform only: home chrome loads in like the landing hero (not when tapping Home later). */
-.shell.platform-enter:not(.is-enter-ready) :is(
-  .topbar .left,
-  .topbar .right,
-  .sidenav-dock,
-  .wordmark,
-  .search-wrap,
-  .watch-strip,
-  .section-stage
-) {
+@media (orientation: portrait) {
+  .platform-sky.is-sky-pan-right .landing-cosmos {
+    inset: -18% -45%;
+  }
+}
+
+/*
+ * Open platform: same motion as Create account / Sign in —
+ * sky pans right while the whole UI rides in from the right.
+ * Hold is invisible with no animation (prevents the visible→hide→fade flash).
+ */
+.shell.platform-enter-hold:not(.is-enter-ready) {
   opacity: 0;
-  transform: translateY(18px);
   pointer-events: none;
 }
 
-.shell.platform-enter.is-enter-ready :is(
-  .topbar .left,
-  .topbar .right,
-  .sidenav-dock,
-  .wordmark,
-  .search-wrap,
-  .watch-strip,
-  .section-stage
-) {
-  animation: landing-main-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+.shell.platform-enter:not(.is-enter-ready) {
+  opacity: 0;
+  transform: translate3d(28px, 10px, 0);
+  pointer-events: none;
+  animation: auth-panel-pan-in 0.95s cubic-bezier(0.22, 0.82, 0.2, 1) 0.12s forwards;
 }
 
-.shell.platform-enter.is-enter-ready .topbar .left { animation-delay: 0.12s; }
-.shell.platform-enter.is-enter-ready .topbar .right { animation-delay: 0.18s; }
-.shell.platform-enter.is-enter-ready .sidenav-dock { animation-delay: 0.22s; }
-.shell.platform-enter.is-enter-ready .wordmark { animation-delay: 0.28s; }
-.shell.platform-enter.is-enter-ready .search-wrap { animation-delay: 0.38s; }
-.shell.platform-enter.is-enter-ready .watch-strip { animation-delay: 0.48s; }
-.shell.platform-enter.is-enter-ready .section-stage { animation-delay: 0.58s; }
+.shell.platform-enter.is-enter-ready,
+.shell.is-enter-ready {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  animation: none;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .shell.platform-enter:not(.is-enter-ready) :is(
-    .topbar .left,
-    .topbar .right,
-    .sidenav-dock,
-    .wordmark,
-    .search-wrap,
-    .watch-strip,
-    .section-stage
-  ) {
+  .shell.platform-enter-hold:not(.is-enter-ready),
+  .shell.platform-enter:not(.is-enter-ready),
+  .shell.platform-enter.is-enter-ready,
+  .shell.is-enter-ready {
     opacity: 1;
     transform: none;
     pointer-events: auto;
-  }
-
-  .shell.platform-enter.is-enter-ready :is(
-    .topbar .left,
-    .topbar .right,
-    .sidenav-dock,
-    .wordmark,
-    .search-wrap,
-    .watch-strip,
-    .section-stage
-  ) {
     animation: none;
   }
 }

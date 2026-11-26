@@ -25,7 +25,13 @@ export async function GET(request: Request) {
   }
 
   const state = createOAuthState();
-  const response = NextResponse.redirect(googleAuthorizeUrl(state));
+  const intent = new URL(request.url).searchParams.get("intent");
+  // Signup may force the account picker; sign-in reuses prior consent with no prompt.
+  const authorizeUrl = googleAuthorizeUrl(
+    state,
+    intent === "signup" ? { prompt: "select_account" } : undefined,
+  );
+  const response = NextResponse.redirect(authorizeUrl);
   response.cookies.set(GOOGLE_OAUTH_STATE_COOKIE, state, oauthStateCookieOptions());
   return response;
 }

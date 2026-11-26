@@ -16,12 +16,13 @@ import {
 import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
-import { DEFAULT_WATCHLIST, SIM_DEFAULT, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, type SimInput } from "@/lib/market";
+import { SIM_DEFAULT, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, type SimInput } from "@/lib/market";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 import { SKY_PAN_MS } from "@/components/landing/intro";
-import { consumeFlag, navigateWithCurtain, ROUTE_FROM_LANDING_KEY } from "@/lib/routeTransition";
+import { decidePlatformArrival, navigateWithCurtain } from "@/lib/routeTransition";
 import { signOutAndReload, useSessionUser } from "@/lib/useSessionUser";
+import { readWatchlist, writeWatchlist } from "@/lib/watchlistStorage";
 import "@/components/landing/landing.css";
 
 type ThemeChoice = "auto" | "light" | "dark";
@@ -59,12 +60,12 @@ function watchMotionItems(dock: HTMLDivElement) {
 export function Dashboard() {
   const [themeChoice, setThemeChoice] = useState<ThemeChoice>("dark");
   const [themeReady, setThemeReady] = useState(false);
-  const [watchlist, setWatchlist] = useState<string[]>(DEFAULT_WATCHLIST);
-  const [selected, setSelected] = useState("NVDA");
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [watchlistReady, setWatchlistReady] = useState(false);
+  const [selected, setSelected] = useState("");
   const [section, setSection] = useState<Section | "stock">("home");
   const [revealHomeWordmark, setRevealHomeWordmark] = useState(false);
   const [analysis, setAnalysis] = useState<"graph" | "fundamental" | "valuation">("graph");
-  const [range, setRange] = useState("1Y");
   const [listOpen, setListOpen] = useState(false);
   const [menu, setMenu] = useState<MenuId | null>(null);
   const [query, setQuery] = useState("");
@@ -74,9 +75,9 @@ export function Dashboard() {
   const [sim, setSim] = useState<SimInput>(SIM_DEFAULT);
   const [toastMsg, setToastMsg] = useState("");
   const [toastOn, setToastOn] = useState(false);
-  const [skyPhase, setSkyPhase] = useState<"direct" | "panning" | "ready">("direct");
-  const enterFromLanding = skyPhase !== "direct";
-  const skyReady = skyPhase === "ready";
+  // pending → matches server HTML; layout effect picks pan vs direct before paint.
+  const [skyPhase, setSkyPhase] = useState<"pending" | "panning" | "ready" | "direct">("pending");
+  const enterFromLanding = skyPhase === "panning" || skyPhase === "ready";
   const inputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const searchDockStart = useRef<DOMRect | null>(null);
@@ -84,7 +85,25 @@ export function Dashboard() {
   const watchDockStart = useRef<Map<string, DOMRect> | null>(null);
   const toastTimer = useRef<number | null>(null);
   const { quotes } = useQuotes(watchlist);
-  const { user } = useSessionUser();
+  const { user, loading: sessionLoading } = useSessionUser();
+
+  const watchlistOwner = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (sessionLoading) return;
+    const owner = user?.id ?? "anon";
+    if (watchlistOwner.current === owner) return;
+    watchlistOwner.current = owner;
+    const saved = readWatchlist(user?.id);
+    setWatchlist(saved);
+    setSelected(saved[0] || "");
+    setWatchlistReady(true);
+  }, [sessionLoading, user?.id]);
+
+  useEffect(() => {
+    if (!watchlistReady) return;
+    writeWatchlist(user?.id, watchlist);
+  }, [watchlist, watchlistReady, user?.id]);
 
   useLayoutEffect(() => {
     const dock = watchDockRef.current;
@@ -135,10 +154,14 @@ export function Dashboard() {
     document.documentElement.setAttribute("data-theme", choice === "auto" ? autoTheme() : choice);
   }, []);
 
-  // Hydrate the same sky as the server before reading the one-time navigation flag.
+  // Decide before paint — same timing model as AuthPageShell (sky pan + UI ride together).
   useLayoutEffect(() => {
-    if (consumeFlag(ROUTE_FROM_LANDING_KEY) && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setSkyPhase("panning");
+    const arrival = decidePlatformArrival();
+    setSkyPhase(arrival === "pan" ? "panning" : "direct");
+    try {
+      delete document.documentElement.dataset.platformEnter;
+    } catch {
+      /* ignore */
     }
   }, []);
 
@@ -236,10 +259,25 @@ export function Dashboard() {
     return [tk, ...list.filter((x) => x !== tk)];
   }
 
-  function selectStock(tk: string) {
-    setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : list));
+  function addToWatchlist(tk: string) {
+    setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : bumpWatchlist(tk, list.concat(tk))));
     setSelected(tk);
-    if (section === "simulation") setSim({ ...SIM_DEFAULT });
+    toast(tk + " added to your watchlist");
+  }
+
+  function removeFromWatchlist(tk: string) {
+    setWatchlist((list) => {
+      const next = list.filter((x) => x !== tk);
+      setSelected((current) => (current === tk ? (next[0] || "") : current));
+      return next;
+    });
+    setListOpen(false);
+    toast(tk + " removed from your watchlist");
+  }
+
+  function createWatchlist() {
+    changeSection("watchlist");
+    window.requestAnimationFrame(() => inputRef.current?.focus());
   }
 
   function showStock(tk: string) {
@@ -296,12 +334,17 @@ export function Dashboard() {
     : [];
 
   function pickResult(tk: string) {
-    const added = watchlist.indexOf(tk) === -1;
-    setWatchlist((list) => bumpWatchlist(tk, list.includes(tk) ? list : list.concat(tk)));
+    setWatchlist((list) => (list.includes(tk) ? bumpWatchlist(tk, list) : list));
     setQuery("");
     closeResults();
     showStock(tk);
-    toast(added ? tk + " added to your watchlist" : tk + " — " + nameOf(tk));
+    toast(tk + " — " + nameOf(tk));
+  }
+
+  function addResult(tk: string) {
+    addToWatchlist(tk);
+    setQuery("");
+    closeResults();
   }
 
   const isStock = section === "stock";
@@ -340,28 +383,26 @@ export function Dashboard() {
 
   return (
     <>
-      {enterFromLanding ? (
-        <div
-          className={"platform-sky is-sky-pan-right" + (skyReady ? " is-ready" : "")}
-          aria-hidden="true"
-        >
-          {/* Keep this cosmos mounted after the pan — resizing it to inset 0 remounts the starfield and chops. */}
-          <div className="landing-cosmos">
-            <Stars />
-            <div className="aurora" />
-          </div>
-        </div>
-      ) : (
-        <>
+      <div
+        className={
+          "platform-sky" +
+          (enterFromLanding ? " is-sky-pan-right" : "") +
+          (skyPhase !== "panning" ? " is-ready" : "")
+        }
+        aria-hidden="true"
+      >
+        {/* One sky tree always — swapping Stars remounts and chops the arrival pan. */}
+        <div className="landing-cosmos">
           <Stars />
-          <div className="aurora" aria-hidden="true" />
-        </>
-      )}
+          <div className="aurora" />
+        </div>
+      </div>
       <div
         className={
           "shell" +
+          (skyPhase === "pending" ? " platform-enter-hold" : "") +
           (enterFromLanding ? " platform-enter" : "") +
-          (enterFromLanding && skyReady ? " is-enter-ready" : "")
+          (skyPhase === "ready" || skyPhase === "direct" ? " is-enter-ready" : "")
         }
       >
         <header className={isStock ? "topbar stock-topbar" : "topbar"}><div className="left">
@@ -375,15 +416,14 @@ export function Dashboard() {
             >
               <ProfileIcon />
             </button>
-            <div className={"menu left-menu" + (menu === "profile" ? " open" : "")} id="profileMenu" role="menu" aria-label="Profile menu" onClick={(ev) => ev.stopPropagation()}>
-              <h3>Profile</h3>
+            <div className={"menu left-menu menu-compact" + (menu === "profile" ? " open" : "")} id="profileMenu" role="menu" aria-label="Profile menu" onClick={(ev) => ev.stopPropagation()}>
               {user ? (
                 <>
                   <p className="profile-user-name">{user.name}</p>
                   <p className="profile-user-email">{user.email}</p>
                 </>
               ) : (
-                <p>Appearance and page switching live here.</p>
+                <h3>Profile</h3>
               )}
               <button
                 type="button"
@@ -394,7 +434,7 @@ export function Dashboard() {
                   void navigateWithCurtain("/", "to-landing");
                 }}
               >
-                Back to Intrisal
+                Back to Home
               </button>
               <div className="row-label">Appearance</div>
               <div className="seg" role="group" aria-label="Theme">{(["auto", "light", "dark"] as const).map((choice) => (
@@ -402,7 +442,6 @@ export function Dashboard() {
                     {choice === "auto" ? "Auto" : choice === "light" ? "Light" : "Dark"}
                   </button>
                 ))}</div>
-              <p style={{ margin: "12px 0 0" }}>Auto follows the time of day — light in the day, dark at night.</p>
               {user ? (
                 <div className="menu-signout-block">
                   <button
@@ -430,10 +469,10 @@ export function Dashboard() {
             >
               <h3>Help</h3>
               <p>
-                <strong>Search</strong> — type a ticker or company name (or press <span className="mono">/</span>) and pick a result to add it to your watchlist and open it below.
+                <strong>Search</strong> — type a ticker or company name (or press <span className="mono">/</span>). Open a result to view it, or choose <strong>Add +</strong> to put it on your watchlist.
               </p>
               <p>
-                <strong>Watchlist</strong> — recent stocks sit under search on Home and move to the stock dock in other sections. <strong>List</strong> shows everything.
+                <strong>Watchlist</strong> — Home shows up to eight of your most recently viewed watchlist stocks. Manage the full list (and remove stocks) in the Watchlist section.
               </p>
               <p style={{ marginBottom: 0 }}>
                 <strong>Sections</strong> — use the dock to open Home, Learn, Simulation, or Watchlist. Open a stock to see its Graph Analysis, Fundamental, and Valuation views.
@@ -484,55 +523,74 @@ export function Dashboard() {
                   matches.map(function (entry, i) {
                     const inList = watchlist.indexOf(entry[0]) !== -1;
                     return (
-                      <button
-                        type="button"
+                      <div
                         key={entry[0]}
                         role="option"
-                        className={i === activeIdx ? "active" : ""}
-                        onClick={() => pickResult(entry[0])}
+                        aria-selected={i === activeIdx}
+                        className={"result-row" + (i === activeIdx ? " active" : "")}
                         onMouseMove={() => setActiveIdx(i)}
                       >
-                        <span className="tk">{entry[0]}</span><span className="nm">{entry[1]}</span><span className={"tag" + (inList ? " in" : "")}>{inList ? "Watching" : "Add +"}</span>
-                      </button>
+                        <button type="button" className="result-main" onClick={() => pickResult(entry[0])}>
+                          <span className="tk">{entry[0]}</span>
+                          <span className="nm">{entry[1]}</span>
+                        </button>
+                        {inList ? (
+                          <span className="tag in">Watching</span>
+                        ) : (
+                          <button type="button" className="tag add" onClick={() => addResult(entry[0])}>
+                            Add +
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
               </div>
             </div></div>
             <div className="watch-dock" ref={watchDockRef}>
-              <div className="watch-strip" data-watch-motion="strip" role="group" aria-label="Stock shortcuts">
-                <div className="watch-row" id="watchRow">
-                  {watchlist.slice(0, 8).map((tk) => (
-                    <div key={tk} data-watch-motion={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}>
-                      <span className="coin-wrap">
-                        <button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button>
-                        <span className="watch-tooltip" aria-hidden="true">{nameOf(tk)}</span>
-                      </span>
-                      <div className="ticker">{tk}</div>
+              {watchlistReady && watchlist.length === 0 && section === "home" ? (
+                <button type="button" className="watch-create" onClick={createWatchlist}>
+                  <WatchlistIcon />
+                  <span>Create watchlist</span>
+                </button>
+              ) : null}
+              {watchlist.length > 0 ? (
+                <>
+                  <div className="watch-strip" data-watch-motion="strip" role="group" aria-label="Stock shortcuts">
+                    <div className="watch-row" id="watchRow">
+                      {watchlist.slice(0, 8).map((tk) => (
+                        <div key={tk} data-watch-motion={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}>
+                          <span className="coin-wrap">
+                            <button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button>
+                            <span className="watch-tooltip" aria-hidden="true">{nameOf(tk)}</span>
+                          </span>
+                          <div className="ticker">{tk}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <button type="button" className="list-tile" data-watch-motion="list" aria-label="Watchlist" aria-expanded={listOpen} aria-controls="watchList" onClick={() => setListOpen((open) => !open)}><ListIcon /><span>Watchlist</span></button>
-              </div>
-              <div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Full watchlist">
-                {listOpen && watchlist.map((tk) => {
-                  const live = quotes[tk];
-                  const quote = live?.source === "marketstack" ? live : null;
-                  const up = (quote?.change ?? 0) >= 0;
-                  return (
-                    <button type="button" key={tk} onClick={() => openStock(tk)}>
-                      <span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span>
-                      <span className="mono" title={quote ? "Close as of " + quote.date : undefined}>
-                        {quote ? <AnimatedPrice price={quote.price} /> : "—"}
-                      </span>
-                      <span className="mono">{quote ? <span className={up ? "chg-up" : "chg-dn"}>
-                        {up ? "▲ +" : "▼ "}{fmt(quote.change, 2)}%
-                      </span> : "—"}</span>
-                    </button>
-                  );
-                })}
-              </div>
+                    <button type="button" className="list-tile" data-watch-motion="list" aria-label="Watchlist" aria-expanded={listOpen} aria-controls="watchList" onClick={() => setListOpen((open) => !open)}><ListIcon /><span>Watchlist</span></button>
+                  </div>
+                  <div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Full watchlist">
+                    {listOpen && watchlist.map((tk) => {
+                      const live = quotes[tk];
+                      const quote = live?.source === "marketstack" ? live : null;
+                      const up = (quote?.change ?? 0) >= 0;
+                      return (
+                        <button type="button" key={tk} onClick={() => openStock(tk)}>
+                          <span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span>
+                          <span className="mono" title={quote ? "Close as of " + quote.date : undefined}>
+                            {quote ? <AnimatedPrice price={quote.price} /> : "—"}
+                          </span>
+                          <span className="mono">{quote ? <span className={up ? "chg-up" : "chg-dn"}>
+                            {up ? "▲ +" : "▼ "}{fmt(quote.change, 2)}%
+                          </span> : "—"}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : null}
             </div>
-            {isStock && (
+            {isStock && selected ? (
               <div className="stock-overview">
                 <h2 className="stock-identity">
                   <span className="stock-identity-logo" aria-hidden="true"><BrandLogo tk={selected} /></span>
@@ -542,8 +600,8 @@ export function Dashboard() {
                   </span>
                 </h2>
               </div>
-            )}
-            {isStock && (
+            ) : null}
+            {isStock && selected ? (
               <div className="stock-analysis-switch" role="group" aria-label="Stock analysis"
                 data-analysis={stockAnalysis} data-graph-only={!canUseCompanyAnalysis}>
                 <button type="button" aria-pressed={stockAnalysis === "graph"} onClick={() => setAnalysis("graph")}>Graph Analysis</button>
@@ -552,9 +610,9 @@ export function Dashboard() {
                   <button type="button" aria-pressed={stockAnalysis === "valuation"} onClick={() => setAnalysis("valuation")}>Valuation</button>
                 </>}
               </div>
-            )}
+            ) : null}
             <div key={section === "stock" ? "stock:" + selected : section} className="section-stage">
-              {section === "stock" ? (
+              {section === "stock" && selected ? (
                 <>
                   <div className="stock-analysis-pane" hidden={stockAnalysis !== "graph"}>
                     <StockDetail ticker={selected} snapshot={selectedSnapshot} />
@@ -568,9 +626,17 @@ export function Dashboard() {
                     </div>
                   </>}
                 </>
-              ) : (
-                <Panels section={section} selected={selected} watchlist={watchlist} range={range} onRange={setRange} onSelect={selectStock} sim={sim} onSim={setSim} />
-              )}
+              ) : section !== "stock" ? (
+                <Panels
+                  section={section}
+                  selected={selected}
+                  watchlist={watchlist}
+                  onSelect={openStock}
+                  onRemove={removeFromWatchlist}
+                  sim={sim}
+                  onSim={setSim}
+                />
+              ) : null}
             </div>
           </main></div>
       </div>

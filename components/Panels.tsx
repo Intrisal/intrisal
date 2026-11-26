@@ -2,17 +2,16 @@
 
 import type { ReactNode } from "react";
 import { AnimatedPrice } from "@/components/AnimatedPrice";
+import { BrandLogo } from "@/components/BrandLogo";
 import { Fundamentals } from "@/components/Fundamentals";
+import { RemoveIcon } from "@/components/Icons";
 import { ValuationHistory } from "@/components/ValuationHistory";
 import type { CompanySnapshot } from "@/lib/companyData";
-import { fmt, hashStr, nameOf, projectSim, rng, sample, series, type SimInput } from "@/lib/market";
+import { fmt, hashStr, nameOf, projectSim, rng, sample, type SimInput } from "@/lib/market";
 import { useCompanySnapshot, useCompanySnapshots } from "@/lib/useCompanyData";
-import { useQuotes, useStockHistory } from "@/lib/useMarketData";
+import { useQuotes } from "@/lib/useMarketData";
 
 export type Section = "home" | "fundamental" | "learn" | "simulation" | "valuation" | "watchlist";
-
-const RANGES = ["1D", "1M", "6M", "1Y", "5Y"] as const;
-const POINTS: Record<(typeof RANGES)[number], number> = { "1D": 40, "1M": 30, "6M": 60, "1Y": 80, "5Y": 100 };
 
 function Chg({ c }: { c: number }) {
   const up = c >= 0;
@@ -66,68 +65,67 @@ export function LineChart({ data, w, h, pad, label }: { data: number[]; w: numbe
   );
 }
 
-function ChartPanel({ selected, range, onRange }: { selected: string; range: string; onRange: (range: string) => void }) {
-  const fallback = sample(selected);
-  const { history } = useStockHistory(selected);
-  const pts = POINTS[range as (typeof RANGES)[number]] ?? 80;
-  const liveCloses = history?.closes ?? [];
-  const chartData =
-    liveCloses.length > 1
-      ? liveCloses.slice(-Math.min(pts, liveCloses.length))
-      : series(selected, range, pts);
-  const price = history?.price ?? fallback.price;
-  const change = history?.change ?? fallback.change;
-
-  return (
-    <article className="panel">
-      <PanelHead title="Chart" sub={selected} />
-      <div className="big-ticker">{selected}</div>
-      <div className="big-name">{nameOf(selected)}</div>
-      <div className="big-price mono"><AnimatedPrice key={selected} price={price} /><span className="chg"><Chg c={change} /></span></div>
-      <div className="chart-box">
-        <LineChart data={chartData} w={560} h={210} pad={8} label="Price chart" />
-      </div>
-      <div className="range-row">{RANGES.map(function (r) {
-          return (
-            <button type="button" key={r} data-range={r} aria-pressed={r === range} onClick={() => onRange(r)}>
-              {r}
-            </button>
-          );
-        })}</div>
-      {!history ? <FootNote>Sample data for layout preview.</FootNote> : null}
-    </article>
-  );
-}
-
-function WatchPanel({ watchlist, selected, onSelect }: { watchlist: string[]; selected: string; onSelect: (tk: string) => void }) {
+function WatchPanel({
+  watchlist,
+  selected,
+  onSelect,
+  onRemove,
+}: {
+  watchlist: string[];
+  selected: string;
+  onSelect: (tk: string) => void;
+  onRemove: (tk: string) => void;
+}) {
   const { quotes } = useQuotes(watchlist);
+  const countLabel = watchlist.length === 0
+    ? "Empty"
+    : watchlist.length === 1
+      ? "1 stock"
+      : watchlist.length + " stocks";
+
   return (
-    <article className="panel">
-      <PanelHead title="Watchlist" sub={watchlist.length + " stocks"} />
-      <table className="mini">
-        <thead>
-          <tr>
-            <th>Ticker</th>
-            <th className="num">Price</th>
-            <th className="num">Last session</th>
-          </tr>
-        </thead>
-        <tbody>
+    <article className={"panel watch-panel" + (watchlist.length === 0 ? " is-empty" : "")}>
+      <PanelHead title="Watchlist" sub={countLabel} />
+      {watchlist.length === 0 ? (
+        <div className="watch-empty">
+          <p>Search to add stocks to your watchlist.</p>
+        </div>
+      ) : (
+        <div className="watch-gallery" role="list" aria-label="Your watchlist">
           {watchlist.map(function (tk) {
             const live = quotes[tk];
             const quote = live?.source === "marketstack" ? live : null;
+            const up = (quote?.change ?? 0) >= 0;
             return (
-              <tr key={tk} data-tk={tk} className={tk === selected ? "sel" : undefined} onClick={() => onSelect(tk)}>
-                <td className="tk">{tk}</td>
-                <td className="num mono" title={quote ? "Close as of " + quote.date : undefined}>
-                  {quote ? <AnimatedPrice price={quote.price} /> : "—"}
-                </td>
-                <td className="num mono">{quote ? <Chg c={quote.change} /> : "—"}</td>
-              </tr>
+              <div key={tk} role="listitem" className={"watch-card" + (tk === selected ? " sel" : "")}>
+                <button type="button" className="watch-card-main" onClick={() => onSelect(tk)} aria-label={"Open " + tk + " — " + nameOf(tk)}>
+                  <span className="watch-card-logo" aria-hidden="true"><BrandLogo tk={tk} /></span>
+                  <span className="watch-card-meta">
+                    <strong>{tk}</strong>
+                    <span>{nameOf(tk)}</span>
+                  </span>
+                  <span className="watch-card-quote mono">
+                    <span className="watch-card-price" title={quote ? "Close as of " + quote.date : undefined}>
+                      {quote ? <AnimatedPrice price={quote.price} /> : "—"}
+                    </span>
+                    <span className={quote ? (up ? "chg-up" : "chg-dn") : "watch-card-chg-empty"}>
+                      {quote ? ((up ? "▲ +" : "▼ ") + fmt(quote.change, 2) + "%") : "—"}
+                    </span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="watch-card-remove"
+                  aria-label={"Remove " + tk + " from watchlist"}
+                  onClick={() => onRemove(tk)}
+                >
+                  <RemoveIcon />
+                </button>
+              </div>
             );
           })}
-        </tbody>
-      </table>
+        </div>
+      )}
     </article>
   );
 }
@@ -407,27 +405,30 @@ export function Panels({
   section,
   selected,
   watchlist,
-  range,
-  onRange,
   onSelect,
+  onRemove,
   sim,
   onSim,
 }: {
   section: Section;
   selected: string;
   watchlist: string[];
-  range: string;
-  onRange: (range: string) => void;
   onSelect: (tk: string) => void;
+  onRemove: (tk: string) => void;
   sim: SimInput;
   onSim: (next: SimInput) => void;
 }) {
   let body: ReactNode = null;
   if (section === "watchlist") {
-    body = [
-      <ChartPanel key="chart" selected={selected} range={range} onRange={onRange} />,
-      <WatchPanel key="watch" watchlist={watchlist} selected={selected} onSelect={onSelect} />,
-    ];
+    body = (
+      <WatchPanel
+        key="watch"
+        watchlist={watchlist}
+        selected={selected}
+        onSelect={onSelect}
+        onRemove={onRemove}
+      />
+    );
   } else if (section === "valuation") {
     body = [
       <ValuationPanel key="valuation" watchlist={watchlist} selected={selected} onSelect={onSelect} />,
