@@ -21,8 +21,16 @@ export function ForgotPasswordForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || res.statusText);
+      const raw = await res.text();
+      let body: { error?: string; message?: string } = {};
+      if (raw.trim()) {
+        try {
+          body = JSON.parse(raw) as { error?: string; message?: string };
+        } catch {
+          throw new Error(res.ok ? "Unexpected response from server" : "Could not send reset link");
+        }
+      }
+      if (!res.ok) throw new Error(body.error || res.statusText || "Could not send reset link");
       setNotice(body.message || "If an account exists for that email, we sent a reset link.");
       setBusy(false);
     } catch (err) {

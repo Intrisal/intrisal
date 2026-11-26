@@ -64,8 +64,13 @@ async function rest<T>(
       `Supabase ${table} HTTP ${response.status}${detail ? ": " + detail.slice(0, 200) : ""}`,
     );
   }
-  if (response.status === 204) return undefined as T;
-  return response.json();
+  // PostgREST often returns 201/200 with an empty body when Prefer: return=minimal.
+  if (response.status === 204 || (rows && prefer.includes("return=minimal"))) {
+    return undefined as T;
+  }
+  const text = await response.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 function hashToken(token: string) {

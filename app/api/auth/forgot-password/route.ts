@@ -18,7 +18,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = (await request.json()) as { email?: string };
+    const raw = await request.text();
+    let body: { email?: string } = {};
+    if (raw.trim()) {
+      try {
+        body = JSON.parse(raw) as { email?: string };
+      } catch {
+        return NextResponse.json({ error: "Enter a valid email" }, { status: 400 });
+      }
+    }
     const email = (body.email ?? "").trim().toLowerCase() || "missing";
     const emailLimit = checkRateLimit(
       `forgot:email:${email}`,
