@@ -91,9 +91,14 @@ export async function claimPriceRefresh(ticker: string, now: Date) {
   return rows.length > 0;
 }
 
-export async function readPrices(ticker: string): Promise<StockHistory | null> {
-  const rows = await priceRows(ticker, 1000);
-  if (rows.length === 1000) rows.push(...await priceRows(ticker, 500, rows.at(-1)?.date));
+export async function readPrices(ticker: string, maxRows = 1500): Promise<StockHistory | null> {
+  const rows: PriceRow[] = [];
+  while (rows.length < maxRows) {
+    const limit = Math.min(1000, maxRows - rows.length);
+    const page = await priceRows(ticker, limit, rows.at(-1)?.date);
+    rows.push(...page);
+    if (page.length < limit) break;
+  }
   if (!rows.length) return null;
   const last = rows[0];
   const previous = rows[1]?.close ?? last.close;

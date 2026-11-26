@@ -14,7 +14,8 @@ export async function GET(request: Request) {
   }
 
   try {
-    const history = await readPrices(symbol);
+    // Allow ten years of sessions plus earlier prices for the moving averages.
+    const history = await readPrices(symbol, 3000);
     if (!history) return NextResponse.json({ error: "No stored prices for " + symbol }, { status: 404 });
     return NextResponse.json(history, {
       headers: { "Cache-Control": "private, max-age=120, must-revalidate" },

@@ -7,9 +7,11 @@ import { fmt } from "@/lib/market";
 import type { CompanySnapshot } from "@/lib/companyData";
 import { useStockHistory } from "@/lib/useMarketData";
 
-const RANGES = { "3M": 63, "6M": 126, "1Y": 252, "5Y": 1050, "All": 1260 };
-type Range = keyof typeof RANGES;
-const RANGE_OPTIONS = Object.keys(RANGES) as Range[];
+const RANGE_MONTHS = { "3M": 3, "6M": 6, "1Y": 12, "5Y": 60, "10Y": 120 };
+type Range = keyof typeof RANGE_MONTHS;
+const RANGE_OPTIONS = Object.keys(RANGE_MONTHS) as Range[];
+const TICK_MONTHS = { "6M": 1, "1Y": 2, "5Y": 12, "10Y": 24 };
+const PRICE_STEPS = [10, 20, 50, 100, 150, 200];
 const CLOSE_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
 });
@@ -17,6 +19,40 @@ const CHART_MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", ti
 const CHART_MONTH_YEAR_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short", year: "2-digit", timeZone: "UTC",
 });
+const CHART_DAY_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short", day: "numeric", timeZone: "UTC",
+});
+
+function monthsBefore(date: Date, months: number) {
+  const target = new Date(date);
+  target.setUTCDate(1);
+  target.setUTCMonth(target.getUTCMonth() - months);
+  const end = new Date(target);
+  end.setUTCMonth(end.getUTCMonth() + 1, 0);
+  target.setUTCDate(Math.min(date.getUTCDate(), end.getUTCDate()));
+  return target;
+}
+
+function chartDateTicks(range: Range, first: Date, last: Date) {
+  const ticks: Date[] = [];
+  if (range === "3M") {
+    const tick = new Date(last);
+    tick.setUTCDate(last.getUTCDate() >= 16 ? 16 : 1);
+    while (tick >= first) {
+      ticks.push(new Date(tick));
+      if (tick.getUTCDate() === 16) tick.setUTCDate(1);
+      else tick.setUTCMonth(tick.getUTCMonth() - 1, 16);
+    }
+    return ticks.reverse();
+  }
+
+  for (let offset = 0; offset <= RANGE_MONTHS[range]; offset += TICK_MONTHS[range]) {
+    const tick = monthsBefore(last, offset);
+    if (tick < first) break;
+    ticks.push(tick);
+  }
+  return ticks.reverse();
+}
 
 function average(prices: number[], end: number, days: number) {
   const start = Math.max(0, end - days + 1);
@@ -53,15 +89,16 @@ function AnimatedReturn({ value }: { value: number }) {
 function PriceChart({
   ticker,
   lines,
-  days,
+  range,
+  quickReveal,
   dates,
 }: {
   ticker: string;
   lines: number[][];
-  days: number;
+  range: Range;
+  quickReveal: boolean;
   dates: string[];
 }) {
-  const left = 34;
   const right = 704;
   const top = 14;
   const bottom = 344;
@@ -69,13 +106,23 @@ function PriceChart({
   const values = lines.flat().filter((value) => Number.isFinite(value) && value > 0);
   const low = values.length ? Math.min(...values) : 0;
   const high = values.length ? Math.max(...values) : 1;
-  const padding = (high - low) * 0.08 || 1;
-  const max = high + padding;
-  const min = Math.max(0, low - padding);
-  const xAt = (progress: number) => left + progress * (right - left);
+  const targetStep = (high - low) / 5;
+  const step = PRICE_STEPS.find((increment) => increment >= targetStep)
+    ?? Math.ceil(targetStep / 200) * 200;
+  const min = Math.floor(low / step) * step;
+  const max = Math.max(min + step, Math.ceil(high / step) * step);
+  const left = Math.max(34, fmt(max, 0).length * 11 + 19);
+  const timestamps = dates.map((date) => Date.parse(date + "T00:00:00Z"));
+  const last = timestamps[timestamps.length - 1];
+  // Keep the full 10Y axis when the stored price series starts later.
+  const first = range === "10Y"
+    ? monthsBefore(new Date(last), RANGE_MONTHS[range]).getTime()
+    : timestamps[0];
+  const xAt = (time: number) => left + ((time - first) / (last - first)) * (right - left);
   const yAt = (value: number) => bottom - ((value - min) / (max - min)) * (bottom - top);
-  const tickCount = days === RANGES["3M"] ? 4 : 5;
-  const dateFormat = days <= RANGES["6M"] ? CHART_MONTH_FORMAT : CHART_MONTH_YEAR_FORMAT;
+  const dateTicks = chartDateTicks(range, new Date(first), new Date(last));
+  const dateFormat = range === "3M" ? CHART_DAY_FORMAT
+    : range === "6M" ? CHART_MONTH_FORMAT : CHART_MONTH_YEAR_FORMAT;
 
   return (
     <svg
@@ -84,8 +131,8 @@ function PriceChart({
       role="img"
       aria-label={ticker + " closing prices with 50-day and 200-day moving averages"}
     >
-      {[0, 1, 2, 3, 4].map((tick) => {
-        const value = max - ((max - min) * tick) / 4;
+      {Array.from({ length: (max - min) / step + 1 }, (_, tick) => {
+        const value = max - step * tick;
         const y = yAt(value);
         return (
           <g key={tick}>
@@ -96,29 +143,27 @@ function PriceChart({
           </g>
         );
       })}
-      <ChartReveal left={left} right={right} top={top} bottom={bottom}>
+      <ChartReveal key={range} left={left} right={right} top={top} bottom={bottom} quick={quickReveal}>
         {lines.map((line, index) => (
           <polyline
             key={index}
             className={["stock-close", "stock-sma-short", "stock-sma-long"][index]}
             points={line
-              .map((value, i) => `${xAt(i / Math.max(1, line.length - 1)).toFixed(2)},${yAt(value).toFixed(2)}`)
+              .map((value, i) => `${xAt(timestamps[i]).toFixed(2)},${yAt(value).toFixed(2)}`)
               .join(" ")}
           />
         ))}
       </ChartReveal>
-      {Array.from({ length: tickCount }, (_, tick) => {
-        const progress = tick / (tickCount - 1);
-        const index = Math.min(dates.length - 1, Math.round(progress * (dates.length - 1)));
-        const iso = dates[index];
+      {dateTicks.map((date) => {
+        const x = xAt(date.getTime());
         return (
           <text
-            key={tick}
-            x={xAt(progress)}
+            key={date.getTime()}
+            x={x}
             y={370}
-            textAnchor={progress === 1 ? "end" : progress === 0 ? "start" : "middle"}
+            textAnchor={x > right - 34 ? "end" : x < left + 34 ? "start" : "middle"}
           >
-            {iso ? dateFormat.format(new Date(iso + "T00:00:00Z")) : ""}
+            {dateFormat.format(date)}
           </text>
         );
       })}
@@ -127,7 +172,8 @@ function PriceChart({
 }
 
 export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: CompanySnapshot | null }) {
-  const [range, setRange] = useState<Range>("1Y");
+  const [selection, setSelection] = useState<{ range: Range; ticker: string } | null>(null);
+  const range = selection?.range ?? "1Y";
   const { history, loading, error } = useStockHistory(ticker);
 
   const chart = useMemo(() => {
@@ -155,8 +201,7 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
     ? null : price < long ? "Strong Buy" : price < short ? "Buy" : "Hold";
   const signalClass = signal === "Hold" ? "stock-neutral" : "stock-positive";
 
-  const yearSlice = Math.min(RANGES["1Y"], chart.closes.length);
-  const year = chart.closes.slice(-yearSlice).filter((value) => value > 0 && Number.isFinite(value));
+  const year = chart.closes.slice(-252).filter((value) => value > 0 && Number.isFinite(value));
   const lowCandidate = history?.low52 && history.low52 > 0 ? history.low52 : null;
   const highCandidate = history?.high52 && history.high52 > 0 ? history.high52 : null;
   const low = lowCandidate ?? (year.length ? Math.min(...year) : null);
@@ -173,8 +218,11 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
     }
   }
 
-  const days = Math.min(RANGES[range], Math.max(2, chart.closes.length));
-  const rangeStart = Math.max(0, chart.closes.length - days);
+  const latestDate = chart.dates.at(-1);
+  const startDate = latestDate
+    ? monthsBefore(new Date(latestDate + "T00:00:00Z"), RANGE_MONTHS[range]).toISOString().slice(0, 10)
+    : "";
+  const rangeStart = Math.max(0, chart.dates.findIndex((date) => date >= startDate));
   const rangeCloses = chart.closes.slice(rangeStart);
   const rangeDates = chart.dates.slice(rangeStart);
   const rangeShort = chart.shortSma.slice(rangeStart);
@@ -193,13 +241,15 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
             style={{ "--range-index": RANGE_OPTIONS.indexOf(range) } as CSSProperties}
           >
             {RANGE_OPTIONS.map((item) => (
-              <button type="button" key={item} aria-pressed={item === range} onClick={() => setRange(item)}>
+              <button type="button" key={item} aria-pressed={item === range} onClick={() => {
+                if (item !== range) setSelection({ range: item, ticker });
+              }}>
                 {item}
               </button>
             ))}
           </div>
           <div className="stock-chart-return">
-            <span className="stock-chart-return-label">{range === "All" ? "All-time" : range} return</span>
+            <span className="stock-chart-return-label">{range} return</span>
             {rangeCloses.length > 1 ? <AnimatedReturn value={rangeReturn} /> : <strong>—</strong>}
           </div>
         </div>
@@ -208,7 +258,8 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
         ) : rangeCloses.length > 1 ? (
           <PriceChart
             ticker={ticker}
-            days={days}
+            range={range}
+            quickReveal={selection?.ticker === ticker}
             dates={rangeDates}
             lines={[rangeCloses, rangeShort, rangeLong]}
           />
@@ -221,8 +272,8 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
           <li className="stock-sma-long">200-day SMA</li>
         </ul>
       </article>
-      <aside className="stock-snapshot" aria-label="Latest snapshot">
-        <h2>Latest snapshot</h2>
+      <aside className="stock-snapshot" aria-label="Stock Price">
+        <h2>Stock Price</h2>
         <div className="stock-snapshot-price">
           {price === null ? "—" : <AnimatedPrice price={price} />}
         </div>

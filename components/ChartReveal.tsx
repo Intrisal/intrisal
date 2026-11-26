@@ -5,10 +5,11 @@ type ChartRevealProps = {
   right: number;
   top: number;
   bottom: number;
+  quick?: boolean;
   children: ReactNode;
 };
 
-export function ChartReveal({ left, right, top, bottom, children }: ChartRevealProps) {
+export function ChartReveal({ left, right, top, bottom, quick, children }: ChartRevealProps) {
   const clipId = useId();
   const [revealed, setRevealed] = useState(false);
   const padding = 8;
@@ -17,7 +18,8 @@ export function ChartReveal({ left, right, top, bottom, children }: ChartRevealP
     <>
       <defs>
         <clipPath id={clipId}>
-          <rect className={revealed ? undefined : "chart-reveal-window"} onAnimationEnd={() => setRevealed(true)}
+          <rect className={revealed ? undefined : "chart-reveal-window"} data-quick={quick || undefined}
+            onAnimationEnd={() => setRevealed(true)}
             x={left - padding} y={top - padding}
             width={right - left + 2 * padding} height={bottom - top + 2 * padding} />
         </clipPath>

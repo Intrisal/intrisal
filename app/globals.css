@@ -989,6 +989,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
           transform-origin: left center;
           animation: chart-reveal 1.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
         }
+        .chart-reveal-window[data-quick] { animation-duration: 380ms; }
       }
       @keyframes chart-reveal {
         from { transform: scaleX(0); }
