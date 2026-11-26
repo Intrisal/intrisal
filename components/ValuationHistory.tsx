@@ -20,21 +20,27 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   loading: boolean;
 }) {
   const id = useId();
-  const [hovered, setHovered] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
 
   const quarters = snapshot?.valuationPoints?.map((point) => ({
     quarter: point.quarter, value: point.ev_nopat, price: point.close, nopat: point.nopat,
     sharesEstimated: point.sharesEstimated,
     earningsRelease: point.earningsRelease,
+    debtEstimate: point.debtEstimate,
   })) ?? [];
   const count = quarters.length;
   const average = snapshot?.evNopatAvg;
   const benchmarkQuarters = snapshot?.evNopatAverageQuarters;
   const review = snapshot?.valuationReview === true;
-  const currentMultiple = review && (
+  const currentUnavailable = snapshot?.currentValuationUnavailable;
+  const currentCannotCalculate = currentUnavailable?.kind === "nonpositive-nopat";
+  const currentMultiple = !loading && snapshot && (review || snapshot.evNopat == null) && (
     <p className="valuation-caption">
       Current EV/NOPAT{" "}
-      <strong>{snapshot.evNopat == null ? "Data unavailable" : multiple(snapshot.evNopat)}</strong>
+      <strong>{snapshot.evNopat == null
+        ? currentCannotCalculate ? "Can’t calculate" : "Data unavailable"
+        : multiple(snapshot.evNopat)}</strong>
+      {currentUnavailable && ` · ${currentUnavailable.detail}`}
       {snapshot.valuationPriceAsOf && <>
         {" · Close as of "}
         <time dateTime={snapshot.valuationPriceAsOf}>
@@ -42,15 +48,17 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
         </time>
       </>}
       {snapshot.valuationEarningsRelease && " · Earnings release · Estimated shares"}
+      {snapshot.valuationDebtEstimate && " · Estimated debt"}
     </p>
   );
   if (count < 2 || average == null) return (
     <article className="panel">
       {currentMultiple}
-      <p>{loading ? "Loading valuation history…" : "EV/NOPAT history unavailable. More reported financials and historical prices are needed to chart valuation history."}</p>
+      <p>{loading ? "Loading valuation history…" : "There aren’t enough usable quarters to chart EV/NOPAT history."}</p>
     </article>
   );
-  const active = Math.min(hovered ?? count - 1, count - 1);
+  const selectedIndex = quarters.findIndex(({ quarter }) => quarter === hovered);
+  const active = selectedIndex < 0 ? count - 1 : selectedIndex;
   const values = quarters.map(({ value }) => value);
   const low = Math.min(...values);
   const high = Math.max(...values);
@@ -67,13 +75,27 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   const step = (right - left) / Math.max(1, count - 1);
   const dates = quarters.map(({ quarter }) => Date.parse(quarter));
   const firstDate = dates[0];
-  const dateSpan = dates[count - 1] - firstDate;
+  const lastDate = dates[count - 1];
+  const lastUnavailable = snapshot?.unavailableValuationQuarters?.at(-1);
+  const chartEnd = review && lastUnavailable?.kind === "nonpositive-nopat"
+    ? Math.max(lastDate, Date.parse(lastUnavailable.quarter)) : lastDate;
+  const dateSpan = chartEnd - firstDate;
   const dateX = (date: number) => left + (right - left) * (date - firstDate) / dateSpan;
   const hoverWidth = review ? Math.min(step, (right - left) * 90 * DAY_MS / dateSpan) : step;
   const padding = (high - low) * 0.13 || 1;
   const min = low - padding;
   const max = high + padding;
   const x = (index: number) => review ? dateX(dates[index]) : left + index * step;
+  const visibleGaps = review ? (snapshot?.unavailableValuationQuarters ?? []).filter(({ quarter }) => {
+    const date = Date.parse(quarter);
+    return date >= firstDate && date <= chartEnd;
+  }) : [];
+  const activeGap = visibleGaps.find(({ quarter }) => quarter === hovered);
+  const activeX = activeGap ? dateX(Date.parse(activeGap.quarter)) : x(active);
+  const hitTargets = [
+    ...quarters.map(({ quarter }, index) => ({ quarter, x: x(index), gap: false })),
+    ...visibleGaps.map(({ quarter }) => ({ quarter, x: dateX(Date.parse(quarter)), gap: true })),
+  ].sort((a, b) => a.x - b.x);
   const y = (value: number) => bottom - ((value - min) / (max - min)) * (bottom - top);
   const baseline = y(average);
   const segments: { start: number; end: number; path: string }[] = [];
@@ -93,7 +115,7 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   return (
     <article className="panel valuation-history" aria-labelledby={id + "-title"}>
       <h3 id={id + "-title"}>EV/NOPAT</h3>
-      <div className="valuation-status-row">
+      {!currentCannotCalculate && <div className="valuation-status-row">
         <div className="valuation-status" data-side={difference <= 0 ? "below" : "above"}>
           {difference <= 0 ? "Undervalued" : "Overvalued"}
         </div>
@@ -101,12 +123,13 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
           {difference > 0 ? "+" : ""}
           {fmt(difference, 1)}% vs 10Y avg
         </span>
-      </div>
+      </div>}
       {currentMultiple}
       <p className="valuation-caption">
-        {currentComparison == null ? "Badge uses latest quarter-end EV/NOPAT · " : ""}
+        {currentComparison == null && !currentCannotCalculate ? "Badge uses latest quarter-end EV/NOPAT · " : ""}
         Quarterly history{benchmarkQuarters != null && benchmarkQuarters < 40
           ? ` · 10Y average uses ${benchmarkQuarters} available quarters` : ""}
+        {quarters.some(({ debtEstimate }) => debtEstimate) && " · Includes estimated debt"}
       </p>
 
       <svg
@@ -159,19 +182,25 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
           {segments.filter(({ start, end }) => start === end).map(({ start }) => (
             <circle key={start} className="valuation-point" cx={x(start)} cy={y(values[start])} r={2.5} />
           ))}
-          <line className="valuation-gridline" x1={x(active)} x2={x(active)} y1={top} y2={bottom} />
-          <circle className="valuation-point" cx={x(active)} cy={y(current.value)} r={4} />
+          <line className="valuation-gridline" x1={activeX} x2={activeX} y1={top} y2={bottom} />
+          {!activeGap && <circle className="valuation-point" cx={activeX} cy={y(current.value)} r={4} />}
         </ChartReveal>
-        {quarters.map((_, index) => (
+        {hitTargets.map((target) => (
           <rect
-            key={index}
-            x={x(index) - hoverWidth / 2}
+            key={target.quarter}
+            x={target.x - hoverWidth / 2}
             y={top}
             width={hoverWidth}
             height={bottom - top}
             fill="transparent"
-            onPointerEnter={() => setHovered(index)}
+            data-valuation-quarter={target.quarter}
+            tabIndex={target.gap ? 0 : undefined}
+            aria-label={target.gap ? `${quarterLabelFromEnd(target.quarter)} EV/NOPAT unavailable` : undefined}
+            onPointerEnter={() => setHovered(target.quarter)}
             onPointerLeave={review ? () => setHovered(null) : undefined}
+            onFocus={() => setHovered(target.quarter)}
+            onBlur={() => setHovered(null)}
+            onClick={() => setHovered(target.quarter)}
           />
         ))}
       </svg>
@@ -180,7 +209,11 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
         <span>EV/NOPAT by quarter</span>
         <span>10Y average · {multiple(average)}</span>
       </div>
-      <p className="valuation-quarter">
+      {activeGap ? <p className="valuation-quarter">
+        <strong>{quarterLabelFromEnd(activeGap.quarter)}</strong>
+        <span>EV/NOPAT <strong>{activeGap.kind === "nonpositive-nopat" ? "Can’t calculate" : "Data unavailable"}</strong></span>
+        <span>{activeGap.detail}</span>
+      </p> : <p className="valuation-quarter">
         <strong>{quarterLabelFromEnd(current.quarter)}</strong>
         <span>
           EV/NOPAT <strong>{multiple(current.value)}</strong>
@@ -193,7 +226,9 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
         </span>
         {current.earningsRelease && <span>Earnings release</span>}
         {current.sharesEstimated && <span>Estimated shares</span>}
-      </p>
+        {current.debtEstimate && <span>{current.debtEstimate.method === "assumed-zero"
+          ? "Debt assumed $0" : "Debt carried forward"}</span>}
+      </p>}
 
       <dl className="valuation-summary">
         <div>

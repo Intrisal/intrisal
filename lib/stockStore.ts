@@ -5,6 +5,7 @@ import { canReviewValuation, prepareValuationReview } from "@/lib/valuationRevie
 export type ValuationPoint = {
   quarter: string; close: number; ev: number; nopat: number; ev_nopat: number;
   sharesEstimated?: boolean; earningsRelease?: boolean;
+  debtEstimate?: { debt: number; method: "assumed-zero" | "carried-forward"; reportedAsOf?: string };
 };
 export type CurrentValuation = ValuationPoint & { priceAsOf: string };
 type StoredValuation = { points: ValuationPoint[]; current: CurrentValuation | null };

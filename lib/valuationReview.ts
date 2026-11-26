@@ -5,6 +5,9 @@ import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const REVIEW_EXCLUDED = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD", "TEST"]);
 const SPLIT_RATIOS = [1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10, 12, 15, 16, 20, 25, 30, 40, 50, 100];
+// Meta first issued senior notes in August 2022. Reported pre-issue balances
+// still take precedence over the zero assumption.
+const META_FIRST_BOND_MONTH = "2022-08-01";
 
 function priceSplits(history: StockHistory) {
   const splits: { date: string; factor: number }[] = [];
@@ -73,23 +76,22 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
   const pretax = valuesByDate(edgar.pretax);
   const hasInvestments = Object.values(edgar.balances).some((balance) => balance?.sti != null);
   const basis = history ? sharesOnPriceBasis(edgar, history) : null;
+  const reportedDebt = Object.keys(edgar.balances).sort().flatMap((date) => {
+    const debt = edgar.balances[date]?.debt;
+    return debt != null && Number.isFinite(debt) && debt >= 0 ? [{ date, debt }] : [];
+  });
 
-  function asOf(index: number, close: number | undefined | null, shares: number | undefined) {
+  const eligible = canReviewValuation(ticker, edgar) && edgar.reportingCurrency !== "EUR";
+  const benchmarkQuarters = valuationBenchmark(ends.map((quarter, index) => ({ quarter, index }))).slice(-40);
+
+  function fundamentalsAt(index: number) {
     const quarter = ends[index];
-    if (!canReviewValuation(ticker, edgar) || edgar.reportingCurrency === "EUR") return { reason: "ineligible filing or currency" } as const;
+    if (!eligible) return { reason: "ineligible filing or currency" } as const;
     if (index < 3) return { reason: "fewer than four operating quarters" } as const;
     const window = ends.slice(index - 3, index + 1);
     if (window.slice(1).some((date, i) => !isFiscalQuarterGap((Date.parse(date) - Date.parse(window[i])) / DAY_MS))) {
       return { reason: "nonconsecutive operating quarters" } as const;
     }
-    if (close == null || !Number.isFinite(close) || close <= 0) return { reason: "missing usable closing price" } as const;
-
-    const balance = edgar.balances[quarter];
-    if (balance?.cash == null) return { reason: "missing cash" } as const;
-    if (balance.debt == null) return { reason: "missing debt" } as const;
-    if (shares == null) return { reason: "missing usable shares" } as const;
-    if (hasInvestments && balance.sti == null) return { reason: "missing short-term investments" } as const;
-    const ev = close * shares + balance.debt - balance.cash - (balance.sti ?? 0);
     const sum = (metric: Map<string, number>) => {
       const data = window.map((date) => metric.get(date));
       return data.reduce<number | null>((total, value) => total != null && value != null && Number.isFinite(value)
@@ -100,19 +102,46 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
     const rate = taxSum != null && pretaxSum != null && pretaxSum > 0
       ? Math.min(0.35, Math.max(0, taxSum / pretaxSum)) : 0.21;
     const nopat = values.slice(index - 3, index + 1).reduce((total, value) => total + value, 0) * (1 - rate);
-    if (!Number.isFinite(ev) || ev <= 0) return { reason: "nonpositive or invalid EV" } as const;
-    if (!Number.isFinite(nopat) || nopat <= 0) return { reason: "nonpositive or invalid NOPAT" } as const;
+    if (!Number.isFinite(nopat)) return { reason: "invalid NOPAT data" } as const;
+    if (nopat <= 0) return { reason: "nonpositive NOPAT" } as const;
+
+    const balance = edgar.balances[quarter];
+    if (balance?.cash == null) return { reason: "missing cash" } as const;
+    const reported = balance.debt != null && Number.isFinite(balance.debt) && balance.debt >= 0
+      ? balance.debt : null;
+    const assumeZero = ticker === "META" && quarter < META_FIRST_BOND_MONTH;
+    const priorDebt = reported == null && !assumeZero ? reportedDebt.findLast(({ date }) => date < quarter) : undefined;
+    const debt = reported ?? (assumeZero ? 0 : priorDebt?.debt);
+    if (debt == null) return { reason: "missing debt" } as const;
+    const reportedShares = balance.reportedShares ?? balance.shares;
+    if (reportedShares == null || !Number.isFinite(reportedShares) || reportedShares <= 0) {
+      return { reason: "missing usable shares" } as const;
+    }
+    if (hasInvestments && balance.sti == null) return { reason: "missing short-term investments" } as const;
     const estimatedShares = balance.reportedShares == null && balance.sharesEstimated === true;
+    const debtEstimate = reported == null
+      ? priorDebt ? { debt, method: "carried-forward" as const, reportedAsOf: priorDebt.date }
+        : { debt, method: "assumed-zero" as const }
+      : undefined;
+    return { inputs: { nopat, rate, debt, cash: balance.cash, sti: balance.sti ?? 0, estimatedShares, debtEstimate } } as const;
+  }
+
+  function asOf(index: number, close: number | undefined | null, shares: number | undefined) {
+    const result = fundamentalsAt(index);
+    if (!result.inputs) return { reason: result.reason } as const;
+    if (close == null || !Number.isFinite(close) || close <= 0) return { reason: "missing usable closing price" } as const;
+    if (shares == null) return { reason: "missing usable shares" } as const;
+    const { nopat, rate, debt, cash, sti, estimatedShares, debtEstimate } = result.inputs;
+    const ev = close * shares + debt - cash - sti;
+    if (!Number.isFinite(ev) || ev <= 0) return { reason: "nonpositive or invalid EV" } as const;
     return {
-      point: { quarter, close, ev, nopat, ev_nopat: ev / nopat, ...(estimatedShares ? { sharesEstimated: true } : {}) },
+      point: { quarter: ends[index], close, ev, nopat, ev_nopat: ev / nopat, ...(estimatedShares ? { sharesEstimated: true } : {}), ...(debtEstimate ? { debtEstimate } : {}) },
       rate, estimatedShares,
     } as const;
   }
 
   function quarterlyResults() {
-    const latest = ends.at(-1);
-    const window = valuationBenchmark(ends.map((quarter, index) => ({ quarter, index })), latest).slice(-40);
-    return window.map(({ quarter, index }) => {
+    return benchmarkQuarters.map(({ quarter, index }) => {
       const priceIndex = history?.dates.findLastIndex((date) => date <= quarter) ?? -1;
       const close = history && priceIndex >= 0 && Date.parse(quarter) - Date.parse(history.dates[priceIndex]) <= 7 * DAY_MS
         ? history.rawCloses?.[priceIndex] : null;
@@ -121,6 +150,12 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
   }
 
   return {
+    // Missing-price quarters are derived by the caller from the stored point series.
+    // Filing-related reasons are available without reading price history.
+    financialQuarters() {
+      if (!eligible) return [];
+      return benchmarkQuarters.map(({ quarter, index }) => ({ quarter, reason: fundamentalsAt(index).reason }));
+    },
     atLatestClose() {
       const quarter = ends.at(-1);
       if (!quarter || !history || !basis || history.asOf < quarter) return null;

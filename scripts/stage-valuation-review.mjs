@@ -91,7 +91,7 @@ async function stage({ ticker, cik, edgar_snapshot: previous, edgar_fetched_at: 
   });
   const hasFiscalGap = window.slice(1).some((date, index) => !isFiscalQuarterGap((Date.parse(date) - Date.parse(window[index])) / DAY_MS));
   let fresh = null;
-  if (ticker === "NVDA" || missingInput || hasFiscalGap || !hasSti || !window.length) {
+  if (ticker === "NVDA" || ticker === "MU" || missingInput || hasFiscalGap || !hasSti || !window.length) {
     try {
       cik = snapshot.cik ?? cik ?? await resolveCik(ticker);
       const accession = ticker === "NVDA" && cik != null ? await latestFinancialFiling(cik) : undefined;
@@ -111,7 +111,9 @@ async function stage({ ticker, cik, edgar_snapshot: previous, edgar_fetched_at: 
     for (const [date, freshBalance] of Object.entries(fresh.balances)) {
       const balance = snapshot.balances[date] ??= { cash: null, debt: null, shares: null };
       for (const field of ["cash", "debt", "sti"]) {
-        if (balance[field] == null && freshBalance[field] != null) balance[field] = freshBalance[field];
+        if (freshBalance[field] != null && (balance[field] == null || (ticker === "MU" && field === "debt"))) {
+          balance[field] = freshBalance[field];
+        }
       }
       if (balance.shares == null && freshBalance.shares != null) {
         balance.shares = freshBalance.shares;

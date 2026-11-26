@@ -7,10 +7,26 @@ import { readFile } from "node:fs/promises";
 import { EPS_SPLIT_BASIS_VERSION, fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries, type ReportingCurrency } from "@/lib/edgar";
 import { isKnownFund } from "@/lib/market";
 import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuationReview, saveValuations, type CurrentValuation, type ValuationPoint } from "@/lib/stockStore";
-import { canReviewValuation, valuationBenchmark } from "@/lib/valuationReview";
+import { canReviewValuation, prepareValuationReview, valuationBenchmark } from "@/lib/valuationReview";
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
+
+type ValuationUnavailable = { kind: "nonpositive-nopat" | "missing-data"; detail: string };
+const missingValuationInputs: Record<string, string> = {
+  "missing cash": "Cash balance unavailable.",
+  "missing debt": "Debt data unavailable.",
+  "missing usable shares": "Share count unavailable.",
+  "missing short-term investments": "Short-term investment data unavailable.",
+  "fewer than four operating quarters": "Four operating quarters are needed.",
+  "nonconsecutive operating quarters": "Operating results are missing for a quarter in this 12-month period.",
+};
+
+function valuationUnavailable(reason: string | undefined, fallback: string): ValuationUnavailable {
+  return reason === "nonpositive NOPAT"
+    ? { kind: "nonpositive-nopat", detail: "Trailing 12-month NOPAT is zero or negative." }
+    : { kind: "missing-data", detail: (reason && missingValuationInputs[reason]) || fallback };
+}
 
 export type CompanySnapshot = {
   ticker: string;
@@ -28,6 +44,9 @@ export type CompanySnapshot = {
   valuationReview?: boolean;
   valuationPriceAsOf?: string;
   valuationEarningsRelease?: boolean;
+  valuationDebtEstimate?: ValuationPoint["debtEstimate"];
+  currentValuationUnavailable?: ValuationUnavailable;
+  unavailableValuationQuarters?: (ValuationUnavailable & { quarter: string })[];
   revBillions: number | null;
   growthYoY: number | null;
   epsTtm: number | null;
@@ -131,6 +150,7 @@ function withoutFilings(ticker: string, price: number | null, change: number | n
     peTtm: null,
     evNopat: null,
     evNopatAvg: null,
+    currentValuationUnavailable: valuationUnavailable(undefined, "Reported financials unavailable."),
     revBillions: null,
     growthYoY: null,
     epsTtm: null,
@@ -182,12 +202,14 @@ function buildFromEdgar(
     price != null && edgar.sharesOutstandingBillions != null ? price * edgar.sharesOutstandingBillions : null;
 
   const nopat = opTtm != null ? nopatFromOpinc(opTtm) : null;
+  const financialQuarters = valuationReview ? prepareValuationReview(ticker, edgar, null).financialQuarters() : [];
+  const latestFinancialReason = financialQuarters.at(-1)?.reason;
   const enterpriseValue =
     compatiblePriceCurrency && marketCapBillions != null && edgar.debtBillions != null && edgar.cashBillions != null
       ? marketCapBillions + edgar.debtBillions - edgar.cashBillions
       : null;
   const evNopat = valuationReview
-    ? currentValuation?.ev_nopat ?? null
+    ? latestFinancialReason === "nonpositive NOPAT" ? null : currentValuation?.ev_nopat ?? null
     : process.env.INTRISAL_VALUATION_VERSION === "legacy" && enterpriseValue != null && nopat && nopat > 0
       ? enterpriseValue / nopat : null;
 
@@ -195,6 +217,11 @@ function buildFromEdgar(
   const evNopatHistory = valuationPoints.map((point) => point.ev_nopat);
   // Exclude the matching quarter ten years earlier, giving 40 points when coverage is complete.
   const benchmark = valuationBenchmark(valuationPoints);
+  const plottedQuarters = new Set(valuationPoints.map(({ quarter }) => quarter));
+  const unavailableValuationQuarters = financialQuarters.filter(({ quarter }) => !plottedQuarters.has(quarter))
+    .map(({ quarter, reason }) => ({ quarter, ...valuationUnavailable(reason, "Valuation data unavailable for this quarter.") }));
+  const currentValuationUnavailable = evNopat == null ? valuationUnavailable(latestFinancialReason,
+    price == null ? "Closing price unavailable." : "Valuation data unavailable.") : undefined;
 
   const peTtm = compatiblePriceCurrency && price != null && (!asmlEpsIsTtm || edgar.reportingCurrency === "USD") && epsTtm
     ? price / epsTtm
@@ -216,8 +243,11 @@ function buildFromEdgar(
       : null,
     evNopatAverageQuarters: benchmark.length,
     valuationReview,
-    valuationPriceAsOf: currentValuation?.priceAsOf,
-    valuationEarningsRelease: currentValuation?.earningsRelease,
+    valuationPriceAsOf: evNopat == null ? undefined : currentValuation?.priceAsOf,
+    valuationEarningsRelease: evNopat == null ? undefined : currentValuation?.earningsRelease,
+    valuationDebtEstimate: evNopat == null ? undefined : currentValuation?.debtEstimate,
+    currentValuationUnavailable,
+    unavailableValuationQuarters,
     revBillions: revTtm,
     growthYoY,
     epsTtm,

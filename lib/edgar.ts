@@ -840,6 +840,9 @@ export async function fetchEdgarFundamentals(
     ? pickUnit(facts, ["LongTermDebtAndCapitalLeaseObligations"], money) : []);
   const alternativeCurrent = byDate(id === "CMCSA" ? pickUnit(facts, ["DebtCurrent"], money) : []);
   const commercialPaper = byDate(isAlphabet ? pickUnit(facts, ["CommercialPaper"], money) : []);
+  // Micron's reported total includes finance leases. Its LongTermDebt tag
+  // can describe just the notes payable from the debt footnote.
+  const micronDebt = byDate(id === "MU" ? pickUnit(facts, ["DebtAndCapitalLeaseObligations"], money) : []);
   const investments = [
     "ShortTermInvestments", "MarketableSecuritiesCurrent", "MarketableSecurities",
     "DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
@@ -855,8 +858,8 @@ export async function fetchEdgarFundamentals(
       (noncurrent != null || currentDebt != null ? (noncurrent ?? 0) + (currentDebt ?? 0) : null);
     const sti = investments.map((series) => series.get(date)).find((value) => value != null);
     balances[date] = {
-      debt: longTerm !== null || shortDebt != null
-        ? (longTerm ?? 0) + (shortDebt ?? 0) : null,
+      debt: micronDebt.get(date) ?? (longTerm !== null || shortDebt != null
+        ? (longTerm ?? 0) + (shortDebt ?? 0) : null),
       cash: cashByDate.get(date) ?? null,
       shares: sharesByDate.get(date) ?? averageSharesByDate.get(date) ?? null,
       ...(sharesByDate.has(date) || averageSharesByDate.has(date) ? { sharesEstimated: !sharesByDate.has(date) } : {}),
