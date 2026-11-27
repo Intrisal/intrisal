@@ -2020,6 +2020,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .valuation-history [data-side="below"] { --valuation-side: var(--valuation-below); }
       .valuation-history [data-side="above"] { --valuation-side: var(--valuation-above); }
+      .valuation-history [data-side="fair"] { --valuation-side: var(--ink); }
       .valuation-history h3, .valuation-summary dt {
         margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
         text-transform: uppercase; color: var(--ink-2);
@@ -2031,6 +2032,8 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         font: 750 clamp(32px, 4.4vw, 54px)/1.04 var(--font-display), sans-serif;
         letter-spacing: -0.025em;
       }
+      .valuation-status-row[data-side="fair"] .valuation-status { color: #626b78; }
+      [data-theme="dark"] .valuation-status-row[data-side="fair"] .valuation-status { color: #aab2c1; }
       .valuation-badge {
         color: var(--valuation-side); background: color-mix(in srgb, var(--valuation-side) 13%, transparent);
         border-radius: 999px; padding: 6px 10px; font-size: 12px; font-weight: 650;

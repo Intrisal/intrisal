@@ -8,6 +8,8 @@ const SPLIT_RATIOS = [1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10, 12, 15, 16, 20, 25, 30,
 // Meta first issued senior notes in August 2022. Reported pre-issue balances
 // still take precedence over the zero assumption.
 const META_FIRST_BOND_MONTH = "2022-08-01";
+const MAX_DAILY_FINANCIAL_AGE = 185 * DAY_MS;
+export type DailyValuation = { date: string; filed: string; point: ValuationPoint | null };
 
 function priceSplits(history: StockHistory) {
   const splits: { date: string; factor: number }[] = [];
@@ -131,8 +133,7 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
     return { inputs: { nopat, rate, debt, cash: balance.cash, sti: balance.sti ?? 0, estimatedShares, debtEstimate } } as const;
   }
 
-  function asOf(index: number, close: number | undefined | null, shares: number | undefined) {
-    const result = fundamentalsAt(index);
+  function asOf(index: number, close: number | undefined | null, shares: number | undefined, result = fundamentalsAt(index)) {
     if (!result.inputs) return { reason: result.reason } as const;
     if (close == null || !Number.isFinite(close) || close <= 0) return { reason: "missing usable closing price" } as const;
     if (shares == null) return { reason: "missing usable shares" } as const;
@@ -172,6 +173,40 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
       return point ? { ...point, priceAsOf: history.asOf } : null;
     },
     quarterlyResults,
+    dailyHistory(filings: { date: string; filed?: string }[]): DailyValuation[] {
+      if (!eligible || !history || !basis) return [];
+      const latest = history.asOf;
+      const start = `${Number(latest.slice(0, 4)) - 10}${latest.slice(4)}`;
+      const firstFiled = new Map<string, string>();
+      for (const { date, filed } of filings) {
+        if (!filed || filed <= date || filed > latest) continue;
+        const previous = firstFiled.get(date);
+        if (!previous || filed < previous) firstFiled.set(date, filed);
+      }
+      const disclosures = [...firstFiled].map(([quarter, filed]) => ({
+        quarter, filed, index: ends.indexOf(quarter),
+      })).sort((a, b) => a.filed.localeCompare(b.filed) || a.quarter.localeCompare(b.quarter));
+      let next = 0;
+      let period: typeof disclosures[number] | undefined;
+      const quarterInputs = ends.map((_, index) => fundamentalsAt(index));
+      return history.dates.flatMap((date, priceIndex) => {
+        if (date < start) return [];
+        // Start at the next trading close so an after-hours filing never affects an earlier close.
+        while (disclosures[next] && disclosures[next].filed < date) {
+          const disclosure = disclosures[next++];
+          if (!period || disclosure.quarter >= period.quarter) period = disclosure;
+        }
+        if (!period) return [];
+        if (Date.parse(date) - Date.parse(period.filed) > MAX_DAILY_FINANCIAL_AGE) {
+          return [{ date, filed: period.filed, point: null }];
+        }
+        const reportedShares = basis.shares.get(period.quarter);
+        const shares = reportedShares == null ? undefined
+          : reportedShares * basis.factorAfter(period.quarter) / basis.factorAfter(date);
+        const result = asOf(period.index, history.rawCloses?.[priceIndex], shares, quarterInputs[period.index]);
+        return [{ date, filed: period.filed, point: result.point ?? null }];
+      });
+    },
     history(): ValuationPoint[] {
       return quarterlyResults().flatMap(({ point }) => point ? [point] : []);
     },

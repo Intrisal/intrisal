@@ -265,9 +265,10 @@ async function loadCompanyFacts(cik: number, refresh = false): Promise<CompanyFa
   return body;
 }
 
-export type FinancialFiling = { accession: string; date: string; document: string };
+export type FinancialFiling = { accession: string; date: string; document: string; filed?: string };
 type SubmissionRows = {
   form: string[]; accessionNumber: string[]; reportDate: string[]; primaryDocument: string[];
+  filingDate?: string[];
 };
 
 export async function listFinancialFilings(cik: number, since: string): Promise<FinancialFiling[]> {
@@ -283,7 +284,7 @@ export async function listFinancialFilings(cik: number, since: string): Promise<
   return pages.flatMap((page) => page.form.flatMap((form, index) => {
     const date = page.reportDate[index];
     return /^(10-K|10-Q)$/.test(form) && date >= since && page.primaryDocument[index]
-      ? [{ accession: page.accessionNumber[index], date, document: page.primaryDocument[index] }] : [];
+      ? [{ accession: page.accessionNumber[index], date, document: page.primaryDocument[index], filed: page.filingDate?.[index] }] : [];
   }));
 }
 
