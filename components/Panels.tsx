@@ -7,7 +7,7 @@ import { Fundamentals } from "@/components/Fundamentals";
 import { RemoveIcon } from "@/components/Icons";
 import { ValuationHistory } from "@/components/ValuationHistory";
 import type { CompanySnapshot } from "@/lib/companyData";
-import { fmt, nameOf, projectSim, type SimInput } from "@/lib/market";
+import { displayCompanyName, fmt, nameOf, projectSim, type SimInput } from "@/lib/market";
 import { useCompanySnapshot, useCompanySnapshots } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 
@@ -102,11 +102,11 @@ function WatchPanel({
             const up = (quote?.change ?? 0) >= 0;
             return (
               <div key={tk} role="listitem" className={"watch-card" + (tk === selected ? " sel" : "")}>
-                <button type="button" className="watch-card-main" onClick={() => onSelect(tk)} aria-label={"Open " + tk + " — " + nameOf(tk)}>
+                <button type="button" className="watch-card-main" onClick={() => onSelect(tk)} aria-label={"Open " + displayCompanyName(tk, quote?.name) + " — " + tk}>
                   <span className="watch-card-logo" aria-hidden="true"><BrandLogo tk={tk} /></span>
                   <span className="watch-card-meta">
-                    <strong>{tk}</strong>
-                    <span>{nameOf(tk)}</span>
+                    <strong>{displayCompanyName(tk, quote?.name)}</strong>
+                    <span>{tk}</span>
                   </span>
                   <span className="watch-card-quote mono">
                     <span className="watch-card-price" title={quote ? "Close as of " + quote.date : undefined}>
@@ -159,7 +159,7 @@ function ValuationPanel({ watchlist, selected, onSelect }: { watchlist: string[]
             <th>Ticker</th>
             <th className="num">P/E (TTM)</th>
             <th className="num">EV/NOPAT</th>
-            <th className="num">10Y Avg</th>
+            <th className="num">Avg</th>
           </tr>
         </thead>
         <tbody>
@@ -205,7 +205,7 @@ function ValuationDetailPanel({ selected, watchlist, showStockName = true }: { s
       <PanelHead title={showStockName ? "Valuation — " + selected : "Valuation"} sub={showStockName ? nameOf(selected) : undefined} />
       <BarRow label="P/E (TTM)" val={s.fpe} max={50} suffix="x" />
       <BarRow label="EV/NOPAT" val={s.evn} max={55} suffix="x" />
-      <BarRow label="10Y average" val={s.avg} max={55} suffix="x" />
+      <BarRow label={(snapshot?.valuationAverageYears ?? 10) + "Y average"} val={s.avg} max={55} suffix="x" />
       <BarRow label="Median" val={med} max={55} suffix="x" />
       <p style={{ fontSize: "14.5px", lineHeight: 1.6, color: "var(--ink-2)", margin: "14px 0 0" }}>
         {verdict} EV/NOPAT is enterprise value divided by after-tax operating income — the v2 headline multiple.

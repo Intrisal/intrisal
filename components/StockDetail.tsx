@@ -11,7 +11,6 @@ const RANGE_MONTHS = { "3M": 3, "6M": 6, "1Y": 12, "5Y": 60, "10Y": 120 };
 type Range = keyof typeof RANGE_MONTHS;
 const RANGE_OPTIONS = Object.keys(RANGE_MONTHS) as Range[];
 const TICK_MONTHS = { "6M": 1, "1Y": 2, "5Y": 12, "10Y": 24 };
-const PRICE_STEPS = [10, 20, 50, 100, 150, 200];
 const CLOSE_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
 });
@@ -19,10 +18,55 @@ const CHART_MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", ti
 const CHART_DAY_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short", day: "numeric", timeZone: "UTC",
 });
+const NICE_STEP_MULTIPLIERS = [1, 2, 2.5, 5, 10];
 
 /** e.g. Nov '26 — apostrophe marks the abbreviated year. */
 function formatChartMonthYear(date: Date) {
   return `${CHART_MONTH_FORMAT.format(date)} '${String(date.getUTCFullYear()).slice(-2)}`;
+}
+
+/**
+ * Fit the price axis tightly to the visible series using even/nice tick steps
+ * (1 / 2 / 2.5 / 5 × 10ⁿ). Avoids the old $200 ladder that left large empty
+ * headroom on high-priced charts like MU 10Y.
+ */
+function priceAxis(low: number, high: number) {
+  const floorHigh = Math.max(high, low, 1e-6);
+  const floorLow = Math.min(low, floorHigh);
+  const span = Math.max(floorHigh - floorLow, floorHigh * 0.04, 1e-6);
+  // Long-horizon charts that start near $0 should keep a true zero baseline.
+  const baseline = floorLow > 0 && floorLow <= span * 0.12 ? 0 : floorLow;
+
+  let best: { min: number; max: number; step: number; score: number } | null = null;
+  for (const tickCount of [3, 4, 5]) {
+    const rough = (floorHigh - baseline) / tickCount;
+    const magnitude = 10 ** Math.floor(Math.log10(Math.max(rough, 1e-9)));
+    for (const factor of [-1, 0, 1]) {
+      const base = magnitude * 10 ** factor;
+      for (const mult of NICE_STEP_MULTIPLIERS) {
+        const step = mult * base;
+        if (step <= 0) continue;
+        const min = baseline === 0 ? 0 : Math.floor(baseline / step) * step;
+        let max = Math.ceil(floorHigh / step) * step;
+        // Keep a hair of headroom when the series lands exactly on a grid line.
+        if (max <= floorHigh) max += step;
+        if (max <= min) continue;
+        const ticks = Math.round((max - min) / step);
+        if (ticks < 3 || ticks > 6) continue;
+        const waste = (max - floorHigh) / (max - min);
+        const score = waste * 12 + Math.abs(ticks - 4) * 0.1;
+        if (!best || score < best.score) best = { min, max, step, score };
+      }
+    }
+  }
+
+  if (best) return { min: best.min, max: best.max, step: best.step };
+
+  const fallbackStep = Math.max(1, 10 ** Math.floor(Math.log10(span)));
+  const min = baseline === 0 ? 0 : Math.floor(baseline / fallbackStep) * fallbackStep;
+  let max = Math.ceil(floorHigh / fallbackStep) * fallbackStep;
+  if (max <= floorHigh) max += fallbackStep;
+  return { min, max, step: fallbackStep };
 }
 
 function monthsBefore(date: Date, months: number) {
@@ -113,12 +157,9 @@ function PriceChart({
   const values = lines.flat().filter((value) => Number.isFinite(value) && value > 0);
   const low = values.length ? Math.min(...values) : 0;
   const high = values.length ? Math.max(...values) : 1;
-  const targetStep = (high - low) / 5;
-  const step = PRICE_STEPS.find((increment) => increment >= targetStep)
-    ?? Math.ceil(targetStep / 200) * 200;
-  const min = Math.floor(low / step) * step;
-  const max = Math.max(min + step, Math.ceil(high / step) * step);
-  const left = Math.max(34, fmt(max, 0).length * 11 + 19);
+  const { min, max, step } = priceAxis(low, high);
+  const priceDecimals = Number.isInteger(step) ? 0 : 1;
+  const left = Math.max(34, fmt(max, priceDecimals).length * 11 + 19);
   const timestamps = dates.map((date) => Date.parse(date + "T00:00:00Z"));
   const last = timestamps[timestamps.length - 1];
   // Keep the full 10Y axis when the stored price series starts later.
@@ -200,7 +241,7 @@ function PriceChart({
             <g key={tick}>
               <line x1={left} x2={right} y1={y} y2={y} />
               <text x={left - 8} y={y} textAnchor="end" dominantBaseline="middle">
-                ${fmt(value, 0)}
+                ${fmt(value, priceDecimals)}
               </text>
             </g>
           );
@@ -369,7 +410,9 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
           </div>
         </div>
         {loading && !history ? (
-          <p className="stock-chart-status">Loading closing prices…</p>
+          <div className="stock-chart-loading" role="status" aria-label="Loading closing prices">
+            <span className="stock-chart-spinner" aria-hidden="true" />
+          </div>
         ) : rangeCloses.length > 1 ? (
           <PriceChart
             ticker={ticker}

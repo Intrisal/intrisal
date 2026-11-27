@@ -2,6 +2,8 @@
  * Server-side account watchlists in Supabase (service role).
  */
 
+import { normalizeTicker } from "@/lib/market";
+
 const MAX_TICKERS = 100;
 
 export function normalizeWatchlist(tickers: unknown): string[] {
@@ -10,7 +12,7 @@ export function normalizeWatchlist(tickers: unknown): string[] {
   const next: string[] = [];
   for (const item of tickers) {
     if (typeof item !== "string") continue;
-    const ticker = item.trim().toUpperCase();
+    const ticker = normalizeTicker(item);
     if (!ticker || !/^[A-Z0-9.$-]{1,12}$/.test(ticker) || seen.has(ticker)) continue;
     seen.add(ticker);
     next.push(ticker);

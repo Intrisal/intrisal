@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { getCompanySnapshot } from "@/lib/companyData";
 import { lookupStockKind } from "@/lib/edgar";
-import { exchangeOf, isKnownFund } from "@/lib/market";
+import { exchangeOf, isKnownFund, normalizeTicker } from "@/lib/market";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ ticker: string }> }) {
-  const ticker = (await params).ticker.trim().toUpperCase();
+  const ticker = normalizeTicker((await params).ticker);
   if (!/^[A-Z][A-Z0-9]{0,7}(?:[.-][A-Z0-9]{1,3})?$/.test(ticker)) {
     return NextResponse.json({ error: "Invalid ticker" }, { status: 400 });
   }

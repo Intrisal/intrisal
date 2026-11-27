@@ -59,14 +59,36 @@ function periodChange(values: number[], dates: string[], years: Period, unit: Un
   const latestDate = dates.at(-1);
   const latest = values.at(-1);
   if (!latestDate || latest == null) return null;
+  const latestMs = Date.parse(latestDate);
   const target = Date.parse(periodStart(latestDate, years));
-  // Fiscal calendars may shift a week between comparable quarters.
-  const index = dates.findIndex((date) => Math.abs(Date.parse(date) - target) <= 28 * 86_400_000);
+  if (!Number.isFinite(latestMs) || !Number.isFinite(target)) return null;
+
+  // Find the closest available TTM point to the N-year anniversary.
+  let index = -1;
+  let best = Infinity;
+  for (let i = 0; i < dates.length; i++) {
+    const diff = Math.abs(Date.parse(dates[i]) - target);
+    if (diff < best) {
+      best = diff;
+      index = i;
+    }
+  }
   if (index < 0) return null;
+
+  // Allow fiscal drift; longer windows get more slack so early-history edges still count.
+  const maxDriftDays = years >= 10 ? 220 : years >= 5 ? 140 : 100;
+  if (best > maxDriftDays * 86_400_000) return null;
+
   const start = values[index];
+  const startMs = Date.parse(dates[index]);
   if (unit === "percent") return latest - start;
-  if (start <= 0 || latest <= 0) return null;
-  return ((latest / start) ** (1 / years) - 1) * 100;
+  if (!(start > 0) || !(latest > 0) || !Number.isFinite(startMs)) return null;
+
+  // CAGR over the actual elapsed span so a 15Y button still works when the
+  // earliest comparable quarter is a few months off the exact anniversary.
+  const actualYears = (latestMs - startMs) / (365.25 * 86_400_000);
+  if (actualYears < years * 0.82 || actualYears > years * 1.18) return null;
+  return ((latest / start) ** (1 / actualYears) - 1) * 100;
 }
 
 function formatChange(value: number, unit: Unit) {
@@ -228,7 +250,7 @@ function MetricCard({ label, values, dates, unit, currency, sourceNote }: {
       </header>
       <strong className="fundamental-value">{formatValue(displayedValues[activeIndex], unit, 2, currency)}</strong>
       {chart(false)}
-      {unit === "percent" && <p className="fundamental-range-label">Margin change</p>}
+      <p className="fundamental-range-label">{unit === "percent" ? "Margin change" : "Compound annual growth"}</p>
       {periodControls}
 
       <dialog id={dialogId} ref={dialogRef} className="fundamental-dialog" aria-labelledby={dialogId + "-title"}

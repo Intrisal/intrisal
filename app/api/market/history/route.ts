@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
+import { normalizeTicker } from "@/lib/market";
 import { hasStockStore, readPrices } from "@/lib/stockStore";
 
 export const dynamic = "force-dynamic";
 
 /** GET /api/market/history?symbol=NVDA — stored daily closes for charts. */
 export async function GET(request: Request) {
-  const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase() ?? "";
+  const symbol = normalizeTicker(new URL(request.url).searchParams.get("symbol") ?? "");
   if (!/^[A-Z][A-Z0-9]{0,7}(?:[.-][A-Z0-9]{1,3})?$/.test(symbol)) {
     return NextResponse.json({ error: "A valid symbol is required" }, { status: 400 });
   }

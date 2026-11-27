@@ -18,6 +18,7 @@ export type StockHistory = {
 
 export type StockQuote = {
   ticker: string;
+  name?: string;
   price: number;
   change: number;
   date: string;

@@ -74,7 +74,6 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
   const { ends, values } = edgar.operatingIncome;
   const tax = valuesByDate(edgar.tax);
   const pretax = valuesByDate(edgar.pretax);
-  const hasInvestments = Object.values(edgar.balances).some((balance) => balance?.sti != null);
   const basis = history ? sharesOnPriceBasis(edgar, history) : null;
   const reportedDebt = Object.keys(edgar.balances).sort().flatMap((date) => {
     const debt = edgar.balances[date]?.debt;
@@ -114,7 +113,9 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
     if (balance?.cash == null) return { reason: "missing cash" } as const;
     const reported = balance.debt != null && Number.isFinite(balance.debt) && balance.debt >= 0
       ? balance.debt : null;
-    const assumeZero = ticker === "META" && quarter < META_FIRST_BOND_MONTH;
+    const assumeZero =
+      (ticker === "META" && quarter < META_FIRST_BOND_MONTH) ||
+      reportedDebt.length === 0;
     const priorDebt = reported == null && !assumeZero ? reportedDebt.findLast(({ date }) => date < quarter) : undefined;
     const debt = reported ?? (assumeZero ? 0 : priorDebt?.debt);
     if (debt == null) return { reason: "missing debt" } as const;
@@ -122,7 +123,6 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
     if (reportedShares == null || !Number.isFinite(reportedShares) || reportedShares <= 0) {
       return { reason: "missing usable shares" } as const;
     }
-    if (hasInvestments && balance.sti == null) return { reason: "missing short-term investments" } as const;
     const estimatedShares = balance.reportedShares == null && balance.sharesEstimated === true;
     const debtEstimate = reported == null
       ? priorDebt ? { debt, method: "carried-forward" as const, reportedAsOf: priorDebt.date }
@@ -178,7 +178,63 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
   };
 }
 
-export function valuationBenchmark<T extends { quarter: string }>(points: T[], latest = points.at(-1)?.quarter) {
-  const start = latest ? `${Number(latest.slice(0, 4)) - 10}${latest.slice(4)}` : null;
+export function valuationBenchmark<T extends { quarter: string }>(
+  points: T[],
+  latest = points.at(-1)?.quarter,
+  years = 10,
+) {
+  const start = latest ? `${Number(latest.slice(0, 4)) - years}${latest.slice(4)}` : null;
   return start ? points.filter(({ quarter }) => quarter > start) : [];
+}
+
+/** Years spanned by the first→last valuation point (0 if fewer than 2 points). */
+export function valuationHistorySpanYears(points: { quarter: string }[]) {
+  if (points.length < 2) return 0;
+  return (Date.parse(points.at(-1)!.quarter) - Date.parse(points[0].quarter)) / (365.25 * DAY_MS);
+}
+
+const BALANCE_SHEET_GAP_REASONS = new Set(["missing cash", "missing debt", "missing usable shares"]);
+
+/**
+ * Decide whether to show the Valuation tab and which average window to use.
+ * - <5Y usable history → hide
+ * - 5–10Y → 5Y average
+ * - ≥10Y → 10Y average
+ * - Banks whose EV math goes ≤0 (or produces almost no usable points) → hide
+ * - Material missing cash/debt/shares tags (≥4 quarters in the 10Y window) → hide
+ */
+export function resolveValuationDisplay(input: {
+  points: ValuationPoint[];
+  financialQuarters: { quarter: string; reason?: string }[];
+  isFinancial?: boolean;
+  latestEnterpriseValue?: number | null;
+  hasNegativeOperatingIncome: boolean;
+}) {
+  const { points, financialQuarters, isFinancial, latestEnterpriseValue, hasNegativeOperatingIncome } = input;
+  if (hasNegativeOperatingIncome) {
+    return { show: true as const, averageYears: 10 as const, points, hideReason: null };
+  }
+
+  const balanceSheetGaps = financialQuarters.filter((r) => r.reason && BALANCE_SHEET_GAP_REASONS.has(r.reason)).length;
+  if (balanceSheetGaps >= 4) {
+    return { show: false as const, averageYears: null, points: [] as ValuationPoint[], hideReason: "missing-balance-sheet" as const };
+  }
+
+  // Banks/brokers: hide when the industrial EV formula is invalid or history collapses to <5Y.
+  if (isFinancial && (latestEnterpriseValue != null && latestEnterpriseValue <= 0 || valuationHistorySpanYears(points) < 5)) {
+    return { show: false as const, averageYears: null, points: [] as ValuationPoint[], hideReason: "financial-invalid-ev" as const };
+  }
+
+  const spanYears = valuationHistorySpanYears(points);
+  if (points.length < 2 || spanYears < 5) {
+    return { show: false as const, averageYears: null, points: [] as ValuationPoint[], hideReason: "insufficient-history" as const };
+  }
+
+  // 40 consecutive quarters span ~9.75 calendar years — treat >=9.5Y as a full 10Y window.
+  const averageYears = spanYears >= 9.5 ? 10 as const : 5 as const;
+  const windowed = valuationBenchmark(points, points.at(-1)?.quarter, averageYears);
+  if (windowed.length < 2) {
+    return { show: false as const, averageYears: null, points: [] as ValuationPoint[], hideReason: "insufficient-history" as const };
+  }
+  return { show: true as const, averageYears, points: windowed, hideReason: null };
 }

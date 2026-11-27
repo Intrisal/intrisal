@@ -5,9 +5,9 @@
 
 import { readFile } from "node:fs/promises";
 import { EPS_SPLIT_BASIS_VERSION, fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries, type ReportingCurrency } from "@/lib/edgar";
-import { isKnownFund } from "@/lib/market";
+import { displayCompanyName, isKnownFund, normalizeTicker } from "@/lib/market";
 import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuationReview, saveValuations, type CurrentValuation, type ValuationPoint } from "@/lib/stockStore";
-import { canReviewValuation, prepareValuationReview, valuationBenchmark } from "@/lib/valuationReview";
+import { canReviewValuation, prepareValuationReview, resolveValuationDisplay } from "@/lib/valuationReview";
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
@@ -30,6 +30,8 @@ function valuationUnavailable(reason: string | undefined, fallback: string): Val
 
 export type CompanySnapshot = {
   ticker: string;
+  /** Display name for the identity header (company name, not ticker). */
+  name: string;
   price: number | null;
   change: number | null;
   priceAsOf?: string;
@@ -38,9 +40,13 @@ export type CompanySnapshot = {
   /** Trailing P/E when from filings; may stand in for UI "Fwd P/E" with a footnote */
   peTtm: number | null;
   evNopat: number | null;
-  /** Average of available quarterly multiples in the ten years ending at the latest valuation quarter. */
+  /** Average of available quarterly multiples in the 5Y or 10Y window ending at the latest valuation quarter. */
   evNopatAvg: number | null;
   evNopatAverageQuarters?: number;
+  /** 5 when history is 5–10 years; 10 when history is ≥10 years. */
+  valuationAverageYears?: 5 | 10;
+  /** True when the Valuation tab should stay empty (short history, bank EV≤0, or missing balance-sheet tags). */
+  valuationHidden?: boolean;
   valuationReview?: boolean;
   valuationHasNegativeOperatingIncome?: boolean;
   valuationPriceAsOf?: string;
@@ -123,29 +129,67 @@ function yoyGrowth(series: QuarterlySeries): number | null {
   return ((now / prior) - 1) * 100;
 }
 
-/** Keep each TTM total and its filing period together, skipping gaps in the source. */
+/**
+ * Build trailing-twelve-month points at each quarter end.
+ * Prefer four consecutive fiscal quarters; if a filing is missing (common for
+ * older EPS series), fall back to the latest four quarters that still span ~1Y.
+ */
 function rollingTtm(series: QuarterlySeries): QuarterlySeries {
   const ends: string[] = [];
   const values: number[] = [];
-  for (let i = 3; i < series.values.length; i++) {
-    const quarters = series.ends.slice(i - 3, i + 1);
-    if (quarters.slice(1).some((end, index) => {
-      const gap = (Date.parse(end) - Date.parse(quarters[index])) / DAY_MS;
-      return !isFiscalQuarterGap(gap);
-    })) continue;
-    ends.push(series.ends[i]);
-    values.push(series.values.slice(i - 3, i + 1).reduce((a, b) => a + b, 0));
+  for (let i = 0; i < series.values.length; i++) {
+    const end = series.ends[i];
+    const endMs = Date.parse(end);
+    if (!Number.isFinite(endMs)) continue;
+
+    if (i >= 3) {
+      const consecutive = series.ends.slice(i - 3, i + 1);
+      const consecutiveOk = consecutive.slice(1).every((date, index) => {
+        const gap = (Date.parse(date) - Date.parse(consecutive[index])) / DAY_MS;
+        return isFiscalQuarterGap(gap);
+      });
+      if (consecutiveOk) {
+        ends.push(end);
+        values.push(series.values.slice(i - 3, i + 1).reduce((total, value) => total + value, 0));
+        continue;
+      }
+    }
+
+    // Sparse filings: take up to four quarters ending within ~420 days.
+    const picked: number[] = [];
+    let oldestMs = endMs;
+    for (let j = i; j >= 0 && picked.length < 4; j--) {
+      const pointMs = Date.parse(series.ends[j]);
+      if (!Number.isFinite(pointMs)) continue;
+      const age = endMs - pointMs;
+      if (age > 420 * DAY_MS) break;
+      picked.push(series.values[j]);
+      oldestMs = pointMs;
+    }
+    const span = endMs - oldestMs;
+    if (picked.length === 4 && span >= 250 * DAY_MS && span <= 420 * DAY_MS) {
+      ends.push(end);
+      values.push(picked.reduce((total, value) => total + value, 0));
+    }
   }
-  return { ends: ends.slice(-61), values: values.slice(-61) };
+  // Keep ~17Y so 15Y anniversary points remain available after TTM lag.
+  return { ends: ends.slice(-68), values: values.slice(-68) };
 }
 
 function nopatFromOpinc(opincBillions: number, taxRate = 0.21) {
   return opincBillions * (1 - taxRate);
 }
 
-function withoutFilings(ticker: string, price: number | null, change: number | null, priceSource: CompanySnapshot["sources"]["prices"]): CompanySnapshot {
+function withoutFilings(
+  ticker: string,
+  price: number | null,
+  change: number | null,
+  priceSource: CompanySnapshot["sources"]["prices"],
+  rawName?: string | null,
+): CompanySnapshot {
   return {
     ticker: ticker.toUpperCase(),
+    name: displayCompanyName(ticker, rawName),
     price,
     change,
     peTtm: null,
@@ -178,6 +222,7 @@ function buildFromEdgar(
   valuationPoints: ValuationPoint[],
   valuationReview: boolean,
   currentValuation: CurrentValuation | null,
+  storedName?: string | null,
 ): CompanySnapshot {
   const revTtm = ttm(edgar.revenue);
   const opTtm = ttm(edgar.operatingIncome);
@@ -189,7 +234,7 @@ function buildFromEdgar(
   if (eps) {
     // The existing ASML 6-K backfill stores a trailing 12-month figure at each quarter end.
     epsHistory = asmlEpsIsTtm
-      ? { ends: eps.ends.slice(-61), values: eps.values.slice(-61) }
+      ? { ends: eps.ends.slice(-68), values: eps.values.slice(-68) }
       : rollingTtm(eps);
   }
   const cashFlowHistory = rollingTtm(edgar.freeCashFlow);
@@ -215,14 +260,36 @@ function buildFromEdgar(
       ? enterpriseValue / nopat : null;
 
   if (reportingCurrency !== "USD") valuationPoints = [];
-  const evNopatHistory = valuationPoints.map((point) => point.ev_nopat);
-  // Exclude the matching quarter ten years earlier, giving 40 points when coverage is complete.
-  const benchmark = valuationBenchmark(valuationPoints);
-  const plottedQuarters = new Set(valuationPoints.map(({ quarter }) => quarter));
-  const unavailableValuationQuarters = financialQuarters.filter(({ quarter }) => !plottedQuarters.has(quarter))
-    .map(({ quarter, reason }) => ({ quarter, ...valuationUnavailable(reason, "Valuation data unavailable for this quarter.") }));
-  const currentValuationUnavailable = evNopat == null ? valuationUnavailable(latestFinancialReason,
-    price == null ? "Closing price unavailable." : "Valuation data unavailable.") : undefined;
+  const hasNegativeOperatingIncome = financialQuarters.some(({ negativeOperatingIncome }) => negativeOperatingIncome);
+  const isFinancial = Boolean(edgar.isFinancial) || inferIsFinancial(edgar);
+  const latestBalance = edgar.balances[edgar.operatingIncome.ends.at(-1) ?? ""] ?? null;
+  const latestEnterpriseValue =
+    compatiblePriceCurrency && price != null && latestBalance?.shares != null && latestBalance.cash != null
+      ? price * latestBalance.shares
+        + (latestBalance.debt ?? 0)
+        - latestBalance.cash
+        - (latestBalance.sti ?? 0)
+      : null;
+  const display = resolveValuationDisplay({
+    points: valuationPoints,
+    financialQuarters,
+    isFinancial,
+    latestEnterpriseValue,
+    hasNegativeOperatingIncome,
+  });
+  const displayPoints = display.show ? display.points : [];
+  const evNopatHistory = displayPoints.map((point) => point.ev_nopat);
+  const plottedQuarters = new Set(displayPoints.map(({ quarter }) => quarter));
+  const unavailableValuationQuarters = display.show
+    ? financialQuarters.filter(({ quarter }) => !plottedQuarters.has(quarter))
+      .map(({ quarter, reason }) => ({ quarter, ...valuationUnavailable(reason, "Valuation data unavailable for this quarter.") }))
+    : [];
+  const hideValuation = !display.show && !hasNegativeOperatingIncome;
+  const shownEvNopat = hideValuation ? null : evNopat;
+  const currentValuationUnavailable = hideValuation
+    ? undefined
+    : shownEvNopat == null ? valuationUnavailable(latestFinancialReason,
+      price == null ? "Closing price unavailable." : "Valuation data unavailable.") : undefined;
 
   const peTtm = compatiblePriceCurrency && price != null && (!asmlEpsIsTtm || edgar.reportingCurrency === "USD") && epsTtm
     ? price / epsTtm
@@ -234,20 +301,23 @@ function buildFromEdgar(
 
   return {
     ticker: ticker.toUpperCase(),
+    name: displayCompanyName(ticker, storedName || edgar.entityName),
     reportingCurrency,
     price,
     change,
     peTtm,
-    evNopat,
-    evNopatAvg: benchmark.length > 0
-      ? benchmark.reduce((total, { ev_nopat }) => total + ev_nopat, 0) / benchmark.length
+    evNopat: shownEvNopat,
+    evNopatAvg: displayPoints.length > 0
+      ? displayPoints.reduce((total, { ev_nopat }) => total + ev_nopat, 0) / displayPoints.length
       : null,
-    evNopatAverageQuarters: benchmark.length,
+    evNopatAverageQuarters: displayPoints.length,
+    valuationAverageYears: display.averageYears ?? undefined,
+    valuationHidden: hideValuation,
     valuationReview,
-    valuationHasNegativeOperatingIncome: financialQuarters.some(({ negativeOperatingIncome }) => negativeOperatingIncome),
-    valuationPriceAsOf: evNopat == null ? undefined : currentValuation?.priceAsOf,
-    valuationEarningsRelease: evNopat == null ? undefined : currentValuation?.earningsRelease,
-    valuationDebtEstimate: evNopat == null ? undefined : currentValuation?.debtEstimate,
+    valuationHasNegativeOperatingIncome: hasNegativeOperatingIncome,
+    valuationPriceAsOf: shownEvNopat == null ? undefined : currentValuation?.priceAsOf,
+    valuationEarningsRelease: shownEvNopat == null ? undefined : currentValuation?.earningsRelease,
+    valuationDebtEstimate: shownEvNopat == null ? undefined : currentValuation?.debtEstimate,
     currentValuationUnavailable,
     unavailableValuationQuarters,
     revBillions: revTtm,
@@ -272,9 +342,19 @@ function buildFromEdgar(
       fcf: cashFlowHistory.ends,
     },
     evNopatHistory,
-    valuationPoints,
+    valuationPoints: displayPoints,
     sources: { prices: priceSource, fundamentals: "edgar" },
   };
+}
+
+/** Infer bank/broker when older snapshots lack isFinancial but carry a securities portfolio as STI. */
+function inferIsFinancial(edgar: EdgarFundamentals) {
+  const recent = Object.values(edgar.balances).slice(-8);
+  let stiHeavy = 0;
+  for (const balance of recent) {
+    if (balance.sti != null && balance.cash != null && balance.sti > Math.max(balance.cash, 1) * 5) stiHeavy += 1;
+  }
+  return stiHeavy >= 4;
 }
 
 const pending = new Map<string, Promise<CompanySnapshot>>();
@@ -317,14 +397,15 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
   const priceSource = quote ? "marketstack" : "unavailable";
   const price = quote?.price ?? null;
   const change = quote?.change ?? null;
+  const storedName = stored?.name ?? edgar?.entityName ?? null;
   const snapshot = edgar
-    ? buildFromEdgar(id, edgar, price, change, priceSource, valuations, valuationReview, revised?.current ?? null)
-    : withoutFilings(id, price, change, priceSource);
+    ? buildFromEdgar(id, edgar, price, change, priceSource, valuations, valuationReview, revised?.current ?? null, storedName)
+    : withoutFilings(id, price, change, priceSource, storedName);
   return { ...snapshot, isFund, priceAsOf: quote?.date };
 }
 
 export function getCompanySnapshot(ticker: string, isFund = isKnownFund(ticker)) {
-  const id = ticker.trim().toUpperCase();
+  const id = normalizeTicker(ticker);
   const key = isFund ? "fund:" + id : id;
   const existing = pending.get(key);
   if (existing) return existing;

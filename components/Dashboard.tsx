@@ -16,7 +16,7 @@ import {
 import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
-import { SIM_DEFAULT, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, type SimInput } from "@/lib/market";
+import { SIM_DEFAULT, displayCompanyName, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, searchMatchScore, type SimInput } from "@/lib/market";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 import { SKY_PAN_MS } from "@/components/landing/intro";
@@ -392,7 +392,13 @@ export function Dashboard() {
   const localMatches = searchCatalog(query);
   const remoteMatches = directoryResults?.query === query ? directoryResults.rows : [];
   const matches = resultsOpen
-    ? [...localMatches, ...remoteMatches.filter(([ticker]) => !localMatches.some(([local]) => local === ticker))].slice(0, 8)
+    ? [...localMatches.map(([ticker, name]) => [ticker, name] as [string, string]),
+      ...remoteMatches.filter(([ticker]) => !localMatches.some(([local]) => local === ticker))]
+      .map(([ticker, name]) => ({ ticker, name, score: searchMatchScore(query, ticker, name) }))
+      .filter(({ score }) => Number.isFinite(score))
+      .sort((a, b) => a.score - b.score || a.ticker.localeCompare(b.ticker))
+      .slice(0, 8)
+      .map(({ ticker, name }) => [ticker, name] as [string, string])
     : [];
 
   function pickResult(tk: string) {
@@ -415,6 +421,7 @@ export function Dashboard() {
   const { snapshot, loading: snapshotLoading } = useCompanySnapshot(isStock ? selected : "");
   const selectedSnapshot = snapshot?.ticker === selected ? snapshot : null;
   const selectedSnapshotLoading = snapshotLoading || (snapshot !== null && selectedSnapshot === null);
+  const selectedCompanyName = selectedSnapshot?.name || displayCompanyName(selected);
   const canUseCompanyAnalysis = !isKnownFund(selected) && (
     exchangeOf(selected) !== undefined || selectedSnapshot?.isFund === false
   );
@@ -659,7 +666,7 @@ export function Dashboard() {
                 <h2 className="stock-identity">
                   <span className="stock-identity-logo" aria-hidden="true"><BrandLogo tk={selected} /></span>
                   <span className="stock-identity-text">
-                    <strong>{nameOf(selected)}</strong>
+                    <strong>{selectedCompanyName}</strong>
                     <span>{[selected, exchangeOf(selected)].filter(Boolean).join(" | ")}</span>
                   </span>
                 </h2>

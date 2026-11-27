@@ -33,6 +33,10 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
     );
   }
 
+  if (!loading && snapshot?.valuationHidden) {
+    return <article className="panel valuation-history" aria-labelledby={id + "-title"} />;
+  }
+
   const quarters = snapshot?.valuationPoints?.map((point) => ({
     quarter: point.quarter, value: point.ev_nopat, price: point.close, nopat: point.nopat,
     sharesEstimated: point.sharesEstimated,
@@ -41,6 +45,8 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
   })) ?? [];
   const count = quarters.length;
   const average = snapshot?.evNopatAvg;
+  const averageYears = snapshot?.valuationAverageYears ?? 10;
+  const averageLabel = `${averageYears}Y avg`;
   const benchmarkQuarters = snapshot?.evNopatAverageQuarters;
   const review = snapshot?.valuationReview === true;
   const currentUnavailable = snapshot?.currentValuationUnavailable;
@@ -63,9 +69,8 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
     </p>
   );
   if (count < 2 || average == null) return (
-    <article className="panel">
-      {currentMultiple}
-      <p>{loading ? "Loading valuation history…" : "There aren’t enough usable quarters to chart EV/NOPAT history."}</p>
+    <article className="panel valuation-history" aria-labelledby={id + "-title"}>
+      {loading ? <p>Loading valuation history…</p> : null}
     </article>
   );
   const selectedIndex = quarters.findIndex(({ quarter }) => quarter === hovered);
@@ -132,14 +137,14 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
         </div>
         <span className="valuation-badge" data-side={difference <= 0 ? "below" : "above"}>
           {difference > 0 ? "+" : ""}
-          {fmt(difference, 1)}% vs 10Y avg
+          {fmt(difference, 1)}% vs {averageLabel}
         </span>
       </div>}
       {currentMultiple}
       <p className="valuation-caption">
         {currentComparison == null && !currentCannotCalculate ? "Badge uses latest quarter-end EV/NOPAT · " : ""}
-        Quarterly history{benchmarkQuarters != null && benchmarkQuarters < 40
-          ? ` · 10Y average uses ${benchmarkQuarters} available quarters` : ""}
+        Quarterly history{benchmarkQuarters != null && benchmarkQuarters < averageYears * 4
+          ? ` · ${averageYears}Y average uses ${benchmarkQuarters} available quarters` : ""}
         {quarters.some(({ debtEstimate }) => debtEstimate) && " · Includes estimated debt"}
       </p>
 
@@ -147,7 +152,7 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
         className="valuation-plot"
         viewBox="0 0 800 278"
         role="img"
-        aria-label={`${ticker} EV/NOPAT over ${count} quarters with a dashed ten-year average`}
+        aria-label={`${ticker} EV/NOPAT over ${count} quarters with a dashed ${averageYears}-year average`}
         onPointerLeave={() => setHovered(null)}
       >
         <defs>
@@ -218,7 +223,7 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
 
       <div className="valuation-legend">
         <span>EV/NOPAT by quarter</span>
-        <span>10Y average · {multiple(average)}</span>
+        <span>{averageYears}Y average · {multiple(average)}</span>
       </div>
       {activeGap ? <p className="valuation-quarter">
         <strong>{quarterLabelFromEnd(activeGap.quarter)}</strong>
@@ -251,7 +256,7 @@ export function ValuationHistory({ ticker, snapshot, loading }: {
           <dd>{multiple(high)}</dd>
         </div>
         <div>
-          <dt>Latest quarter vs 10Y avg</dt>
+          <dt>Latest quarter vs {averageLabel}</dt>
           <dd>
             {multiple(latest.value)} vs {multiple(average)}
           </dd>

@@ -11,6 +11,7 @@ export type CurrentValuation = ValuationPoint & { priceAsOf: string };
 type StoredValuation = { points: ValuationPoint[]; current: CurrentValuation | null };
 type StoredTicker = {
   ticker: string;
+  name?: string | null;
   cik: number | null;
   edgar_snapshot: EdgarFundamentals | null;
   edgar_fetched_at: string | null;
@@ -54,15 +55,55 @@ async function upsert(table: string, key: string, rows: object[]) {
 }
 
 export async function readTicker(ticker: string) {
-  const [row] = await rest<StoredTicker[]>("tickers", { ticker: "eq." + ticker, limit: "1" });
+  const [row] = await rest<StoredTicker[]>("tickers", {
+    select: "ticker,name,cik,edgar_snapshot,edgar_fetched_at,prices_fetched_at",
+    ticker: "eq." + ticker,
+    limit: "1",
+  });
   return row;
 }
 
-export async function trackedTickers() {
+export async function trackedTickers(limit = 50) {
   const rows = await rest<{ ticker: string }[]>("tickers", {
-    select: "ticker", ticker: "not.is.null", order: "edgar_fetched_at.asc.nullsfirst", limit: "12",
+    select: "ticker",
+    ticker: "neq.TEST",
+    order: "edgar_fetched_at.asc.nullsfirst",
+    limit: String(limit),
   });
   return rows.map(({ ticker }) => ticker);
+}
+
+export async function trackedPriceTickers() {
+  const rows: { ticker: string; prices_fetched_at: string | null }[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const page = await rest<{ ticker: string; prices_fetched_at: string | null }[]>("tickers", {
+      select: "ticker,prices_fetched_at",
+      ticker: "neq.TEST",
+      order: "prices_fetched_at.asc.nullsfirst",
+      limit: "500",
+      offset: String(offset),
+    });
+    rows.push(...page);
+    if (page.length < 500) break;
+  }
+  return rows;
+}
+
+export async function saveBatchPrices(
+  bars: { ticker: string; date: string; close: number; adjusted_close: number }[],
+  touchedTickers: string[],
+  fetchedAt: string,
+) {
+  if (bars.length) {
+    await upsert("price_history", "ticker,date", bars);
+  }
+  if (touchedTickers.length) {
+    await upsert(
+      "tickers",
+      "ticker",
+      touchedTickers.map((ticker) => ({ ticker, prices_fetched_at: fetchedAt })),
+    );
+  }
 }
 
 type PriceRow = { date: string; close: number; adjusted_close: number | null };
@@ -78,13 +119,27 @@ export async function readLatestPriceDate(ticker: string) {
   return (await priceRows(ticker, 1))[0]?.date;
 }
 
+export async function readTickerNames(tickers: string[]): Promise<Record<string, string>> {
+  if (!tickers.length) return {};
+  const rows = await rest<{ ticker: string; name: string | null }[]>("tickers", {
+    select: "ticker,name",
+    ticker: "in.(" + tickers.join(",") + ")",
+  });
+  return Object.fromEntries(rows.flatMap(({ ticker, name }) => (name ? [[ticker, name]] : [])));
+}
+
 export async function readStoredQuotes(tickers: string[]): Promise<Record<string, StockQuote>> {
+  const names = await readTickerNames(tickers).catch(() => ({} as Record<string, string>));
   const entries = await Promise.all(tickers.map(async (ticker) => {
     const [last, previous] = await priceRows(ticker, 2);
     if (!last) return null;
     return [ticker, {
-      ticker, price: last.close, change: (last.close / (previous?.close ?? last.close) - 1) * 100,
-      date: last.date, source: "marketstack",
+      ticker,
+      ...(names[ticker] ? { name: names[ticker] } : {}),
+      price: last.close,
+      change: (last.close / (previous?.close ?? last.close) - 1) * 100,
+      date: last.date,
+      source: "marketstack",
     } satisfies StockQuote] as const;
   }));
   return Object.fromEntries(entries.filter((entry) => entry !== null));

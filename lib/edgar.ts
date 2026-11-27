@@ -6,7 +6,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
-import { isKnownFund } from "@/lib/market";
+import { isKnownFund, normalizeTicker, searchMatchScore } from "@/lib/market";
 import { isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
@@ -79,6 +79,8 @@ export type EdgarFundamentals = {
   dividendPerShare: number | null;
   /** Last period end date from income statement */
   lastReportEnd: string | null;
+  /** True when EDGAR tags indicate a bank/insurer/broker (deposit interest or net interest revenue). */
+  isFinancial?: boolean;
   source: "edgar" | "edgar-6k";
 };
 
@@ -200,12 +202,14 @@ async function loadFundSymbols() {
 }
 
 export async function lookupStockKind(ticker: string): Promise<"company" | "fund" | null> {
-  if (isKnownFund(ticker)) return "fund";
+  const id = normalizeTicker(ticker);
+  if (isKnownFund(id)) return "fund";
   const directory = await getTickerDirectory();
-  const name = directory.names?.[ticker] ?? "";
+  const secKey = id.replace(/\./g, "-");
+  const name = directory.names?.[id] ?? directory.names?.[secKey] ?? "";
   if (/\b(?:ETFS?|EXCHANGE[- ]TRADED FUND)\b/i.test(name)) return "fund";
-  if ((await loadFundSymbols()).has(ticker)) return "fund";
-  return Object.hasOwn(directory.map, ticker) ? "company" : null;
+  if ((await loadFundSymbols()).has(id)) return "fund";
+  return Object.hasOwn(directory.map, id) || Object.hasOwn(directory.map, secKey) ? "company" : null;
 }
 
 // Alphabet's convertible preferred depositary shares are outside stock search.
@@ -213,22 +217,33 @@ const SEARCH_EXCLUDED_TICKERS = new Set(["GOOGM", "GOOGN"]);
 
 export async function searchEdgarTickers(query: string) {
   const term = query.toUpperCase();
-  if (SEARCH_EXCLUDED_TICKERS.has(term)) return [];
+  const normalizedTerm = normalizeTicker(term);
+  if (SEARCH_EXCLUDED_TICKERS.has(term) || SEARCH_EXCLUDED_TICKERS.has(normalizedTerm)) return [];
   const { names } = await getTickerDirectory();
-  const matches = Object.entries(names ?? {})
-    .filter(([ticker, name]) => !SEARCH_EXCLUDED_TICKERS.has(ticker)
-      && (ticker.startsWith(term) || name.toUpperCase().includes(term)));
-  if (/^[A-Z][A-Z0-9]{1,7}$/.test(term) && !matches.some(([ticker]) => ticker === term)) {
+  const seen = new Set<string>();
+  const matches: { ticker: string; name: string; score: number }[] = [];
+  for (const [rawTicker, name] of Object.entries(names ?? {})) {
+    const ticker = normalizeTicker(rawTicker);
+    if (SEARCH_EXCLUDED_TICKERS.has(ticker) || seen.has(ticker)) continue;
+    const score = searchMatchScore(normalizedTerm, ticker, name);
+    if (!Number.isFinite(score)) continue;
+    seen.add(ticker);
+    matches.push({ ticker, name, score });
+  }
+  if (/^[A-Z][A-Z0-9]{1,7}$/.test(normalizedTerm) && !seen.has(normalizedTerm)) {
     const funds = await loadFundSymbols().catch(() => null);
-    if (funds?.has(term)) matches.push([term, "Fund"]);
+    if (funds?.has(normalizedTerm)) {
+      matches.push({ ticker: normalizedTerm, name: "Fund", score: searchMatchScore(normalizedTerm, normalizedTerm, "Fund") });
+    }
   }
   return matches
-    .sort(([a], [b]) => Number(b === term) - Number(a === term) || a.length - b.length || a.localeCompare(b))
-    .slice(0, 8);
+    .sort((a, b) => a.score - b.score || a.ticker.localeCompare(b.ticker))
+    .slice(0, 8)
+    .map(({ ticker, name }) => [ticker, name] as [string, string]);
 }
 
 export async function resolveCik(ticker: string): Promise<number | null> {
-  const id = ticker.trim().toUpperCase();
+  const id = normalizeTicker(ticker);
   // ETFs / funds are not in company_tickers the same way for XBRL facts we need.
   if (isKnownFund(id)) return null;
   const map = await loadCikMap();
@@ -601,6 +616,15 @@ function revenueSeries(facts: CompanyFacts, currency: ReportingCurrency): Quarte
     "RevenueFromContractWithCustomerExcludingAssessedTax",
     "Revenues", "SalesRevenueNet", "Revenue",
     "RevenueFromContractWithCustomerIncludingAssessedTax",
+    "RevenuesNetOfInterestExpense",
+    "InterestAndDividendIncomeOperating",
+    "RegulatedAndUnregulatedOperatingRevenue",
+    "ElectricUtilityRevenue",
+    "OilAndGasRevenue",
+    "InsuranceServicesRevenue",
+    "RealEstateRevenueNet",
+    "HealthCareOrganizationRevenue",
+    "FinancialServicesRevenue",
   ], currency);
 
   const serviceByFiling = new Map<string, number>();
@@ -775,12 +799,36 @@ export async function fetchEdgarFundamentals(
   const perShare = [`${reportingCurrency}/shares`];
   const epsPts = pickBestUnit(facts, ["EarningsPerShareDiluted", "DilutedEarningsLossPerShare"], perShare);
   const cfoPts = pickBestUnit(facts, ["NetCashProvidedByUsedInOperatingActivities", "CashFlowsFromUsedInOperatingActivities"], money);
-  const capexConcepts = ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"];
+  const capexConcepts = [
+    "PaymentsToAcquirePropertyPlantAndEquipment",
+    "PaymentsToAcquireProductiveAssets",
+    "PaymentsToAcquirePropertyAndEquipment",
+    "PaymentsToAcquireAndDevelopRealEstate",
+    "PaymentsToAcquireOilAndGasPropertyAndEquipment",
+  ];
   const cashPts = pickUnit(facts, ["CashAndCashEquivalentsAtCarryingValue", "CashAndCashEquivalents"], money);
-  const debtTotal = pickUnit(facts, ["LongTermDebt"], money);
-  const debtLong = pickUnit(facts, ["LongTermDebtNoncurrent"], money);
+  const cashCombinedPts = pickUnit(facts, ["CashCashEquivalentsAndShortTermInvestments"], money);
+  const cashFallbackPts = pickUnit(facts, [
+    "CashAndDueFromBanks",
+    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsIncludingDisposalGroupAndDiscontinuedOperations",
+  ], money);
+  const debtTotal = pickUnit(facts, [
+    "LongTermDebt",
+    "DebtLongtermAndShorttermCombinedAmount",
+  ], money);
+  const debtLong = pickUnit(facts, [
+    "LongTermDebtNoncurrent",
+    "SeniorLongTermNotes",
+    "SeniorNotes",
+    "UnsecuredLongTermDebt",
+    "UnsecuredDebt",
+    "ConvertibleLongTermNotesPayable",
+    "ConvertibleDebtNoncurrent",
+    "OtherLongTermDebtNoncurrent",
+  ], money);
   const debtCurrent = pickUnit(facts, ["LongTermDebtCurrent"], money);
-  const shortBorrowings = pickUnit(facts, ["ShortTermBorrowings"], money);
+  const shortBorrowings = pickUnit(facts, ["ShortTermBorrowings", "ShortTermDebt", "NotesPayableCurrent"], money);
   const sharePts = [
     ...pickUnit(facts, ["CommonStockSharesOutstanding", "EntityCommonStockSharesOutstanding"], ["shares"]),
     ...(facts.facts?.dei?.EntityCommonStockSharesOutstanding?.units?.shares ?? []),
@@ -802,13 +850,45 @@ export async function fetchEdgarFundamentals(
     perShare,
   );
 
-  const operatingIncome = seriesFromQuarterMap(consolidatedQuarters(
+  const pretaxMap = consolidatedQuarters(facts, [
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "ProfitLossBeforeTax",
+  ], reportingCurrency);
+  const operatingMap = consolidatedQuarters(
     facts, ["OperatingIncomeLoss", "ProfitLossFromOperatingActivities"], reportingCurrency,
-  ));
+  );
+  // Many US-GAAP filers (e.g. IBM, LLY, NKE, PFE, CVX, XOM, ADP, BRK.B, and financials) do not
+  // tag OperatingIncomeLoss (or stopped tagging it in recent years). Fall back to EBIT = pretax + interest
+  // (or pretax for banks) for missing quarters when pretax has better coverage.
+  const latestOpEnd = [...operatingMap.keys()].sort().at(-1) ?? "";
+  const latestPreEnd = [...pretaxMap.keys()].sort().at(-1) ?? "";
+  const isFinancial =
+    pickUnit(facts, ["InterestExpenseDeposits", "RevenuesNetOfInterestExpense"], money).length > 0;
+  if (
+    pretaxMap.size >= 4 &&
+    (operatingMap.size < 4 || operatingMap.size < pretaxMap.size * 0.75 || latestPreEnd > latestOpEnd)
+  ) {
+    const interestMap = isFinancial
+      ? new Map<string, number>()
+      : consolidatedQuarters(
+          facts,
+          ["InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense"],
+          reportingCurrency,
+        );
+    for (const [end, pre] of pretaxMap) {
+      if (!operatingMap.has(end)) {
+        const interest = interestMap.get(end);
+        operatingMap.set(end, interest != null && Number.isFinite(interest) && interest > 0 ? pre + interest : pre);
+      }
+    }
+  }
+  const operatingIncome = seriesFromQuarterMap(operatingMap);
   const { points: adjustedEps, basis: epsSplitBasis } = splitAdjustedEps(facts, epsPts);
   const dilutedEps = seriesFromPoints(adjustedEps, (n) => n);
 
-  // FCF ≈ CFO − |CapEx| on matching quarter ends
+  // FCF ≈ CFO − |CapEx|. Match exact quarter ends first, then nearest capex within ~45 days.
+  // Utilities like NEE often omit PPE payment tags; fall back to investing outflows.
   const cfoQ = cashFlowQuarters(cfoPts);
   const capexByEnd = new Map(cashFlowQuarters(pickBestUnit(facts, capexConcepts, money))
     .map((p) => [p.end, Math.abs(p.val)]));
@@ -817,14 +897,38 @@ export async function fetchEdgarFundamentals(
       if (!capexByEnd.has(point.end)) capexByEnd.set(point.end, Math.abs(point.val));
     }
   }
-  const matchedCashFlow = cfoQ.filter((p) => capexByEnd.has(p.end));
-  const freeCashFlow = {
-    ends: matchedCashFlow.map(({ end }) => end),
-    values: matchedCashFlow.map(({ end, val }) => toBillions(val - capexByEnd.get(end)!)),
+  const investingByEnd = new Map(cashFlowQuarters(
+    pickUnit(facts, ["NetCashProvidedByUsedInInvestingActivities"], money),
+  ).map((p) => [p.end, p.val]));
+  const capexEnds = [...capexByEnd.keys()].sort();
+  const nearestCapex = (end: string) => {
+    const exact = capexByEnd.get(end);
+    if (exact != null) return exact;
+    const target = Date.parse(end);
+    let best: { diff: number; val: number } | null = null;
+    for (const date of capexEnds) {
+      const diff = Math.abs(Date.parse(date) - target);
+      if (diff <= 45 * 86_400_000 && (!best || diff < best.diff)) best = { diff, val: capexByEnd.get(date)! };
+    }
+    return best?.val;
   };
+  const freeCashFlowEnds: string[] = [];
+  const freeCashFlowValues: number[] = [];
+  for (const { end, val } of cfoQ) {
+    let capex = nearestCapex(end);
+    if (capex == null) {
+      const investing = investingByEnd.get(end);
+      if (investing != null && investing < 0) capex = -investing;
+    }
+    // Financials often omit PPE capex tags; treat missing capex as $0 so FCF ≈ CFO.
+    if (capex == null && !isFinancial) continue;
+    freeCashFlowEnds.push(end);
+    freeCashFlowValues.push(toBillions(val - (capex ?? 0)));
+  }
+  const freeCashFlow = { ends: freeCashFlowEnds, values: freeCashFlowValues };
 
   const sharesVal = latestSharesOutstanding(facts);
-  const cash = latestInstant(cashPts);
+  const cash = latestInstant(cashPts) ?? latestInstant(cashCombinedPts) ?? latestInstant(cashFallbackPts);
   const byDate = (points: FactPoint[]) => {
     const map = new Map<string, number>();
     for (const point of points.filter((point) => !point.start).sort((a, b) => (a.filed ?? "").localeCompare(b.filed ?? ""))) {
@@ -832,22 +936,33 @@ export async function fetchEdgarFundamentals(
     }
     return map;
   };
-  const [total, long, current, short, cashByDate, sharesByDate] =
-    [debtTotal, debtLong, debtCurrent, shortBorrowings, cashPts, sharePts].map(byDate);
-  // Comcast and Alphabet use this tag for their consolidated noncurrent debt.
-  const isAlphabet = id === "GOOG" || id === "GOOGL";
-  const alternativeLong = byDate(id === "CMCSA" || isAlphabet
-    ? pickUnit(facts, ["LongTermDebtAndCapitalLeaseObligations"], money) : []);
-  const alternativeCurrent = byDate(id === "CMCSA" ? pickUnit(facts, ["DebtCurrent"], money) : []);
-  const commercialPaper = byDate(isAlphabet ? pickUnit(facts, ["CommercialPaper"], money) : []);
-  // Micron's reported total includes finance leases. Its LongTermDebt tag
-  // can describe just the notes payable from the debt footnote.
-  const micronDebt = byDate(id === "MU" ? pickUnit(facts, ["DebtAndCapitalLeaseObligations"], money) : []);
+  const [total, long, current, short, cashByDate, cashCombinedByDate, cashFallbackByDate, sharesByDate] =
+    [debtTotal, debtLong, debtCurrent, shortBorrowings, cashPts, cashCombinedPts, cashFallbackPts, sharePts].map(byDate);
+  const alternativeLong = byDate(pickUnit(facts, [
+    "LongTermDebtAndCapitalLeaseObligations",
+    "LongTermDebtAndFinanceLeaseObligations",
+  ], money));
+  const alternativeCurrent = byDate(pickUnit(facts, ["DebtCurrent"], money));
+  const commercialPaper = byDate(pickUnit(facts, ["CommercialPaper"], money));
+  // Total debt including finance/capital leases (used as primary for MU and fallback for others).
+  const totalWithLeases = byDate(pickUnit(facts, ["DebtAndCapitalLeaseObligations"], money));
   const investments = [
     "ShortTermInvestments", "MarketableSecuritiesCurrent", "MarketableSecurities",
     "DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
     "AvailableForSaleSecuritiesDebtSecuritiesCurrent", "AvailableForSaleSecuritiesCurrent", "DebtSecuritiesCurrent",
   ].map((tag) => byDate(pickUnit(facts, [tag], money)));
+  const coverShares = [...sharesByDate.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const nearestCoverShares = (date: string) => {
+    const exact = sharesByDate.get(date);
+    if (exact != null) return exact;
+    const target = Date.parse(date);
+    let best: { diff: number; val: number } | null = null;
+    for (const [d, val] of coverShares) {
+      const diff = Math.abs(Date.parse(d) - target);
+      if (diff <= 45 * 86_400_000 && (!best || diff < best.diff)) best = { diff, val };
+    }
+    return best?.val;
+  };
   const balances: EdgarFundamentals["balances"] = {};
   for (const date of new Set([...revenue.ends, ...operatingIncome.ends])) {
     const noncurrent = long.get(date) ?? alternativeLong.get(date);
@@ -856,13 +971,24 @@ export async function fetchEdgarFundamentals(
       ? undefined : short.get(date) ?? (total.has(date) ? undefined : commercialPaper.get(date));
     const longTerm = total.get(date) ??
       (noncurrent != null || currentDebt != null ? (noncurrent ?? 0) + (currentDebt ?? 0) : null);
-    const sti = investments.map((series) => series.get(date)).find((value) => value != null);
+    const combinedDebt = longTerm !== null || shortDebt != null ? (longTerm ?? 0) + (shortDebt ?? 0) : null;
+    const debt = id === "MU"
+      ? (totalWithLeases.get(date) ?? combinedDebt)
+      : (combinedDebt ?? totalWithLeases.get(date) ?? null);
+    const rawCash = cashByDate.get(date);
+    const combinedCash = rawCash == null ? cashCombinedByDate.get(date) : undefined;
+    const cashVal = rawCash ?? combinedCash ?? cashFallbackByDate.get(date) ?? null;
+    // Do not subtract STI separately if cash came from CashCashEquivalentsAndShortTermInvestments.
+    const sti = combinedCash != null
+      ? undefined
+      : investments.map((series) => series.get(date)).find((value) => value != null);
+    const coverShareVal = nearestCoverShares(date);
+    const shareVal = coverShareVal ?? averageSharesByDate.get(date) ?? null;
     balances[date] = {
-      debt: micronDebt.get(date) ?? (longTerm !== null || shortDebt != null
-        ? (longTerm ?? 0) + (shortDebt ?? 0) : null),
-      cash: cashByDate.get(date) ?? null,
-      shares: sharesByDate.get(date) ?? averageSharesByDate.get(date) ?? null,
-      ...(sharesByDate.has(date) || averageSharesByDate.has(date) ? { sharesEstimated: !sharesByDate.has(date) } : {}),
+      debt,
+      cash: cashVal,
+      shares: shareVal,
+      ...(shareVal != null ? { sharesEstimated: coverShareVal == null } : {}),
       ...(sti != null ? { sti } : {}),
     };
   }
@@ -902,16 +1028,13 @@ export async function fetchEdgarFundamentals(
     epsSplitBasisVersion: EPS_SPLIT_BASIS_VERSION,
     epsSplitBasis,
     reportingCurrency,
+    isFinancial,
     revenue,
     operatingIncome,
     dilutedEps,
     freeCashFlow,
     tax: seriesFromPoints(pickBestUnit(facts, ["IncomeTaxExpenseBenefit", "IncomeTaxExpenseContinuingOperations"], money), toBillions, true),
-    pretax: seriesFromQuarterMap(consolidatedQuarters(facts, [
-      "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-      "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
-      "ProfitLossBeforeTax",
-    ], reportingCurrency)),
+    pretax: seriesFromQuarterMap(pretaxMap),
     balances,
     sharesOutstandingBillions: sharesVal != null ? sharesVal / 1e9 : null,
     cashBillions: cash ? toBillions(cash.val) : null,

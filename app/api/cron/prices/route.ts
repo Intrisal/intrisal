@@ -1,19 +1,32 @@
 import { NextResponse } from "next/server";
 import { authorizedCron } from "@/lib/cronAuth";
 import { refreshStoredValuations } from "@/lib/companyData";
-import { DEFAULT_WATCHLIST } from "@/lib/market";
-import { fetchStockHistory, hasMarketstackKey, MarketstackQuotaError } from "@/lib/marketstack";
+import { normalizeTicker } from "@/lib/market";
 import {
-  claimPriceRefresh, hasStockStore, readLatestPriceDate, readTicker, readValuationReview, savePrices,
+  fetchBatchLatestEod,
+  hasMarketstackKey,
+  MarketstackQuotaError,
+} from "@/lib/marketstack";
+import {
+  hasStockStore,
+  readLatestPriceDate,
+  readTicker,
+  saveBatchPrices,
+  trackedPriceTickers,
 } from "@/lib/stockStore";
 import { canReviewValuation } from "@/lib/valuationReview";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+const TIME_BUDGET_MS = 48_000;
 const easternClock = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-  hour: "2-digit", hourCycle: "h23",
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  hourCycle: "h23",
 });
 
 function latestExpectedClose(now: Date) {
@@ -24,24 +37,9 @@ function latestExpectedClose(now: Date) {
   return day.toISOString().slice(0, 10);
 }
 
-async function refreshPrice(ticker: string, expectedClose: string, now: Date) {
-  const lastDate = await readLatestPriceDate(ticker);
-  if (lastDate && lastDate >= expectedClose) {
-    const edgar = (await readTicker(ticker))?.edgar_snapshot;
-    if (edgar && canReviewValuation(ticker, edgar) && (await readValuationReview(ticker)).current?.priceAsOf !== lastDate) {
-      await refreshStoredValuations(ticker, edgar);
-    }
-    return "current";
-  }
-  if (!await claimPriceRefresh(ticker, now)) return "already_attempted";
-  const delta = await fetchStockHistory(ticker, lastDate);
-  if (!delta) return "no_bars";
-  await savePrices(ticker, delta);
-  const stored = await readTicker(ticker);
-  if (stored?.edgar_snapshot) {
-    await refreshStoredValuations(ticker, stored.edgar_snapshot);
-  }
-  return !lastDate || delta.asOf > lastDate ? "updated" : "no_new_close";
+function daysAgoIso(now: Date, days: number) {
+  const d = new Date(now.getTime() - days * 86_400_000);
+  return d.toISOString().slice(0, 10);
 }
 
 export async function GET(request: Request) {
@@ -49,31 +47,90 @@ export async function GET(request: Request) {
   if (!hasStockStore() || !hasMarketstackKey()) {
     return NextResponse.json({ error: "Price refresh is not configured" }, { status: 503 });
   }
+
+  const startedAt = Date.now();
   const now = new Date();
+  const fetchedAt = now.toISOString();
   const expectedClose = latestExpectedClose(now);
-  const symbols = [...new Set((process.env.MARKETSTACK_REFRESH_TICKERS || DEFAULT_WATCHLIST.join(","))
-    .split(",").map((ticker) => ticker.trim().toUpperCase()).filter((ticker) => /^[A-Z][A-Z0-9]{0,7}(?:[.-][A-Z0-9]{1,3})?$/.test(ticker)))];
-  if (!symbols.length || symbols.length > 12) {
-    return NextResponse.json({ error: "Configure between 1 and 12 price refresh tickers" }, { status: 503 });
+
+  const envList = process.env.MARKETSTACK_REFRESH_TICKERS?.trim();
+  const tracked = envList
+    ? [...new Set(envList.split(",").map(normalizeTicker).filter((t) => /^[A-Z][A-Z0-9]{0,7}(?:[.-][A-Z0-9]{1,3})?$/.test(t)))]
+        .map((ticker) => ({ ticker, prices_fetched_at: null as string | null }))
+    : await trackedPriceTickers();
+
+  if (!tracked.length) {
+    return NextResponse.json({ expectedClose, total: 0, updated: 0, valuationsRefreshed: 0 });
   }
 
-  const results: { ticker: string; status: string }[] = [];
+  const dateFrom = daysAgoIso(now, 7);
+  const allTickers = tracked.map((t) => t.ticker);
   let quotaReached = false;
-  for (let offset = 0; offset < symbols.length && !quotaReached; offset += 3) {
-    results.push(...await Promise.all(symbols.slice(offset, offset + 3).map(async (ticker) => {
-      try {
-        return { ticker, status: await refreshPrice(ticker, expectedClose, now) };
-      } catch (error) {
-        if (error instanceof MarketstackQuotaError) {
-          quotaReached = true;
-          return { ticker, status: "quota_exhausted" };
-        }
-        console.error("Price refresh failed for " + ticker, error);
-        return { ticker, status: "error" };
-      }
-    })));
+  let barsByTicker = new Map<string, Awaited<ReturnType<typeof fetchBatchLatestEod>> extends Map<string, infer V> ? V : never>();
+
+  try {
+    barsByTicker = await fetchBatchLatestEod(allTickers, dateFrom);
+  } catch (error) {
+    if (error instanceof MarketstackQuotaError) {
+      quotaReached = true;
+    } else {
+      console.error("Batch price refresh failed", error);
+      return NextResponse.json({ error: "Batch price fetch failed" }, { status: 502 });
+    }
   }
-  return NextResponse.json({ expectedClose, quotaReached, results }, {
-    status: quotaReached ? 429 : results.some(({ status }) => status === "error") ? 502 : 200,
-  });
+
+  const newRows: { ticker: string; date: string; close: number; adjusted_close: number }[] = [];
+  const updatedTickers: string[] = [];
+  const touchedTickers: string[] = [];
+
+  for (let offset = 0; offset < allTickers.length; offset += 25) {
+    const slice = allTickers.slice(offset, offset + 25);
+    await Promise.all(slice.map(async (ticker) => {
+      const bars = barsByTicker.get(ticker);
+      if (!bars?.length) return;
+      touchedTickers.push(ticker);
+      const lastDate = await readLatestPriceDate(ticker);
+      const freshBars = lastDate ? bars.filter((b) => b.date >= lastDate) : bars;
+      if (!freshBars.length) return;
+      for (const bar of freshBars) {
+        if (bar.rawClose != null) {
+          newRows.push({ ticker, date: bar.date, close: bar.rawClose, adjusted_close: bar.close });
+        }
+      }
+      if (!lastDate || freshBars.at(-1)!.date > lastDate) {
+        updatedTickers.push(ticker);
+      }
+    }));
+  }
+
+  await saveBatchPrices(newRows, touchedTickers, fetchedAt);
+
+  // Recalculate valuations for tickers that received a new close (bounded by TIME_BUDGET_MS).
+  let valuationsRefreshed = 0;
+  for (let offset = 0; offset < updatedTickers.length; offset += 8) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) break;
+    const slice = updatedTickers.slice(offset, offset + 8);
+    await Promise.all(slice.map(async (ticker) => {
+      try {
+        const stored = await readTicker(ticker);
+        if (stored?.edgar_snapshot && canReviewValuation(ticker, stored.edgar_snapshot)) {
+          await refreshStoredValuations(ticker, stored.edgar_snapshot);
+          valuationsRefreshed++;
+        }
+      } catch (error) {
+        console.error("Valuation refresh failed after price update for " + ticker, error);
+      }
+    }));
+  }
+
+  return NextResponse.json({
+    expectedClose,
+    ranAt: fetchedAt,
+    total: allTickers.length,
+    barsImported: newRows.length,
+    updated: updatedTickers.length,
+    valuationsRefreshed,
+    quotaReached,
+    oldestPriceFetchedAt: tracked[0]?.prices_fetched_at ?? null,
+  }, { status: quotaReached ? 429 : 200 });
 }

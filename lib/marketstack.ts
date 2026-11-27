@@ -33,6 +33,7 @@ export type StockHistory = {
 
 export type StockQuote = {
   ticker: string;
+  name?: string;
   price: number;
   change: number;
   date: string;
@@ -158,4 +159,57 @@ export async function fetchStockHistory(ticker: string, lastDate?: string): Prom
     });
   }
   return bars.size ? buildHistory(ticker, [...bars.values()]) : null;
+}
+
+/**
+ * Batch EOD fetch: up to 100 symbols per Marketstack call so the full S&P 500
+ * refreshes in ~6 requests instead of 500+. Returns bars keyed by Intrisal ticker.
+ */
+export async function fetchBatchLatestEod(
+  tickers: string[],
+  dateFrom: string,
+): Promise<Map<string, EodBar[]>> {
+  const byTicker = new Map<string, Map<string, EodBar>>();
+  const symbolToTickers = new Map<string, string[]>();
+  for (const raw of tickers) {
+    const ticker = raw.trim().toUpperCase();
+    const sym = marketstackSymbol(ticker).toUpperCase();
+    const list = symbolToTickers.get(sym) ?? [];
+    list.push(ticker);
+    symbolToTickers.set(sym, list);
+  }
+  const uniqueSymbols = [...symbolToTickers.keys()];
+  for (let offset = 0; offset < uniqueSymbols.length; offset += 100) {
+    const batch = uniqueSymbols.slice(offset, offset + 100);
+    const data = await marketstackGet<EodResponse>("/eod", {
+      symbols: batch.join(","),
+      date_from: dateFrom,
+      sort: "ASC",
+      limit: "1000",
+    });
+    for (const row of data.data ?? []) {
+      if (!isValidClose(row.close) || !row.date || !row.symbol) continue;
+      const matched = symbolToTickers.get(row.symbol.toUpperCase());
+      if (!matched) continue;
+      const date = toDay(row.date);
+      const close = isValidClose(row.adj_close) ? row.adj_close : row.close;
+      const bar: EodBar = {
+        date, close, rawClose: row.close,
+        open: row.open ?? close, high: row.high ?? close, low: row.low ?? close, volume: row.volume ?? null,
+      };
+      for (const ticker of matched) {
+        let map = byTicker.get(ticker);
+        if (!map) {
+          map = new Map();
+          byTicker.set(ticker, map);
+        }
+        map.set(date, bar);
+      }
+    }
+  }
+  const result = new Map<string, EodBar[]>();
+  for (const [ticker, map] of byTicker) {
+    result.set(ticker, [...map.values()].sort((a, b) => a.date.localeCompare(b.date)));
+  }
+  return result;
 }

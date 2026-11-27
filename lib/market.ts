@@ -1,6 +1,12 @@
 type Exchange = "NASDAQ" | "NYSE" | "NYSE Arca" | "TSX";
 type CatalogEntry = readonly [ticker: string, name: string, exchange: Exchange];
 
+export function normalizeTicker(ticker: string) {
+  const id = ticker.trim().toUpperCase();
+  // Normalize SEC share-class hyphens (BRK-B, BF-B) to the dot convention stored in Supabase.
+  return /^([A-Z]{1,5})-([A-Z])$/.test(id) ? id.replace("-", ".") : id;
+}
+
 export const CATALOG: readonly CatalogEntry[] = [
   ["VFV", "Vanguard S&P 500 Index ETF", "TSX"],
   ["META", "Meta Platforms", "NASDAQ"],
@@ -79,8 +85,34 @@ export function rng(seed: number): () => number {
 }
 
 export function nameOf(tk: string): string {
-  for (let i = 0; i < CATALOG.length; i++) if (CATALOG[i][0] === tk) return CATALOG[i][1];
-  return tk;
+  const id = normalizeTicker(tk);
+  for (let i = 0; i < CATALOG.length; i++) if (CATALOG[i][0] === id) return CATALOG[i][1];
+  return id;
+}
+
+/** Prefer curated catalog names; otherwise clean an EDGAR/Supabase entity name for display. */
+export function displayCompanyName(ticker: string, rawName?: string | null): string {
+  const id = normalizeTicker(ticker);
+  const catalog = nameOf(id);
+  if (catalog !== id) return catalog;
+  const cleaned = formatEntityName(rawName);
+  return cleaned || id;
+}
+
+function formatEntityName(rawName?: string | null) {
+  if (!rawName?.trim()) return "";
+  let name = rawName.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  name = name
+    .replace(/,?\s*\b(incorporated|corporation|company|limited|inc|corp|ltd|co|plc|nv|sa)\b\.?$/i, "")
+    .replace(/,+$/g, "")
+    .replace(/^the\s+/i, "")
+    .trim();
+  if (!name) return rawName.trim();
+  // SEC names are often ALL CAPS — title-case them for the identity header.
+  if (name === name.toUpperCase() && /[A-Z]/.test(name)) {
+    name = name.toLowerCase().replace(/\b[a-z0-9]/g, (ch) => ch.toUpperCase());
+  }
+  return name;
 }
 
 export function exchangeOf(tk: string): Exchange | undefined {
@@ -142,12 +174,33 @@ export function fmt(n: number, d: number): string {
   });
 }
 
+/** Lower score = better match. Used by catalog search and SEC directory search. */
+export function searchMatchScore(query: string, ticker: string, name: string) {
+  const q = query.trim().toUpperCase();
+  const normalizedQuery = normalizeTicker(q);
+  const id = normalizeTicker(ticker);
+  const label = name.toUpperCase();
+  if (!normalizedQuery) return Number.POSITIVE_INFINITY;
+  if (id === normalizedQuery) return 0;
+  if (id.startsWith(normalizedQuery)) return 100 + id.length;
+  if (label.startsWith(normalizedQuery)) return 200 + Math.min(label.length, 80);
+  // Prefer "MA" matching "Mastercard" over "Amazon" (substring mid-word).
+  const wordStart = new RegExp(`(?:^|[\\s,.(/-])${normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+  if (wordStart.test(label)) return 300 + Math.min(label.length, 80);
+  if (label.includes(normalizedQuery)) return 400 + Math.min(label.indexOf(normalizedQuery), 40) + Math.min(label.length, 80);
+  if (id.includes(normalizedQuery)) return 500 + id.length;
+  return Number.POSITIVE_INFINITY;
+}
+
 export function searchCatalog(query: string): CatalogEntry[] {
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
   if (!q) return [];
-  return CATALOG.filter(function (e) {
-    return e[0].toLowerCase().indexOf(q) === 0 || e[0].toLowerCase().indexOf(q) !== -1 || e[1].toLowerCase().indexOf(q) !== -1;
-  }).slice(0, 8);
+  return CATALOG
+    .map((entry) => ({ entry, score: searchMatchScore(q, entry[0], entry[1]) }))
+    .filter(({ score }) => Number.isFinite(score))
+    .sort((a, b) => a.score - b.score || a.entry[0].localeCompare(b.entry[0]))
+    .slice(0, 8)
+    .map(({ entry }) => entry);
 }
 
 export type SimInput = {
