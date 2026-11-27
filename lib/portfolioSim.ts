@@ -56,6 +56,15 @@ export function holdingWeight(amount: number, capital: number) {
   return (amount / capital) * 100;
 }
 
+/** Split capital across n holdings in cents so the amounts sum exactly to capital. */
+export function evenCapitalAmounts(capital: number, count: number): number[] {
+  if (count <= 0) return [];
+  const totalCents = Math.max(0, Math.round(capital * 100));
+  const base = Math.floor(totalCents / count);
+  const rem = totalCents - base * count;
+  return Array.from({ length: count }, (_, i) => (base + (i < rem ? 1 : 0)) / 100);
+}
+
 export type PriceSeries = {
   ticker: string;
   dates: string[];

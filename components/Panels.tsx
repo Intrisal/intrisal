@@ -370,7 +370,7 @@ export function Panels({
   } else if (section === "fundamental") {
     body = [<FundamentalPanel key="revenue" selected={selected} />, <StatsPanel key="stats" selected={selected} />];
   } else if (section === "simulation") {
-    body = <SimulationPanels key="simulation" sim={sim} onSim={onSim} />;
+    body = <SimulationPanels key="simulation" sim={sim} onSim={onSim} watchlist={watchlist} />;
   } else if (section === "learn") {
     body = <LearnPanels />;
   }

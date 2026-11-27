@@ -975,6 +975,13 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         gap: 10px;
         align-items: end;
       }
+      .sim-watchlist-button {
+        grid-column: auto;
+        justify-self: stretch;
+        align-self: stretch;
+        min-width: 0;
+        width: 100%;
+      }
       .sim-capital-block { display: grid; gap: 4px; }
       .sim-alloc-chip {
         display: inline-flex;
@@ -988,22 +995,36 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .sim-alloc-sep { color: var(--ink-3); }
 
       .sim-chart-box { min-height: 0; }
-      .sim-chart-svg { width: 100%; height: auto; display: block; }
-      .sim-chart-grid { stroke: var(--line); stroke-width: 1; opacity: 0.7; }
-      .sim-chart-base { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.85; }
-      .sim-chart-fill { fill: var(--ink); opacity: 0.06; }
+      .sim-chart-wrap {
+        margin-top: 0;
+        cursor: crosshair;
+      }
+      .sim-chart-svg {
+        width: 100%;
+        height: auto;
+        display: block;
+        overflow: hidden;
+        cursor: crosshair;
+        touch-action: none;
+      }
+      .sim-chart-grid { stroke: var(--line); stroke-width: 1; opacity: 0.75; }
+      .sim-chart-base { stroke: var(--ink-3); stroke-width: 1.15; stroke-dasharray: 4 4; opacity: 0.9; }
+      .sim-chart-fill { fill: var(--ink); opacity: 0.07; }
       .sim-chart-label {
-        fill: var(--ink-3);
-        font-size: 11px;
+        fill: var(--ink-2);
+        font-size: 12px;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
+      .sim-chart-dot {
+        stroke: var(--ink);
+      }
       .sim-chart-empty {
-        min-height: 180px;
+        min-height: 240px;
         display: grid;
         place-items: center;
         color: var(--ink-2);
         text-align: center;
-        padding: 20px 12px;
+        padding: 24px 12px;
       }
       .sim-chart-empty p { margin: 0; font-size: 14px; line-height: 1.5; max-width: 28ch; }
 
@@ -1068,6 +1089,28 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         height: 24px;
         margin: 0;
       }
+      .sim-holding-slider-wrap {
+        position: relative;
+        display: grid;
+        align-items: center;
+        min-width: 0;
+      }
+      .sim-holding-slider-wrap .sim-holding-slider {
+        position: relative;
+        z-index: 1;
+      }
+      .sim-holding-slider-limit {
+        position: absolute;
+        top: 50%;
+        right: 0;
+        z-index: 0;
+        height: 6px;
+        translate: 0 -50%;
+        border-radius: 99px;
+        background: color-mix(in srgb, var(--line) 88%, var(--ink-3));
+        opacity: 0.7;
+        pointer-events: none;
+      }
 
       .sim-capital-label {
         display: block;
@@ -1111,6 +1154,11 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         font-size: 12.5px;
         line-height: 1.35;
       }
+      .sim-note {
+        color: var(--ink-2);
+        font-size: 12.5px;
+        line-height: 1.35;
+      }
       .sim-holding-error {
         grid-column: 1 / -1;
         margin-top: 2px;
@@ -1129,6 +1177,39 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         border-radius: 99px;
       }
 
+      .sim-holdings-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .sim-holdings-label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+      .sim-remove-all {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+        font-size: 12.5px;
+        font-weight: 700;
+        padding: 6px 12px;
+        min-height: 32px;
+        cursor: pointer;
+        box-shadow: 0 1px 4px color-mix(in srgb, var(--ink) 6%, transparent);
+      }
+      .sim-remove-all:hover:enabled {
+        background: var(--hover);
+        border-color: color-mix(in srgb, var(--ink) 22%, var(--line));
+      }
+      .sim-remove-all:disabled { opacity: 0.4; cursor: default; box-shadow: none; }
+      .sim-remove-all:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
       .sim-holdings {
         list-style: none;
         margin: 0;
@@ -1144,10 +1225,10 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .sim-holding {
         display: grid;
-        grid-template-columns: 72px minmax(0, 1fr) 92px 48px 28px;
+        grid-template-columns: minmax(108px, 132px) minmax(0, 1fr) 92px 48px 28px;
         align-items: center;
         gap: 10px;
-        padding: 8px 0;
+        padding: 9px 0;
         border-top: 1px solid var(--line);
       }
       .sim-holding:first-child { border-top: 0; }
@@ -1155,14 +1236,71 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         border-top: 1px dashed var(--line);
         color: var(--ink-2);
       }
+      .sim-holding-identity {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .sim-holding-logo {
+        position: relative;
+        flex: 0 0 auto;
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+        background:
+          radial-gradient(circle at 30% 28%, color-mix(in srgb, var(--panel) 88%, white), transparent 55%),
+          var(--panel-2);
+        box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+      }
+      .sim-holding-logo .brand-logo {
+        pointer-events: none;
+      }
+      .sim-holding-logo .brand-logo.brand-cdn {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        max-height: none;
+        display: block;
+        visibility: hidden;
+        object-position: center;
+        border-radius: 50%;
+        object-fit: cover;
+        transform: scale(1.02);
+      }
+      .sim-holding-logo .brand-logo.brand-cdn[data-loaded="true"] {
+        visibility: visible;
+      }
+      .sim-holding-logo .brand-logo.brand-monogram {
+        width: 58%;
+        height: 58%;
+        display: grid;
+        place-items: center;
+        font-size: 13px;
+        font-weight: 750;
+        color: var(--ink-2);
+      }
+      .sim-holding-logo-cash {
+        font-size: 14px;
+        font-weight: 750;
+        color: var(--ink-2);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
       .sim-holding-ticker {
-        font-size: 18px;
+        font-size: 17px;
         font-weight: 800;
         letter-spacing: 0.02em;
         line-height: 1;
+        min-width: 0;
       }
       .sim-holding-cash .sim-holding-ticker {
-        font-size: 16px;
+        font-size: 15px;
         font-weight: 700;
       }
       .sim-holding-slider-spacer,
@@ -1174,13 +1312,14 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .sim-amount-input {
         display: grid;
-        grid-template-columns: auto 1fr;
+        grid-template-columns: 1fr auto;
         gap: 4px;
         align-items: center;
         color: var(--ink-2);
         font-size: 13px;
         font-weight: 650;
       }
+      .sim-pct-input input,
       .sim-amount-input input {
         width: 100%;
         height: 34px;
@@ -1189,11 +1328,15 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         text-align: right;
         font-variant-numeric: tabular-nums;
       }
-      .sim-holding-pct {
-        color: var(--ink-3);
+      .sim-holding-cash-pct,
+      .sim-holding-capital {
+        color: var(--ink);
         font-size: 13px;
+        font-weight: 650;
         text-align: right;
+        font-variant-numeric: tabular-nums;
       }
+      .sim-holding-cash-pct { color: var(--ink-2); }
       .sim-remove {
         border: 0;
         background: transparent;
@@ -1217,7 +1360,6 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
 
       .layout.simulation .search-dock { max-width: 680px; }
-      .layout.simulation .watch-dock { display: none; }
 
       @media (max-width: 900px) {
         .sim-workspace { padding: 14px 14px 12px; }
@@ -1236,9 +1378,10 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
           padding-bottom: 0;
         }
         .sim-holding {
-          grid-template-columns: 64px minmax(0, 1fr) 84px 40px 28px;
+          grid-template-columns: minmax(100px, 124px) minmax(0, 1fr) 84px 40px 28px;
           gap: 8px;
         }
+        .sim-holding-logo { width: 30px; height: 30px; }
         .sim-holding-ticker { font-size: 16px; }
         .sim-metrics {
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1255,15 +1398,16 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .sim-holding {
           grid-template-columns: 1fr auto auto;
           grid-template-areas:
-            "ticker amount remove"
+            "identity amount remove"
             "slider slider slider"
             "pct pct pct";
           gap: 6px 8px;
         }
-        .sim-holding-ticker { grid-area: ticker; }
-        .sim-holding-slider { grid-area: slider; }
+        .sim-holding-identity { grid-area: identity; }
+        .sim-holding-slider-wrap { grid-area: slider; }
         .sim-amount-input { grid-area: amount; width: 96px; }
-        .sim-holding-pct { grid-area: pct; text-align: left; }
+        .sim-holding-capital,
+        .sim-holding-cash-pct { grid-area: pct; text-align: left; }
         .sim-remove { grid-area: remove; }
         .sim-holding-cash {
           grid-template-columns: 1fr auto auto;

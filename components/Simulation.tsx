@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { BrandLogo } from "@/components/BrandLogo";
+import { ChartReveal } from "@/components/ChartReveal";
 import {
   SIM_RANGES,
   allocatedAmount,
   buildPortfolioPath,
   cashAmount,
+  evenCapitalAmounts,
   hasTenYearPriceHistory,
   niceAxisTicks,
   type PriceSeries,
@@ -81,6 +84,12 @@ function usePriceSeries(tickers: string[]) {
 
 const MONTH_YEAR = new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
 const YEAR_ONLY = new Intl.DateTimeFormat("en-US", { year: "numeric", timeZone: "UTC" });
+const CLOSE_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
 
 function formatAxisMoney(value: number) {
   const abs = Math.abs(value);
@@ -111,6 +120,7 @@ function PortfolioChart({
   capital,
   spyValues,
   showSpy,
+  revealKey,
 }: {
   values: number[];
   dates: string[];
@@ -118,13 +128,29 @@ function PortfolioChart({
   capital: number;
   spyValues?: number[] | null;
   showSpy: boolean;
+  revealKey: string;
 }) {
   const w = 720;
-  const h = 220;
-  const padL = 52;
-  const padR = 14;
-  const padT = 10;
-  const padB = 28;
+  const h = 320;
+  const padL = 58;
+  const padR = 18;
+  const padT = 16;
+  const padB = 36;
+  const plotLeft = padL;
+  const plotRight = w - padR;
+  const plotTop = padT;
+  const plotBottom = h - padB;
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const prevRevealKey = useRef(revealKey);
+  const previousKey = prevRevealKey.current;
+  const quickReveal = previousKey !== revealKey
+    && previousKey.split("|").slice(1).join("|") === revealKey.split("|").slice(1).join("|");
+
+  useEffect(() => {
+    prevRevealKey.current = revealKey;
+    setHoverIndex(null);
+  }, [revealKey]);
 
   if (values.length < 2 || dates.length < 2) {
     return (
@@ -144,17 +170,17 @@ function PortfolioChart({
   const min0 = Math.min(...compared, capital);
   const max0 = Math.max(...compared, capital);
   let span = max0 - min0 || 1;
-  const min = min0 - span * 0.06;
-  const max = max0 + span * 0.08;
+  const min = min0 - span * 0.08;
+  const max = max0 + span * 0.1;
   span = max - min;
   const yTicks = niceAxisTicks(min, max, 5);
   const xIndexes = dateTickIndexes(dates.length, range === "1Y" || range === "2Y" ? 5 : 6);
 
   function xAt(index: number) {
-    return padL + ((w - padL - padR) * index) / (dollarValues.length - 1);
+    return plotLeft + ((plotRight - plotLeft) * index) / (dollarValues.length - 1);
   }
   function yAt(value: number) {
-    return padT + (h - padT - padB) * (1 - (value - min) / span);
+    return plotTop + (plotBottom - plotTop) * (1 - (value - min) / span);
   }
 
   function pathFor(data: number[]) {
@@ -167,49 +193,123 @@ function PortfolioChart({
       .join(" ");
   }
 
+  function indexFromClientX(clientX: number) {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0) return null;
+    const x = ((clientX - rect.left) / rect.width) * w;
+    if (x < plotLeft || x > plotRight) return null;
+    const ratio = (x - plotLeft) / (plotRight - plotLeft);
+    return Math.max(0, Math.min(dollarValues.length - 1, Math.round(ratio * (dollarValues.length - 1))));
+  }
+
+  function onPointerMove(ev: ReactPointerEvent<SVGSVGElement>) {
+    const index = indexFromClientX(ev.clientX);
+    if (index !== null) setHoverIndex(index);
+  }
+
   const d = pathFor(dollarValues);
   const lastX = xAt(dollarValues.length - 1);
   const lastY = yAt(dollarValues.at(-1)!);
   const baseY = yAt(capital);
-  const area = d + " L" + lastX.toFixed(1) + " " + (h - padB) + " L" + padL.toFixed(1) + " " + (h - padB) + " Z";
+  const area = d + " L" + lastX.toFixed(1) + " " + plotBottom + " L" + plotLeft.toFixed(1) + " " + plotBottom + " Z";
+  const scrub = hoverIndex !== null ? {
+    index: hoverIndex,
+    x: xAt(hoverIndex),
+    y: yAt(dollarValues[hoverIndex]!),
+    value: dollarValues[hoverIndex]!,
+    date: dates[hoverIndex]!,
+  } : null;
+  const tipLeft = scrub ? (scrub.x / w) * 100 + "%" : "0%";
 
   return (
-    <svg className="sim-chart-svg" viewBox={"0 0 " + w + " " + h} role="img" aria-label="Portfolio value over time">
-      {yTicks.map((tick) => {
-        const y = yAt(tick);
-        return (
-          <g key={"y-" + tick}>
-            <line x1={padL} x2={w - padR} y1={y} y2={y} className="sim-chart-grid" />
-            <text x={padL - 8} y={y + 3.5} textAnchor="end" className="sim-chart-label">
-              {formatAxisMoney(tick)}
+    <div className={"stock-chart-wrap sim-chart-wrap" + (scrub ? " is-scrubbing" : "")}>
+      <svg
+        ref={svgRef}
+        className="sim-chart-svg"
+        viewBox={"0 0 " + w + " " + h}
+        role="img"
+        aria-label="Portfolio value over time. Hover or drag to read a value."
+        onPointerMove={onPointerMove}
+        onPointerDown={onPointerMove}
+        onPointerLeave={() => setHoverIndex(null)}
+      >
+        {yTicks.map((tick) => {
+          const y = yAt(tick);
+          return (
+            <g key={"y-" + tick}>
+              <line x1={plotLeft} x2={plotRight} y1={y} y2={y} className="sim-chart-grid" />
+              <text x={plotLeft - 10} y={y + 3.5} textAnchor="end" className="sim-chart-label">
+                {formatAxisMoney(tick)}
+              </text>
+            </g>
+          );
+        })}
+        {xIndexes.map((index) => {
+          const x = xAt(index);
+          return (
+            <text key={"x-" + index} x={x} y={h - 12} textAnchor="middle" className="sim-chart-label">
+              {formatAxisDate(dates[index]!, range)}
             </text>
-          </g>
-        );
-      })}
-      {xIndexes.map((index) => {
-        const x = xAt(index);
-        return (
-          <text key={"x-" + index} x={x} y={h - 10} textAnchor="middle" className="sim-chart-label">
-            {formatAxisDate(dates[index]!, range)}
-          </text>
-        );
-      })}
-      <line x1={padL} x2={w - padR} y1={baseY} y2={baseY} className="sim-chart-base" />
-      <path d={area} className="sim-chart-fill" />
-      <path d={d} fill="none" stroke="var(--ink)" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
-      {showSpy && spyDollars && spyDollars.length === dollarValues.length ? (
-        <path
-          d={pathFor(spyDollars)}
-          fill="none"
-          stroke="var(--ink-3)"
-          strokeWidth="1.6"
-          strokeDasharray="5 4"
-          strokeLinejoin="round"
-          strokeLinecap="round"
+          );
+        })}
+        <line x1={plotLeft} x2={plotRight} y1={baseY} y2={baseY} className="sim-chart-base" />
+        <ChartReveal
+          key={revealKey}
+          left={plotLeft}
+          right={plotRight}
+          top={plotTop}
+          bottom={plotBottom}
+          quick={quickReveal}
+        >
+          <path d={area} className="sim-chart-fill" />
+          <path
+            d={d}
+            fill="none"
+            stroke="var(--ink)"
+            strokeWidth="2.6"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          {showSpy && spyDollars && spyDollars.length === dollarValues.length ? (
+            <path
+              d={pathFor(spyDollars)}
+              fill="none"
+              stroke="var(--ink-3)"
+              strokeWidth="1.8"
+              strokeDasharray="5 4"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          ) : null}
+          <circle cx={lastX} cy={lastY} r="4" fill="var(--ink)" />
+        </ChartReveal>
+        <rect
+          className="stock-chart-hit"
+          x={plotLeft}
+          y={plotTop}
+          width={plotRight - plotLeft}
+          height={plotBottom - plotTop}
+          fill="transparent"
         />
+        {scrub ? (
+          <g className="stock-chart-scrub" aria-hidden="true">
+            <line className="stock-chart-crosshair" x1={scrub.x} x2={scrub.x} y1={plotTop} y2={plotBottom} />
+            <circle className="stock-chart-dot sim-chart-dot" cx={scrub.x} cy={scrub.y} r="5.5" />
+          </g>
+        ) : null}
+      </svg>
+      {scrub ? (
+        <div
+          className={"stock-chart-tip" + (scrub.x > (plotLeft + plotRight) / 2 ? " is-left" : "")}
+          style={{ left: tipLeft }}
+        >
+          <strong>${fmt(scrub.value, 2)}</strong>
+          <span>{CLOSE_DATE_FORMAT.format(new Date(scrub.date + "T00:00:00Z"))}</span>
+        </div>
       ) : null}
-      <circle cx={lastX} cy={lastY} r="3.5" fill="var(--ink)" />
-    </svg>
+    </div>
   );
 }
 
@@ -223,15 +323,59 @@ function clampCapital(value: number) {
   return Math.max(0, Math.round(value * 100) / 100);
 }
 
-export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: SimState) => void }) {
+function parseCapitalInput(raw: string) {
+  const cleaned = raw.replace(/,/g, "").trim();
+  if (!cleaned) return 0;
+  return clampCapital(parseFloat(cleaned));
+}
+
+/** Keep commas while typing; preserve a trailing decimal while editing. */
+function formatCapitalInput(raw: string) {
+  const cleaned = raw.replace(/[^\d.]/g, "");
+  if (!cleaned) return "";
+  const negativeBlocked = cleaned.replace(/-/g, "");
+  const firstDot = negativeBlocked.indexOf(".");
+  const wholeRaw = firstDot === -1 ? negativeBlocked : negativeBlocked.slice(0, firstDot);
+  const fraction = firstDot === -1 ? null : negativeBlocked.slice(firstDot + 1).replace(/\./g, "").slice(0, 2);
+  const whole = wholeRaw.replace(/^0+(?=\d)/, "") || (fraction != null ? "0" : "");
+  const withCommas = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (fraction != null) return withCommas + "." + fraction;
+  if (negativeBlocked.endsWith(".")) return withCommas + ".";
+  return withCommas;
+}
+
+function formatCapitalValue(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  return value.toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+  });
+}
+
+export function SimulationPanels({
+  sim,
+  onSim,
+  watchlist,
+}: {
+  sim: SimState;
+  onSim: (next: SimState) => void;
+  watchlist: string[];
+}) {
   const [draftTicker, setDraftTicker] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
+  const [addNote, setAddNote] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [capitalDraft, setCapitalDraft] = useState(String(sim.capital));
+  const [importingWatchlist, setImportingWatchlist] = useState(false);
+  const [watchlistAdded, setWatchlistAdded] = useState(false);
+  const [capitalDraft, setCapitalDraft] = useState(formatCapitalValue(sim.capital));
 
   useEffect(() => {
-    setCapitalDraft(String(sim.capital));
+    setCapitalDraft(formatCapitalValue(sim.capital));
   }, [sim.capital]);
+
+  useEffect(() => {
+    setWatchlistAdded(false);
+  }, [watchlist]);
 
   const tickers = sim.holdings.map((row) => row.ticker);
   const { series, loading, errors } = usePriceSeries(tickers);
@@ -246,6 +390,10 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
   const remaining = Math.max(0, sim.capital - invested);
   const investedPct = sim.capital > 0 ? (invested / sim.capital) * 100 : 0;
   const cashPct = sim.capital > 0 ? (cash / sim.capital) * 100 : 100;
+  const watchlistTickers = useMemo(
+    () => [...new Set(watchlist.map(normalizeTicker).filter(Boolean))],
+    [watchlist],
+  );
 
   async function addTicker() {
     const ticker = normalizeTicker(draftTicker);
@@ -276,6 +424,7 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
         return;
       }
       const amount = Math.min(Math.max(100, Math.round(sim.capital * 0.1)), remaining);
+      setWatchlistAdded(false);
       onSim({
         ...sim,
         holdings: [...sim.holdings, { ticker, amount }],
@@ -292,6 +441,7 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
     const others = allocatedAmount(sim.holdings.filter((row) => row.ticker !== ticker));
     const max = Math.max(0, sim.capital - others);
     const amount = clampAmount(nextAmount, max);
+    setWatchlistAdded(false);
     onSim({
       ...sim,
       holdings: sim.holdings.map((row) => (row.ticker === ticker ? { ...row, amount } : row)),
@@ -299,12 +449,70 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
   }
 
   function removeHolding(ticker: string) {
+    setWatchlistAdded(false);
     onSim({ ...sim, holdings: sim.holdings.filter((row) => row.ticker !== ticker) });
   }
 
+  function removeAllHoldings() {
+    if (!sim.holdings.length) return;
+    setWatchlistAdded(false);
+    setAddError(null);
+    setAddNote(null);
+    onSim({ ...sim, holdings: [] });
+  }
+
+  async function addWatchlist() {
+    setAddError(null);
+    setAddNote(null);
+    if (!watchlistTickers.length) {
+      setAddError("Your watchlist is empty.");
+      return;
+    }
+    if (!(sim.capital > 0)) {
+      setAddError("Set starting capital first.");
+      return;
+    }
+    setImportingWatchlist(true);
+    try {
+      const results = await Promise.all(
+        watchlistTickers.map(async (ticker) => {
+          try {
+            const res = await fetch("/api/market/history?symbol=" + encodeURIComponent(ticker), { cache: "no-store" });
+            const body = await res.json();
+            if (!res.ok) return { ticker, ok: false as const };
+            const cleaned = sanitizeSeries(body as StockHistory);
+            return { ticker, ok: hasTenYearPriceHistory(cleaned.dates) };
+          } catch {
+            return { ticker, ok: false as const };
+          }
+        }),
+      );
+      const eligible = results.filter((row) => row.ok).map((row) => row.ticker);
+      const skipped = results.length - eligible.length;
+      if (!eligible.length) {
+        setAddError("No watchlist tickers have ~10Y stored prices yet.");
+        setWatchlistAdded(false);
+        return;
+      }
+      const amounts = evenCapitalAmounts(sim.capital, eligible.length);
+      const holdings: SimHolding[] = eligible.map((ticker, i) => ({
+        ticker,
+        amount: amounts[i] ?? 0,
+      }));
+      onSim({ ...sim, holdings });
+      setWatchlistAdded(true);
+      if (skipped > 0) {
+        setAddNote(
+          "Added " + eligible.length + " evenly. Skipped " + skipped + " without enough price history.",
+        );
+      }
+    } finally {
+      setImportingWatchlist(false);
+    }
+  }
+
   function commitCapital(raw: string) {
-    const parsed = clampCapital(parseFloat(raw));
-    const nextCapital = parsed > 0 ? parsed : 0;
+    const nextCapital = parseCapitalInput(raw);
     const scale = sim.capital > 0 ? nextCapital / sim.capital : 0;
     const holdings = nextCapital <= 0
       ? sim.holdings.map((row) => ({ ...row, amount: 0 }))
@@ -323,8 +531,9 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
         spent -= cut;
       }
     }
+    setWatchlistAdded(false);
     onSim({ ...sim, capital: nextCapital, holdings: adjusted });
-    setCapitalDraft(String(nextCapital));
+    setCapitalDraft(formatCapitalValue(nextCapital));
   }
 
   function setRange(range: SimRange) {
@@ -339,6 +548,11 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
   const diffTone = diffPer100 > 0 ? "stock-positive" : diffPer100 < 0 ? "stock-negative" : "";
   const cagr = path?.cagr ?? 0;
   const cagrTone = path ? (cagr >= 0 ? "stock-positive" : "stock-negative") : "";
+  const chartRevealKey = [
+    sim.range,
+    String(sim.capital),
+    sim.holdings.map((row) => row.ticker + ":" + row.amount).join(","),
+  ].join("|");
 
   return (
     <article className="panel sim sim-workspace">
@@ -366,6 +580,7 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
                 capital={sim.capital > 0 ? sim.capital : 100}
                 showSpy={sim.showSpy}
                 spyValues={null}
+                revealKey={chartRevealKey}
               />
             )}
           </div>
@@ -378,11 +593,12 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
                   <span aria-hidden="true">$</span>
                   <input
                     id="simCapital"
-                    type="number"
-                    min={0}
-                    step={100}
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    spellCheck={false}
                     value={capitalDraft}
-                    onChange={(e) => setCapitalDraft(e.target.value)}
+                    onChange={(e) => setCapitalDraft(formatCapitalInput(e.target.value))}
                     onBlur={() => commitCapital(capitalDraft)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") e.currentTarget.blur();
@@ -410,6 +626,8 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
                   onChange={(e) => {
                     setDraftTicker(e.target.value.toUpperCase());
                     setAddError(null);
+                    setAddNote(null);
+                    setWatchlistAdded(false);
                   }}
                 />
                 <button type="submit" disabled={adding || remaining <= 0}>
@@ -429,6 +647,18 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
               <span className="sim-alloc-invested" style={{ width: investedPct + "%" }} />
             </div>
 
+            <div className="sim-holdings-head">
+              <span className="sim-holdings-label">Holdings</span>
+              <button
+                type="button"
+                className="sim-remove-all"
+                disabled={sim.holdings.length === 0}
+                onClick={removeAllHoldings}
+              >
+                Remove all
+              </button>
+            </div>
+
             <ul className="sim-holdings">
               {sim.holdings.length === 0 ? (
                 <li className="sim-holdings-empty">Add a ticker, then set how much capital it gets. Leftover stays cash.</li>
@@ -446,10 +676,13 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
                 ))
               )}
               <li className="sim-holding sim-holding-cash" aria-label="Cash allocation">
-                <span className="sim-holding-ticker">Cash</span>
+                <span className="sim-holding-identity">
+                  <span className="sim-holding-logo sim-holding-logo-cash" aria-hidden="true">$</span>
+                  <span className="sim-holding-ticker">Cash</span>
+                </span>
                 <span className="sim-holding-slider-spacer" aria-hidden="true" />
-                <span className="sim-holding-cash-amt mono">${fmt(cash, 0)}</span>
-                <span className="sim-holding-pct mono">{fmt(cashPct, 0)}%</span>
+                <span className="sim-holding-cash-pct mono">{fmt(cashPct, 1)}%</span>
+                <span className="sim-holding-capital mono">${fmt(cash, 0)}</span>
                 <span className="sim-holding-spacer" aria-hidden="true" />
               </li>
             </ul>
@@ -488,6 +721,30 @@ export function SimulationPanels({ sim, onSim }: { sim: SimState; onSim: (next: 
             />
             <span>Benchmark vs SPY</span>
           </label>
+
+          <button
+            type="button"
+            className="stock-watchlist-button sim-watchlist-button"
+            data-added={watchlistAdded}
+            disabled={importingWatchlist || watchlistTickers.length === 0 || !(sim.capital > 0)}
+            aria-label={watchlistAdded ? "Watchlist added to simulation" : "Add watchlist to simulation"}
+            onClick={() => void addWatchlist()}
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path className="stock-watchlist-plus" d="M10 5v10M5 10h10" />
+              <path className="stock-watchlist-check" pathLength={1} d="m5 10 3.2 3.2L15 6.6" />
+            </svg>
+            <span>
+              {importingWatchlist
+                ? "Adding…"
+                : watchlistAdded
+                  ? "Watchlist Added"
+                  : "Add Watchlist"}
+            </span>
+          </button>
+          {addNote ? <div className="sim-note">{addNote}</div> : null}
+
           <p className="sim-side-note">
             {sim.showSpy ? "SPY overlay coming soon. " : ""}
             Historical closes · cash earns 0% · not advice
@@ -515,35 +772,63 @@ function HoldingRow({
 }) {
   const amount = Number.isFinite(row.amount) ? row.amount : 0;
   const pct = capital > 0 ? (amount / capital) * 100 : 0;
+  // Room left for this row = its current % + unallocated cash %.
+  const maxPct = capital > 0 ? (Math.max(0, max) / capital) * 100 : 0;
+  const shownPct = Math.round(Math.min(Math.max(pct, 0), 100) * 10) / 10;
+
+  function setPercent(nextPct: number) {
+    if (!(capital > 0)) {
+      onAmount(0);
+      return;
+    }
+    const clamped = Math.max(0, Math.min(maxPct, Number.isFinite(nextPct) ? nextPct : 0));
+    onAmount(clampAmount((clamped / 100) * capital, max));
+  }
+
   return (
     <li className="sim-holding">
-      <span className="sim-holding-ticker mono">{row.ticker}</span>
-      <input
-        className="sim-holding-slider"
-        type="range"
-        min={0}
-        max={Math.max(0, max)}
-        step={50}
-        value={Math.min(amount, Math.max(0, max))}
-        onChange={(e) => onAmount(parseFloat(e.target.value) || 0)}
-        aria-label={row.ticker + " capital slider"}
-      />
-      <div className="sim-amount-input">
-        <span>$</span>
+      <span className="sim-holding-identity">
+        <span className="sim-holding-logo" aria-hidden="true">
+          <BrandLogo tk={row.ticker} />
+        </span>
+        <span className="sim-holding-ticker mono">{row.ticker}</span>
+      </span>
+      <div className="sim-holding-slider-wrap">
+        <input
+          className="sim-holding-slider"
+          type="range"
+          min={0}
+          max={100}
+          step={0.5}
+          value={Math.min(shownPct, 100)}
+          onChange={(e) => setPercent(parseFloat(e.target.value) || 0)}
+          aria-valuemin={0}
+          aria-valuemax={Math.round(maxPct * 10) / 10}
+          aria-label={row.ticker + " allocation percent"}
+        />
+        <span
+          className="sim-holding-slider-limit"
+          style={{ width: Math.max(0, 100 - maxPct) + "%" }}
+          title="Already allocated elsewhere"
+          aria-hidden="true"
+        />
+      </div>
+      <div className="sim-amount-input sim-pct-input">
         <input
           type="number"
           min={0}
-          max={max}
-          step={50}
-          value={amount}
+          max={Math.round(maxPct * 10) / 10}
+          step={0.5}
+          value={shownPct}
           onChange={(e) => {
             const next = e.target.value === "" ? 0 : parseFloat(e.target.value);
-            onAmount(Number.isFinite(next) ? next : 0);
+            setPercent(Number.isFinite(next) ? next : 0);
           }}
-          aria-label={row.ticker + " capital"}
+          aria-label={row.ticker + " allocation percent"}
         />
+        <span>%</span>
       </div>
-      <span className="sim-holding-pct mono">{fmt(pct, 0)}%</span>
+      <span className="sim-holding-capital mono">${fmt(amount, 0)}</span>
       <button type="button" className="sim-remove" onClick={onRemove} aria-label={"Remove " + row.ticker}>
         ×
       </button>
