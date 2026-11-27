@@ -755,6 +755,16 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .layout:not(.home) .watch-chip .coin:is(:hover, :focus-visible) .brand-logo.brand-cdn { transform: scale(1.06); }
       .layout:not(.home) :is(.watch-chip .ticker, .list-tile > span) { display: none; }
       .layout:not(.home) .list-tile { padding: 0; }
+      /* Fade in after watch chips finish their home→dock FLIP (460ms). */
+      @media (prefers-reduced-motion: no-preference) {
+        .layout:not(.home) .list-tile {
+          animation: watch-list-tile-enter 300ms ease 420ms both;
+        }
+      }
+      @keyframes watch-list-tile-enter {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
       .layout:not(.home) .watch-list {
         position: absolute; margin: 0; max-height: min(64dvh, 480px); overflow: auto;
       }

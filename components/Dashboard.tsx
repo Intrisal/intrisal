@@ -663,7 +663,7 @@ export function Dashboard() {
                         </div>
                       ))}
                     </div>
-                    <button type="button" className="list-tile" data-watch-motion="list" aria-label="Watchlist" aria-expanded={listOpen} aria-controls="watchList" onClick={() => setListOpen((open) => !open)}><ListIcon /><span>Watchlist</span></button>
+                    <button type="button" className="list-tile" aria-label="Watchlist" aria-expanded={listOpen} aria-controls="watchList" onClick={() => setListOpen((open) => !open)}><ListIcon /><span>Watchlist</span></button>
                   </div>
                   <div className={"watch-list" + (listOpen ? " open" : "")} id="watchList" aria-label="Full watchlist">
                     {listOpen && watchlist.map((tk) => {
