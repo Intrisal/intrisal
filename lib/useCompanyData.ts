@@ -83,26 +83,28 @@ export function useCompanySnapshots(tickers: string[]): BatchState {
     setLoading(true);
     setError(null);
 
-    fetch("/api/fundamentals?symbols=" + encodeURIComponent(key), { cache: "no-store" })
-      .then(async (res) => {
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error || res.statusText);
-        return body as { snapshots: Record<string, CompanySnapshot> };
-      })
-      .then((data) => {
-        if (cancelled) return;
-        setSnapshots(data.snapshots ?? {});
-        setLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setSnapshots({});
-        setLoading(false);
-        setError(err instanceof Error ? err.message : "Failed to load fundamentals");
-      });
+    const controller = new AbortController();
+    async function loadBatches() {
+      const symbols = key.split(",");
+      setSnapshots({});
+      for (let start = 0; start < symbols.length && !cancelled; start += 4) {
+        const batch = symbols.slice(start, start + 4).join(",");
+        try {
+          const res = await fetch("/api/fundamentals?symbols=" + encodeURIComponent(batch), { signal: controller.signal });
+          if (!res.ok) throw new Error("Failed to load fundamentals");
+          const { snapshots: next } = await res.json() as { snapshots: Record<string, CompanySnapshot> };
+          if (!cancelled) setSnapshots(prev => ({ ...prev, ...next }));
+        } catch (err) {
+          if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load fundamentals");
+        }
+      }
+      if (!cancelled) setLoading(false);
+    }
+    void loadBatches();
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [key]);
 

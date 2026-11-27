@@ -308,6 +308,9 @@ export function Dashboard() {
       watchDockStart.current = new Map(items.map((item) => [item.dataset.watchMotion!, item.getBoundingClientRect()]));
     }
     if (name !== section) {
+      if (name === "home" || name === "stock" || name === "watchlist") {
+        searchDockStart.current = searchRef.current?.getBoundingClientRect() ?? null;
+      }
       setListOpen(false);
       setRevealHomeWordmark(name === "home");
     }
@@ -325,9 +328,6 @@ export function Dashboard() {
   }
 
   function goHome() {
-    if (section !== "home") {
-      searchDockStart.current = searchRef.current?.getBoundingClientRect() ?? null;
-    }
     moveToSection("home");
     setResultsOpen(false);
     setActiveIdx(-1);
@@ -364,9 +364,6 @@ export function Dashboard() {
   }
 
   function showStock(tk: string) {
-    if (section !== "stock") {
-      searchDockStart.current = searchRef.current?.getBoundingClientRect() ?? null;
-    }
     setAnalysis("graph");
     setSelected(tk);
     moveToSection("stock");
