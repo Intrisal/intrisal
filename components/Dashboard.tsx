@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatedPrice } from "@/components/AnimatedPrice";
 import { BrandLogo } from "@/components/BrandLogo";
 import {
@@ -72,6 +72,7 @@ export function Dashboard() {
   const [watchlistReady, setWatchlistReady] = useState(false);
   const [watchlistRemovalPreview, setWatchlistRemovalPreview] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
+  const [navIndex, setNavIndex] = useState(0);
   const [section, setSection] = useState<Section | "stock">("home");
   const [revealHomeWordmark, setRevealHomeWordmark] = useState(false);
   const [analysis, setAnalysis] = useState<"graph" | "fundamental" | "valuation">("graph");
@@ -289,6 +290,8 @@ export function Dashboard() {
   }
 
   function moveToSection(name: Section | "stock") {
+    const nextNavIndex = NAV_ITEMS.findIndex((item) => item.id === name);
+    if (nextNavIndex >= 0) setNavIndex(nextNavIndex);
     if ((section === "home") !== (name === "home") && watchDockRef.current) {
       const items = watchMotionItems(watchDockRef.current);
       watchDockStart.current = new Map(items.map((item) => [item.dataset.watchMotion!, item.getBoundingClientRect()]));
@@ -561,7 +564,11 @@ export function Dashboard() {
 
         <div className={"layout" + (section === "home" || section === "simulation" || isStock ? " " + (isStock ? "stock" : section) : "")} id="layout"><nav className="sidenav" aria-label="Sections">
             <div className="sidenav-dock" id="navDock">
-              <ul id="navList">
+              <ul
+                id="navList"
+                data-active={NAV_ITEMS[navIndex]?.id === section}
+                style={{ "--nav-index": navIndex } as CSSProperties}
+              >
                 {NAV_ITEMS.map((item) => (
                   <li key={item.id}>
                     <button
@@ -572,7 +579,7 @@ export function Dashboard() {
                       onClick={item.id === "home" ? goHome : () => changeSection(item.id)}
                     >
                       <span className="nav-icon" aria-hidden="true">{item.icon}</span>
-                      <span className="nav-label">{item.label}</span>
+                      <span className="nav-label" aria-hidden="true">{item.label}</span>
                     </button>
                   </li>
                 ))}

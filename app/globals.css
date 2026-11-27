@@ -339,6 +339,10 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         z-index: 30;
       }
       .sidenav-dock {
+        --nav-width: 48px;
+        --nav-height: 48px;
+        --nav-gap: 6px;
+        --nav-ease: cubic-bezier(0.25, 0.8, 0.25, 1);
         position: relative;
         width: 64px;
         padding: 12px 0;
@@ -351,14 +355,35 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         background: rgba(14, 14, 14, 0.92);
         box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
       }
-      .sidenav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; z-index: 2; }
+      .sidenav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: var(--nav-gap); position: relative; }
       .sidenav li { position: relative; width: 100%; display: flex; justify-content: center; }
+      .sidenav ul::before {
+        content: "";
+        position: absolute;
+        inset-block-start: 0;
+        inset-inline-start: calc(50% - var(--nav-width) / 2);
+        width: var(--nav-width);
+        height: var(--nav-height);
+        border-radius: 999px;
+        background: var(--btn-bg);
+        opacity: 0;
+        pointer-events: none;
+        transform: translate3d(0, calc(var(--nav-index) * (var(--nav-height) + var(--nav-gap))), 0);
+        transition: transform 320ms var(--nav-ease), opacity 160ms ease;
+      }
+      .sidenav ul[data-active="true"]::before { opacity: 1; }
+      [data-theme="dark"] .sidenav ul::before {
+        background: linear-gradient(145deg, #ffeddd, #d8bda8);
+        box-shadow: var(--glass-edge), 0 4px 12px rgba(0, 0, 0, 0.24);
+      }
 
       .sidenav button {
+        --nav-label-opacity: 0;
+        --nav-label-slide: -5px;
         position: relative;
-        width: 48px;
-        height: 48px;
-        min-height: 48px;
+        width: var(--nav-width);
+        height: var(--nav-height);
+        min-height: var(--nav-height);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -369,16 +394,28 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         font: inherit;
         padding: 0;
         border-radius: 50%;
-        transition: color 0.18s ease, background-color 0.18s ease;
+        transition: color 180ms ease;
+      }
+      .sidenav button::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: var(--hover);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 150ms ease;
       }
       .sidenav button .nav-icon {
+        position: relative;
         width: 22px;
         height: 22px;
         display: grid;
         place-items: center;
         pointer-events: none;
-        transition: transform 0.22s ease-out;
+        transition: transform 180ms var(--nav-ease);
       }
+      .sidenav button:active .nav-icon { transform: scale(0.92); }
       .sidenav button .nav-icon svg {
         width: 21px;
         height: 21px;
@@ -388,8 +425,8 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         position: absolute;
         left: calc(100% + 14px);
         top: 50%;
-        transform: translate(-5px, -50%);
-        opacity: 0;
+        transform: translate3d(var(--nav-label-slide), -50%, 0);
+        opacity: var(--nav-label-opacity);
         pointer-events: none;
         white-space: nowrap;
         font-size: 13.5px;
@@ -401,26 +438,27 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         padding: 6px 12px;
         border-radius: 999px;
         box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
-        transition: opacity 0.18s ease, transform 0.22s ease-out;
+        transition: opacity 140ms ease, transform 180ms var(--nav-ease);
       }
       [data-theme="dark"] .sidenav button .nav-label {
         box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
       }
-      .sidenav button:hover,
       .sidenav button:focus-visible {
+        --nav-label-opacity: 1;
+        --nav-label-slide: 0px;
         color: var(--ink);
       }
-      .sidenav button:hover .nav-icon,
-      .sidenav button:focus-visible .nav-icon {
-        transform: scale(1.1);
-      }
-      .sidenav button:hover .nav-label,
-      .sidenav button:focus-visible .nav-label {
-        opacity: 1;
-        transform: translate(0, -50%);
+      .sidenav button:focus-visible:not([aria-current])::before { opacity: 1; }
+      @media (hover: hover) and (pointer: fine) {
+        .sidenav button:hover {
+          --nav-label-opacity: 1;
+          --nav-label-slide: 0px;
+          color: var(--ink);
+        }
+        .sidenav button:hover:not([aria-current])::before { opacity: 1; }
       }
       .sidenav button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-      .sidenav button[aria-current="page"] { color: var(--ink); }
+      .sidenav button[aria-current="page"] { color: var(--btn-ink); transition-delay: 80ms; }
 
       .section-stage {
         width: 100%;
@@ -1291,7 +1329,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         [data-theme="dark"] :is(.panel, .search-bar, .sidenav-dock, .layout:not(.home) .watch-strip, .watch-list, .icon-btn, .list-tile) {
           backdrop-filter: blur(8px);
         }
-        [data-theme="dark"] :is(.menu, .results, .nav-label) {
+        [data-theme="dark"] :is(.menu, .results) {
           backdrop-filter: blur(10px);
         }
       }
@@ -1299,8 +1337,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         border-color: var(--focus);
         box-shadow: var(--glass-shadow), 0 0 0 3px rgba(244, 207, 180, 0.17);
       }
-      [data-theme="dark"] .sidenav button:hover { background: var(--hover); }
-      [data-theme="dark"] :is(.sidenav button[aria-current="page"], .icon-btn:hover, .list-tile:hover, .list-tile[aria-expanded="true"]) {
+      [data-theme="dark"] :is(.icon-btn:hover, .list-tile:hover, .list-tile[aria-expanded="true"]) {
         background: linear-gradient(145deg, #ffeddd, #d8bda8);
         color: var(--btn-ink);
         box-shadow: var(--glass-edge), 0 4px 14px rgba(0, 0, 0, 0.30);
@@ -1399,7 +1436,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .stock-analysis-switch button[aria-pressed="true"] { color: var(--btn-ink); }
       .stock-analysis-switch button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-      html:has(.layout.stock) { scrollbar-gutter: stable; }
+      html:has(.sidenav) { scrollbar-gutter: stable; }
       .stock-overview {
         display: grid; grid-template-columns: minmax(176px, 1fr) minmax(0, max-content) minmax(176px, 1fr);
         align-items: center; gap: 8px 12px; margin-top: 22px;
@@ -1904,12 +1941,13 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         }
         .layout:not(.home) .watch-row { overflow-x: auto; scrollbar-width: thin; align-items: center; }
         .layout:not(.home) .watch-list { bottom: calc(100% + 8px); }
-        .layout { grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
+        .layout { grid-template-columns: 1fr; gap: 8px; margin-top: 0; }
+        .layout.home { grid-template-rows: auto minmax(0, 1fr); }
         .sidenav {
           position: static;
           top: auto;
           height: auto;
-          align-self: auto;
+          align-self: start;
           transform: none;
           order: 1;
           margin-bottom: 8px;
@@ -1918,22 +1956,23 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
           align-items: center;
         }
         .sidenav-dock {
+          --nav-width: 42px;
+          --nav-height: 42px;
           width: auto;
           padding: 6px 10px;
         }
-        .sidenav ul { flex-direction: row; flex-wrap: nowrap; gap: 6px; }
+        .sidenav ul { flex-direction: row; flex-wrap: nowrap; }
+        .sidenav ul::before {
+          inset-inline-start: 0;
+          transform: translate3d(calc(var(--nav-index) * (var(--nav-width) + var(--nav-gap))), 0, 0);
+        }
         .sidenav li { width: auto; }
-        .sidenav button { width: 42px; height: 42px; min-height: 42px; }
         .sidenav button .nav-label {
           left: 50%;
           top: calc(100% + 8px);
-          transform: translate(-50%, -4px);
+          transform: translate3d(-50%, var(--nav-label-slide), 0);
         }
-        .sidenav button:hover .nav-label,
-        .sidenav button:focus-visible .nav-label {
-          transform: translate(-50%, 0);
-        }
-        .center { order: 2; grid-column: auto; }
+        .layout > .center { order: 2; grid-column: 1; }
         .layout.stock .center { display: contents; }
         .layout.stock .search-dock { grid-row: 1; }
         .layout.stock .stock-analysis-switch { grid-row: 2; margin-top: 4px; }
@@ -1961,9 +2000,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .watch-list .nm { display: none; }
       }
       @media (max-width: 360px) {
-        .sidenav-dock { padding-inline: 8px; }
-        .sidenav ul { gap: 3px; }
-        .sidenav button { width: 40px; }
+        .sidenav-dock { --nav-width: 40px; --nav-gap: 3px; padding-inline: 8px; }
       }
       /* Phones / coarse pointers: freeze large atmosphere motion; keep short UI transitions. */
       @media (max-width: 900px), (pointer: coarse) {
@@ -1973,6 +2010,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       @media (prefers-reduced-motion: reduce) {
         * { transition: none !important; }
+        .sidenav button:active .nav-icon { transform: none; }
         #stars-deep, .aurora::before, .aurora::after,
         .section-stage, .stock-analysis-switch, .stock-analysis-panels {
           animation: none !important;
