@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Outfit } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -31,7 +32,17 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" data-theme="dark" className={outfit.variable} suppressHydrationWarning>
-      <body>{children}</body>
+      <body>
+        {/* beforeInteractive must live in the root layout; keeps Open-platform chrome hidden before hydrate. */}
+        <Script
+          id="intrisal-platform-enter"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{if(sessionStorage.getItem("intrisal-from-landing")==="1"){document.documentElement.dataset.platformEnter="1";}}catch(e){}})();`,
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }

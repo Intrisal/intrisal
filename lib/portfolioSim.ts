@@ -32,6 +32,51 @@ export const SIM_DEFAULT: SimState = {
   showSpy: false,
 };
 
+const SIM_STORAGE_KEY = "intrisal-simulation";
+
+function isSimRange(value: unknown): value is SimRange {
+  return typeof value === "string" && (SIM_RANGES as string[]).includes(value);
+}
+
+/** Restore a previously edited simulation from this browser tab, or fall back to defaults. */
+export function readStoredSimState(): SimState {
+  if (typeof window === "undefined") return { ...SIM_DEFAULT, holdings: [] };
+  try {
+    const raw = sessionStorage.getItem(SIM_STORAGE_KEY);
+    if (!raw) return { ...SIM_DEFAULT, holdings: [] };
+    const parsed = JSON.parse(raw) as Partial<SimState>;
+    const capital = Number(parsed.capital);
+    const holdings = Array.isArray(parsed.holdings)
+      ? parsed.holdings
+          .map((row) => {
+            const ticker = typeof row?.ticker === "string" ? row.ticker.trim().toUpperCase() : "";
+            const amount = Number(row?.amount);
+            if (!/^[A-Z][A-Z0-9]{0,7}(?:[.-][A-Z0-9]{1,3})?$/.test(ticker)) return null;
+            if (!Number.isFinite(amount) || amount < 0) return null;
+            return { ticker, amount: Math.round(amount * 100) / 100 };
+          })
+          .filter((row): row is SimHolding => row != null)
+      : [];
+    return {
+      capital: Number.isFinite(capital) && capital >= 0 ? Math.round(capital * 100) / 100 : SIM_DEFAULT.capital,
+      holdings,
+      range: isSimRange(parsed.range) ? parsed.range : SIM_DEFAULT.range,
+      showSpy: Boolean(parsed.showSpy),
+    };
+  } catch {
+    return { ...SIM_DEFAULT, holdings: [] };
+  }
+}
+
+export function writeStoredSimState(state: SimState) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(SIM_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    /* private mode / quota */
+  }
+}
+
 const MS_PER_YEAR = 365.25 * 86_400_000;
 
 /** Tickers eligible for simulation must have ~10Y of stored closes. */

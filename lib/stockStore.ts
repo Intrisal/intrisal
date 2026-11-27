@@ -1,5 +1,5 @@
 import type { EdgarFundamentals, QuarterlySeries, ReportingCurrency } from "@/lib/edgar";
-import { displayCompanyName } from "@/lib/market";
+import { displayCompanyName, isCanadianFund, isKnownFund } from "@/lib/market";
 import { marketstackSymbol, type StockHistory, type StockQuote } from "@/lib/marketstack";
 import { canReviewValuation, prepareValuationReview } from "@/lib/valuationReview";
 
@@ -67,9 +67,13 @@ export async function readTicker(ticker: string) {
 }
 
 export function isStoredFund(row: TickerIdentity | undefined) {
-  // ETF imports record the listing name and leave the company filings CIK empty.
-  // Price-refresh placeholders have neither a CIK nor a name.
-  return row?.cik === null && Boolean(row.name?.trim());
+  // ETF imports record a listing name and leave CIK empty. Price-only equity/ADR
+  // inserts from Yahoo history loads look the same, so require an explicit fund cue
+  // (or a known fund ticker) instead of treating every named cik-null row as a fund.
+  if (row?.cik !== null || !row?.name?.trim()) return false;
+  if (isKnownFund(row.ticker) || isCanadianFund(row.ticker)) return true;
+  return /\b(?:ETFS?|EXCHANGE[- ]TRADED FUND|TRUST|FUND|SHARES|MINISHARES|ULTRAPRO|ULTRASHORT)\b/i.test(row.name)
+    || /^(?:ProShares|iShares|SPDR|Vanguard|Direxion|Global X|ARK|WisdomTree|Avantis|PIMCO|Invesco|VanEck|Schwab|Fidelity)\b/i.test(row.name);
 }
 
 export async function hasStoredFund(ticker: string) {

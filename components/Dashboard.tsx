@@ -17,7 +17,7 @@ import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
 import { displayCompanyName, exchangeOf, fmt, isCanadianFund, isKnownFund, nameOf, searchCatalog, searchMatchScore } from "@/lib/market";
-import { SIM_DEFAULT, type SimState } from "@/lib/portfolioSim";
+import { SIM_DEFAULT, readStoredSimState, writeStoredSimState, type SimState } from "@/lib/portfolioSim";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 import { SKY_PAN_MS } from "@/components/landing/intro";
@@ -95,6 +95,7 @@ export function Dashboard() {
   const watchDockRef = useRef<HTMLDivElement>(null);
   const watchDockStart = useRef<Map<string, DOMRect> | null>(null);
   const toastTimer = useRef<number | null>(null);
+  const simHydrated = useRef(false);
   const { quotes, names: watchlistNames } = useQuotes(watchlist);
   const { user, loading: sessionLoading } = useSessionUser();
 
@@ -317,10 +318,21 @@ export function Dashboard() {
     setSection(name);
   }
 
+  useEffect(() => {
+    setSim(readStoredSimState());
+  }, []);
+
+  useEffect(() => {
+    if (!simHydrated.current) {
+      simHydrated.current = true;
+      return;
+    }
+    writeStoredSimState(sim);
+  }, [sim]);
+
   function changeSection(name: Section) {
     moveToSection(name);
     if (name === "simulation") {
-      setSim({ ...SIM_DEFAULT });
       setResultsOpen(false);
       setActiveIdx(-1);
       setQuery("");
