@@ -317,16 +317,17 @@ function LearnPanels() {
   ];
 }
 
-export function StockAnalysis({ mode, selected, snapshot, loading }: {
+export function StockAnalysis({ mode, selected, snapshot, loading, showUsd }: {
   mode: "fundamental" | "valuation";
   selected: string;
   snapshot: CompanySnapshot | null;
   loading: boolean;
+  showUsd?: boolean;
 }) {
   return (
     <section className="panels stock-analysis-panels" data-analysis={mode} aria-label={mode === "fundamental" ? "Stock fundamentals" : "Stock valuation"}>
       {mode === "fundamental" ? (
-        <Fundamentals ticker={selected} snapshot={snapshot} loading={loading} />
+        <Fundamentals ticker={selected} snapshot={snapshot} loading={loading} showUsd={showUsd} />
       ) : (
         <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} />
       )}

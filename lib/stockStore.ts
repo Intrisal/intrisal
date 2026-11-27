@@ -9,10 +9,12 @@ export type ValuationPoint = {
 };
 export type CurrentValuation = ValuationPoint & { priceAsOf: string };
 type StoredValuation = { points: ValuationPoint[]; current: CurrentValuation | null };
-type StoredTicker = {
+type TickerIdentity = {
   ticker: string;
   name?: string | null;
   cik: number | null;
+};
+type StoredTicker = TickerIdentity & {
   edgar_snapshot: EdgarFundamentals | null;
   edgar_fetched_at: string | null;
   prices_fetched_at: string | null;
@@ -63,6 +65,34 @@ export async function readTicker(ticker: string) {
   return row;
 }
 
+export function isStoredFund(row: TickerIdentity | undefined) {
+  // ETF imports record the listing name and leave the company filings CIK empty.
+  // Price-refresh placeholders have neither a CIK nor a name.
+  return row?.cik === null && Boolean(row.name?.trim());
+}
+
+export async function hasStoredFund(ticker: string) {
+  const [row] = await rest<TickerIdentity[]>("tickers", {
+    select: "ticker,name,cik", ticker: "eq." + ticker, limit: "1",
+  });
+  return isStoredFund(row);
+}
+
+export async function readStoredFundDirectory(): Promise<[string, string][]> {
+  if (!hasStockStore()) return [];
+  const directory: [string, string][] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const rows = await rest<{ ticker: string; name: string }[]>("tickers", {
+      select: "ticker,name", cik: "is.null", name: "not.is.null", ticker: "not.is.null",
+      order: "ticker.asc", limit: String(pageSize), offset: String(offset),
+    });
+    for (const { ticker, name } of rows) if (name.trim()) directory.push([ticker, name]);
+    if (rows.length < pageSize) break;
+  }
+  return directory;
+}
+
 export async function readQuarterlyFundamentals(ticker: StoredTicker, currency: ReportingCurrency): Promise<EdgarFundamentals | null> {
   if (ticker.cik == null) return null;
   const rows = await rest<{
@@ -103,6 +133,7 @@ export async function trackedTickers(limit = 50) {
   const rows = await rest<{ ticker: string }[]>("tickers", {
     select: "ticker",
     ticker: "neq.TEST",
+    or: "(cik.not.is.null,name.is.null)",
     order: "edgar_fetched_at.asc.nullsfirst",
     limit: String(limit),
   });

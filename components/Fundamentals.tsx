@@ -184,24 +184,27 @@ function MetricChart({ label, values, dates, unit, currency, activeIndex, previe
   );
 }
 
-function MetricCard({ label, values, dates, unit, currency, sourceNote }: {
+function MetricCard({ label, values, dates, unit, currency, sourceNote, shareBasis, estimatedEnds, missingUsd }: {
   label: string; values: number[]; dates: string[]; unit: Unit; currency: ReportingCurrency; sourceNote: string;
+  shareBasis?: string; estimatedEnds?: string[]; missingUsd?: boolean;
 }) {
   const dialogId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [period, setPeriod] = useState<Period>(15);
   const [expanded, setExpanded] = useState(false);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<number | null>(null);
   const latestDate = dates.at(-1);
   const cutoff = latestDate ? Date.parse(periodStart(latestDate, period)) - 7 * 86_400_000 : null;
   const start = cutoff === null ? 0 : Math.max(0, dates.findIndex((date) => Date.parse(date) >= cutoff));
   const displayedValues = values.slice(start);
   const last = displayedValues.length - 1;
-  const activeIndex = Math.min(preview ?? selected ?? last, last);
   const displayedDates = dates.slice(start);
+  const selectedIndex = selected == null ? -1 : displayedDates.indexOf(selected);
+  const activeIndex = Math.min(preview ?? (selectedIndex < 0 ? last : selectedIndex), last);
   const quarter = displayedDates[activeIndex] ? quarterLabelFromEnd(displayedDates[activeIndex]) : null;
   const title = label.replace(/^TTM\s+/, "");
+  const estimated = estimatedEnds?.includes(displayedDates[activeIndex]);
 
   function selectPeriod(years: Period) {
     if (years === period) return;
@@ -216,15 +219,18 @@ function MetricCard({ label, values, dates, unit, currency, sourceNote }: {
         <header className="fundamental-card-header">
           <div><h3>{label.replace(/^TTM\s+/, "")}</h3><p>{sourceNote}</p></div>
         </header>
-        <p className="fundamental-range-label">Not enough filing history yet.</p>
+        <p className="fundamental-range-label">{missingUsd ? "USD history unavailable for this metric." : "Not enough filing history yet."}</p>
       </article>
     );
   }
 
   function chart(isExpanded: boolean) {
     return <MetricChart label={label} values={displayedValues} dates={displayedDates} unit={unit} currency={currency}
-      activeIndex={activeIndex} previewIndex={preview} onPreview={setPreview} onSelect={setSelected} expanded={isExpanded} />;
+      activeIndex={activeIndex} previewIndex={preview} onPreview={setPreview}
+      onSelect={(index) => setSelected(displayedDates[index] ?? null)} expanded={isExpanded} />;
   }
+
+  const headline = (estimated ? "≈" : "") + formatValue(displayedValues[activeIndex], unit, 2, currency);
 
   const periodControls = (
       <div className="fundamental-ranges" role="group" aria-label={label + " chart period"}>
@@ -243,7 +249,7 @@ function MetricCard({ label, values, dates, unit, currency, sourceNote }: {
   return (
     <article className="panel fundamental-card">
       <header className="fundamental-card-header">
-        <div><h3>{title}</h3><p>{quarter ?? sourceNote} · TTM</p></div>
+        <div><h3>{title}</h3><p>{quarter ?? sourceNote} · TTM{shareBasis && ` · ${shareBasis}`}</p></div>
         <button type="button" className="fundamental-chart-action" aria-haspopup="dialog"
           aria-controls={dialogId} aria-label={"Expand " + title + " chart"}
           onClick={() => {
@@ -257,7 +263,7 @@ function MetricCard({ label, values, dates, unit, currency, sourceNote }: {
           </svg>
         </button>
       </header>
-      <strong className="fundamental-value">{formatValue(displayedValues[activeIndex], unit, 2, currency)}</strong>
+      <strong className="fundamental-value" title={estimated ? "Estimated using historical exchange rates" : undefined}>{headline}</strong>
       {chart(false)}
       <p className="fundamental-range-label">{unit === "percent" ? "Margin change" : "Compound annual growth"}</p>
       {periodControls}
@@ -269,7 +275,7 @@ function MetricCard({ label, values, dates, unit, currency, sourceNote }: {
           <header className="fundamental-card-header">
             <div>
               <h2 id={dialogId + "-title"}>Quarterly {label}</h2>
-              <p>Trailing 12 months · {sourceNote}</p>
+              <p>Trailing 12 months · {sourceNote}{shareBasis && ` · ${shareBasis}`}</p>
             </div>
             <button type="button" className="fundamental-chart-action" aria-label={"Close " + title + " chart"}
               onClick={() => dialogRef.current?.close()}>
@@ -280,7 +286,7 @@ function MetricCard({ label, values, dates, unit, currency, sourceNote }: {
           {expanded && <>
             <div className="fundamental-dialog-value">
               {quarter && <span>{quarter}</span>}
-              <strong className="fundamental-value">{formatValue(displayedValues[activeIndex], unit, 2, currency)}</strong>
+              <strong className="fundamental-value" title={estimated ? "Estimated using historical exchange rates" : undefined}>{headline}</strong>
             </div>
             {chart(true)}
             <p className="fundamental-range-label">{unit === "percent" ? "Margin change" : "Compound annual growth"}</p>
@@ -313,20 +319,20 @@ export function FundamentalSummary({ ticker }: { ticker: string }) {
   );
 }
 
-export function Fundamentals({ ticker, snapshot, loading }: {
+export function Fundamentals({ ticker, snapshot, loading, showUsd = false }: {
   ticker: string;
   snapshot: CompanySnapshot | null;
   loading: boolean;
+  showUsd?: boolean;
 }) {
   if (loading && !snapshot) return <p className="panel" role="status">Loading quarterly filings…</p>;
   if (snapshot?.sources.fundamentals !== "edgar") return <p className="panel">Data unavailable. No quarterly filings for {ticker}.</p>;
-  const sourceNote = "SEC filings";
-  const revenue = snapshot.revenueHistory;
-  const operatingIncome = snapshot.operatingIncomeHistory;
-  const eps = snapshot.epsHistory;
-  const cashFlow = snapshot.fcfHistory;
+  const localCurrency = snapshot.reportingCurrency ?? "USD";
+  const isUsdView = showUsd && localCurrency !== "USD";
+  const usd = isUsdView ? snapshot.usdFundamentals : undefined;
+  const currency = isUsdView ? "USD" : localCurrency;
   const dates = snapshot.filingDates;
-  const revenueByDate = new Map((dates?.revenue ?? []).map((date, index) => [date, revenue[index]]));
+  const revenueByDate = new Map((dates?.revenue ?? []).map((date, index) => [date, snapshot.revenueHistory[index]]));
   function margin(values: number[], quarters: string[]) {
     const points = quarters.flatMap((date, index) => {
       const sales = revenueByDate.get(date);
@@ -335,27 +341,44 @@ export function Fundamentals({ ticker, snapshot, loading }: {
     return { dates: points.map(({ date }) => date), values: points.map(({ value }) => value) };
   }
 
+  function monetaryMetric(label: string, key: "revenue" | "operatingIncome" | "eps" | "fcf", local: number[], unit: Unit) {
+    return {
+      label, unit, currency,
+      values: isUsdView ? usd?.[key].values ?? [] : local,
+      dates: isUsdView ? usd?.[key].ends ?? [] : dates?.[key] ?? [],
+      sourceNote: isUsdView ? "SEC filings · historical FX" : "SEC filings",
+      missingUsd: isUsdView && local.length >= 2,
+    };
+  }
+
   const metrics = [
-    { label: "TTM Revenue", values: revenue, dates: dates?.revenue ?? [], unit: "billions" as const },
-    { label: "TTM Diluted EPS", values: eps, dates: dates?.eps ?? [], unit: "perShare" as const },
-    { label: "TTM Operating Income", values: operatingIncome, dates: dates?.operatingIncome ?? [], unit: "billions" as const },
-    { label: "TTM Free Cash Flow", values: cashFlow, dates: dates?.fcf ?? [], unit: "billions" as const },
+    monetaryMetric("TTM Revenue", "revenue", snapshot.revenueHistory, "billions"),
+    {
+      ...monetaryMetric("TTM Diluted EPS", "eps", snapshot.epsHistory, "perShare"),
+      shareBasis: usd?.epsPerAdr ? "per ADR" : ticker === "TSM" ? "per ordinary share" : undefined,
+      estimatedEnds: usd?.estimatedEpsEnds,
+      sourceNote: usd?.epsPerAdr ? "SEC filings · reported ADR EPS where available" : isUsdView ? "SEC filings · historical FX" : "SEC filings",
+    },
+    monetaryMetric("TTM Operating Income", "operatingIncome", snapshot.operatingIncomeHistory, "billions"),
+    monetaryMetric("TTM Free Cash Flow", "fcf", snapshot.fcfHistory, "billions"),
     {
       label: "TTM Operating Margin",
-      ...margin(operatingIncome, dates?.operatingIncome ?? []),
+      ...margin(snapshot.operatingIncomeHistory, dates?.operatingIncome ?? []),
       unit: "percent" as const,
+      currency: localCurrency, sourceNote: "SEC filings",
     },
     {
       label: "TTM Free Cash Flow Margin",
-      ...margin(cashFlow, dates?.fcf ?? []),
+      ...margin(snapshot.fcfHistory, dates?.fcf ?? []),
       unit: "percent" as const,
+      currency: localCurrency, sourceNote: "SEC filings",
     },
   ];
 
   return (
     <div className="fundamental-grid">
       {metrics.map((metric) => (
-        <MetricCard key={metric.label} {...metric} currency={snapshot.reportingCurrency ?? "USD"} sourceNote={sourceNote} />
+        <MetricCard key={metric.label} {...metric} />
       ))}
     </div>
   );

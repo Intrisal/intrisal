@@ -1,11 +1,7 @@
+import { isCanadianFund, normalizeTicker } from "@/lib/market";
+
 // Marketstack is called by the scheduled price worker.
 const BASE = "https://api.marketstack.com/v2";
-
-/** Intrisal tickers → Marketstack symbols (periods become hyphens; TSX needs .TO). */
-const SYMBOL_MAP: Record<string, string> = {
-  "BRK.B": "BRK-B",
-  VFV: "VFV.TO",
-};
 
 export type EodBar = {
   date: string;
@@ -45,8 +41,9 @@ function apiKey() {
 }
 
 export function marketstackSymbol(ticker: string) {
-  const id = ticker.trim().toUpperCase();
-  return SYMBOL_MAP[id] ?? id.replace(/\./g, "-");
+  const id = normalizeTicker(ticker);
+  const symbol = id.replace(/\./g, "-");
+  return isCanadianFund(id) ? symbol + ".TO" : symbol;
 }
 
 export function hasMarketstackKey() {

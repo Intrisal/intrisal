@@ -6,9 +6,10 @@
 import { readFile } from "node:fs/promises";
 import { EPS_SPLIT_BASIS_VERSION, fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries, type ReportingCurrency } from "@/lib/edgar";
 import { displayCompanyName, isKnownFund, normalizeTicker } from "@/lib/market";
-import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readQuarterlyFundamentals, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuationReview, saveValuations, type CurrentValuation, type ValuationPoint } from "@/lib/stockStore";
+import { calculateValuations, hasStockStore, isStoredFund, markFilingsChecked, readPrices, readQuarterlyFundamentals, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuationReview, saveValuations, type CurrentValuation, type ValuationPoint } from "@/lib/stockStore";
 import { canReviewValuation, prepareValuationReview, resolveValuationDisplay } from "@/lib/valuationReview";
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
+import { translateFundamentalsToUsd } from "@/lib/fundamentalsFx";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 // Stored backfills can use a newer adjustment than the EDGAR importer writes.
@@ -42,6 +43,10 @@ export type CompanySnapshot = {
   change: number | null;
   priceAsOf?: string;
   reportingCurrency?: ReportingCurrency;
+  usdFundamentals?: {
+    revenue: QuarterlySeries; operatingIncome: QuarterlySeries; eps: QuarterlySeries; fcf: QuarterlySeries;
+    epsPerAdr: boolean; estimatedEpsEnds: string[];
+  };
   isFund?: boolean;
   /** Trailing P/E when from filings; may stand in for UI "Fwd P/E" with a footnote */
   peTtm: number | null;
@@ -220,7 +225,7 @@ function withoutFilings(
   };
 }
 
-function buildFromEdgar(
+async function buildFromEdgar(
   ticker: string,
   edgar: EdgarFundamentals,
   price: number | null,
@@ -230,7 +235,7 @@ function buildFromEdgar(
   valuationReview: boolean,
   currentValuation: CurrentValuation | null,
   storedName?: string | null,
-): CompanySnapshot {
+): Promise<CompanySnapshot> {
   const requireConsecutive = QUARTERLY_FILING_BACKFILLS.has(ticker);
   const eps = canUseDilutedEps(ticker, edgar) ? edgar.dilutedEps : null;
   const asmlEpsIsTtm = ticker === "ASML" && edgar.source === "edgar-6k";
@@ -308,11 +313,26 @@ function buildFromEdgar(
   const dividendYieldPercent = dividendPerShare === 0
     ? 0
     : compatiblePriceCurrency && price != null && price > 0 && dividendPerShare != null ? (dividendPerShare / price) * 100 : null;
+  const converted = await translateFundamentalsToUsd(edgar, eps, asmlEpsIsTtm);
+  let usdFundamentals: CompanySnapshot["usdFundamentals"];
+  if (converted) {
+    const usdEps = asmlEpsIsTtm ? converted.eps : rollingTtm(converted.eps, true);
+    const estimatedEpsEnds = usdEps.ends.filter((end) => {
+      if (asmlEpsIsTtm) return converted.estimatedEps.has(end);
+      const index = converted.eps.ends.indexOf(end);
+      return converted.eps.ends.slice(index - 3, index + 1).some((quarter) => converted.estimatedEps.has(quarter));
+    });
+    usdFundamentals = {
+      revenue: rollingTtm(converted.revenue, true), operatingIncome: rollingTtm(converted.operatingIncome, true),
+      fcf: rollingTtm(converted.fcf, true), eps: usdEps, epsPerAdr: converted.epsPerAdr, estimatedEpsEnds,
+    };
+  }
 
   return {
     ticker: ticker.toUpperCase(),
     name: displayCompanyName(ticker, storedName || edgar.entityName),
     reportingCurrency,
+    usdFundamentals,
     price,
     change,
     peTtm,
@@ -369,7 +389,7 @@ function inferIsFinancial(edgar: EdgarFundamentals) {
 
 const pending = new Map<string, Promise<CompanySnapshot>>();
 
-async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapshot> {
+async function loadSnapshot(id: string, knownFund: boolean): Promise<CompanySnapshot> {
   const configured = hasStockStore();
   const [stored, quote] = configured ? await Promise.all([
     readTicker(id).catch((error) => {
@@ -378,6 +398,7 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
     }),
     readStoredQuotes([id]).then((quotes) => quotes[id] ?? null).catch(() => null),
   ]) : [undefined, null];
+  const isFund = knownFund || isStoredFund(stored);
 
   const useStage = process.env.NODE_ENV === "development" && process.env.INTRISAL_VALUATION_STAGE === "1";
   const stage = useStage ? (JSON.parse(await readFile(".cache/valuation-stage.json", "utf8")) as Record<string, {
@@ -413,7 +434,7 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
   const change = quote?.change ?? null;
   const storedName = stored?.name ?? edgar?.entityName ?? null;
   const snapshot = edgar
-    ? buildFromEdgar(id, edgar, price, change, priceSource, valuations, valuationReview, revised?.current ?? null, storedName)
+    ? await buildFromEdgar(id, edgar, price, change, priceSource, valuations, valuationReview, revised?.current ?? null, storedName)
     : withoutFilings(id, price, change, priceSource, storedName);
   return { ...snapshot, isFund, priceAsOf: quote?.date };
 }
@@ -444,6 +465,7 @@ export async function refreshStoredValuations(ticker: string, edgar: EdgarFundam
 
 export async function refreshCompanyFilings(ticker: string) {
   const stored = await readTicker(ticker);
+  if (isKnownFund(ticker) || isStoredFund(stored)) return "excluded";
   const previous = stored?.edgar_snapshot;
   const exhibitBackfill = QUARTERLY_FILING_BACKFILLS.has(ticker) && ticker !== "CP" && ticker !== "ENB";
   if (ticker === "TEST" || exhibitBackfill || EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(ticker) || previous?.source === "edgar-6k") {

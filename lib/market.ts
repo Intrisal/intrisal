@@ -1,10 +1,34 @@
 type Exchange = "NASDAQ" | "NYSE" | "NYSE Arca" | "TSX";
 type CatalogEntry = readonly [ticker: string, name: string, exchange: Exchange];
 
+// Canadian ETF listings in the Supabase import. Keep their exchange-qualified
+// provider symbols distinct from US listings that reuse the same ticker.
+const CANADIAN_ETF_TICKERS = new Set([
+  "CACB", "CASH", "CBIL", "CBIL.U", "CMR", "CSAV", "DCU", "DMEC", "DMEI",
+  "DMEU", "FBAL", "FCCB", "FCIV", "FCNS", "FCUQ", "FCUV", "FEQT", "FGRO",
+  "FINN", "FINN.U", "HBB", "HMAX", "HXCN", "HXS", "HXS.U", "HXT", "HXT.U",
+  "NSCB", "NSCE", "NUBF", "PMIF", "QCN", "QQQX", "QUU", "SITB", "SITU",
+  "TDB", "TEC", "TPE", "TPU", "TQCD", "TTP", "VAB", "VBAL", "VCE",
+  "VCN", "VDY", "VEE", "VEQT", "VFV", "VGG", "VGRO", "VIU", "VSP",
+  "VUN", "VXC", "XAW", "XBAL", "XBB", "XCB", "XDIV", "XDV", "XEC",
+  "XEF", "XEI", "XEQT", "XFH", "XGD", "XGRO", "XIC", "XIU", "XQQ",
+  "XSB", "XSEM", "XSH", "XSP", "XSTH", "XTOT", "XUS", "XUU", "ZAG",
+  "ZCN", "ZCPB", "ZCS", "ZEA", "ZEB", "ZEM", "ZGEQ", "ZIC", "ZLB",
+  "ZLU", "ZMMK", "ZMU", "ZQQ", "ZSP", "ZSP.U", "ZST", "ZUE", "ZWB",
+]);
+
 export function normalizeTicker(ticker: string) {
   const id = ticker.trim().toUpperCase();
+  if (id.endsWith(".TO")) {
+    const local = id.slice(0, -3).replace(/-U$/, ".U");
+    if (CANADIAN_ETF_TICKERS.has(local)) return local;
+  }
   // Normalize SEC share-class hyphens (BRK-B, BF-B) to the dot convention stored in Supabase.
   return /^([A-Z]{1,5})-([A-Z])$/.test(id) ? id.replace("-", ".") : id;
+}
+
+export function isCanadianFund(ticker: string) {
+  return CANADIAN_ETF_TICKERS.has(normalizeTicker(ticker));
 }
 
 export const CATALOG: readonly CatalogEntry[] = [
@@ -42,10 +66,10 @@ export const CATALOG: readonly CatalogEntry[] = [
 
 export const DEFAULT_WATCHLIST = ["VFV", "META", "GOOG", "MSFT", "AMZN", "NFLX", "NVDA", "ASML"];
 
-const FUND_TICKERS = new Set(["VFV", "QQQ", "SPY"]);
+const FUND_TICKERS = new Set(["QQQ", "SPY"]);
 
 export function isKnownFund(ticker: string) {
-  return FUND_TICKERS.has(ticker.trim().toUpperCase());
+  return FUND_TICKERS.has(normalizeTicker(ticker)) || isCanadianFund(ticker);
 }
 
 export type Sample = {

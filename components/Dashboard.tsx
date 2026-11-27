@@ -16,7 +16,7 @@ import {
 import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
-import { displayCompanyName, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, searchMatchScore } from "@/lib/market";
+import { displayCompanyName, exchangeOf, fmt, isCanadianFund, isKnownFund, nameOf, searchCatalog, searchMatchScore } from "@/lib/market";
 import { SIM_DEFAULT, type SimState } from "@/lib/portfolioSim";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
@@ -76,6 +76,7 @@ export function Dashboard() {
   const [section, setSection] = useState<Section | "stock">("home");
   const [revealHomeWordmark, setRevealHomeWordmark] = useState(false);
   const [analysis, setAnalysis] = useState<"graph" | "fundamental" | "valuation">("graph");
+  const [fundamentalsInUsd, setFundamentalsInUsd] = useState(false);
   const [listOpen, setListOpen] = useState(false);
   const [menu, setMenu] = useState<MenuId | null>(null);
   const [query, setQuery] = useState("");
@@ -214,6 +215,9 @@ export function Dashboard() {
     setThemeChoice(choice);
     setThemeReady(true);
     document.documentElement.setAttribute("data-theme", choice === "auto" ? autoTheme() : choice);
+    try {
+      setFundamentalsInUsd(localStorage.getItem("intrisal-fundamentals-currency") === "USD");
+    } catch {}
   }, []);
 
   // Decide before paint — same timing model as AuthPageShell (sky pan + UI ride together).
@@ -281,6 +285,13 @@ export function Dashboard() {
     setThemeReady(true);
     try {
       localStorage.setItem("intrisal-theme-choice", choice);
+    } catch {}
+  }
+
+  function chooseFundamentalsCurrency(usd: boolean) {
+    setFundamentalsInUsd(usd);
+    try {
+      localStorage.setItem("intrisal-fundamentals-currency", usd ? "USD" : "local");
     } catch {}
   }
 
@@ -416,7 +427,7 @@ export function Dashboard() {
     setQuery("");
     closeResults();
     showStock(tk);
-    toast(tk + " — " + nameOf(tk));
+    toast(tk + " — " + (matches.find(([ticker]) => ticker === tk)?.[1] ?? nameOf(tk)));
   }
 
   function addResult(tk: string) {
@@ -437,6 +448,8 @@ export function Dashboard() {
     exchangeOf(selected) !== undefined || selectedSnapshot?.isFund === false
   );
   const stockAnalysis = canUseCompanyAnalysis ? analysis : "graph";
+  const fundamentalsCurrency = selectedSnapshot?.reportingCurrency;
+  const showCurrencySwitch = stockAnalysis === "fundamental" && fundamentalsCurrency && fundamentalsCurrency !== "USD";
   const wordmark = (
     <h1 className="wordmark" data-home-reveal={revealHomeWordmark}>
       <button type="button" onClick={goHome} aria-label="Intrisal home">
@@ -682,7 +695,7 @@ export function Dashboard() {
                   <span className="stock-identity-logo" aria-hidden="true"><BrandLogo tk={selected} /></span>
                   <span className="stock-identity-text">
                     <strong>{selectedCompanyName}</strong>
-                    <span>{[selected, exchangeOf(selected)].filter(Boolean).join(" | ")}</span>
+                    <span>{[selected, exchangeOf(selected) ?? (isCanadianFund(selected) ? "Canada" : undefined)].filter(Boolean).join(" | ")}</span>
                   </span>
                 </h2>
                 <button
@@ -725,13 +738,20 @@ export function Dashboard() {
               </div>
             ) : null}
             {isStock && selected ? (
-              <div className="stock-analysis-switch" role="group" aria-label="Stock analysis"
-                data-analysis={stockAnalysis} data-graph-only={!canUseCompanyAnalysis}>
-                <button type="button" aria-pressed={stockAnalysis === "graph"} onClick={() => setAnalysis("graph")}>Graph Analysis</button>
-                {canUseCompanyAnalysis && <>
-                  <button type="button" aria-pressed={stockAnalysis === "fundamental"} onClick={() => setAnalysis("fundamental")}>Fundamental</button>
-                  <button type="button" aria-pressed={stockAnalysis === "valuation"} onClick={() => setAnalysis("valuation")}>Valuation</button>
-                </>}
+              <div className="stock-analysis-controls">
+                {showCurrencySwitch && <div className="fundamentals-currency-switch" role="group" aria-label="Fundamentals currency">
+                  <button type="button" aria-pressed={!fundamentalsInUsd} title={"Reported in " + fundamentalsCurrency}
+                    onClick={() => chooseFundamentalsCurrency(false)}>Local currency</button>
+                  <button type="button" aria-pressed={fundamentalsInUsd} onClick={() => chooseFundamentalsCurrency(true)}>USD</button>
+                </div>}
+                <div className="stock-analysis-switch" role="group" aria-label="Stock analysis"
+                  data-analysis={stockAnalysis} data-graph-only={!canUseCompanyAnalysis}>
+                  <button type="button" aria-pressed={stockAnalysis === "graph"} onClick={() => setAnalysis("graph")}>Graph Analysis</button>
+                  {canUseCompanyAnalysis && <>
+                    <button type="button" aria-pressed={stockAnalysis === "fundamental"} onClick={() => setAnalysis("fundamental")}>Fundamental</button>
+                    <button type="button" aria-pressed={stockAnalysis === "valuation"} onClick={() => setAnalysis("valuation")}>Valuation</button>
+                  </>}
+                </div>
               </div>
             ) : null}
             <div key={section === "stock" ? "stock:" + selected : section} className="section-stage">
@@ -742,7 +762,7 @@ export function Dashboard() {
                   </div>
                   {canUseCompanyAnalysis && <>
                     <div className="stock-analysis-pane" hidden={stockAnalysis !== "fundamental"}>
-                      <StockAnalysis mode="fundamental" selected={selected} snapshot={selectedSnapshot} loading={selectedSnapshotLoading} />
+                      <StockAnalysis mode="fundamental" selected={selected} snapshot={selectedSnapshot} loading={selectedSnapshotLoading} showUsd={fundamentalsInUsd} />
                     </div>
                     <div className="stock-analysis-pane" hidden={stockAnalysis !== "valuation"}>
                       <StockAnalysis mode="valuation" selected={selected} snapshot={selectedSnapshot} loading={selectedSnapshotLoading} />
