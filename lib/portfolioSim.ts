@@ -103,6 +103,40 @@ function forwardFillMap(dates: string[], closes: number[]) {
 }
 
 /**
+ * Align a benchmark series (e.g. SPY) onto portfolio dates as a $100 path.
+ * Uses the last known close on or before each date.
+ */
+export function buildBenchmarkPath(
+  series: PriceSeries | null | undefined,
+  dates: string[],
+): number[] | null {
+  if (!series?.dates.length || series.dates.length !== series.closes.length || dates.length < 2) {
+    return null;
+  }
+  const start = dates[0]!;
+  let cursor = 0;
+  let last: number | null = null;
+  while (cursor < series.dates.length && series.dates[cursor]! <= start) {
+    const close = series.closes[cursor]!;
+    if (typeof close === "number" && Number.isFinite(close) && close > 0) last = close;
+    cursor++;
+  }
+  if (last == null) return null;
+  const base = last;
+  const values: number[] = [];
+  for (const date of dates) {
+    while (cursor < series.dates.length && series.dates[cursor]! <= date) {
+      const close = series.closes[cursor]!;
+      if (typeof close === "number" && Number.isFinite(close) && close > 0) last = close;
+      cursor++;
+    }
+    if (last == null) return null;
+    values.push(100 * (last / base));
+  }
+  return values;
+}
+
+/**
  * Build a $100 buy-and-hold path. Unallocated capital stays in cash (0% return).
  * Paths start on the first date every equity holding has a price in-range.
  */

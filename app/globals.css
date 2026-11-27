@@ -1018,6 +1018,44 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .sim-chart-dot {
         stroke: var(--ink);
       }
+      .sim-chart-spy-dot {
+        fill: var(--panel);
+        stroke: var(--ink-3);
+        stroke-width: 2;
+      }
+      .sim-chart-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 18px;
+        margin: 10px 0 0;
+        padding: 0;
+        list-style: none;
+        font-size: 12.5px;
+        font-weight: 650;
+        color: var(--ink-2);
+      }
+      .sim-chart-legend li {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .sim-chart-legend li::before {
+        content: "";
+        width: 18px;
+        border-top: 2.5px solid currentColor;
+      }
+      .sim-legend-portfolio {
+        color: var(--ink);
+      }
+      .sim-legend-spy {
+        color: var(--ink-3);
+      }
+      .sim-legend-spy::before {
+        border-top-style: dashed;
+      }
+      .sim-tip-spy {
+        color: var(--ink-3) !important;
+      }
       .sim-chart-empty {
         min-height: 240px;
         display: grid;

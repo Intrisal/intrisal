@@ -6,6 +6,7 @@ import { ChartReveal } from "@/components/ChartReveal";
 import {
   SIM_RANGES,
   allocatedAmount,
+  buildBenchmarkPath,
   buildPortfolioPath,
   cashAmount,
   evenCapitalAmounts,
@@ -214,11 +215,13 @@ function PortfolioChart({
   const lastY = yAt(dollarValues.at(-1)!);
   const baseY = yAt(capital);
   const area = d + " L" + lastX.toFixed(1) + " " + plotBottom + " L" + plotLeft.toFixed(1) + " " + plotBottom + " Z";
+  const spyActive = Boolean(showSpy && spyDollars && spyDollars.length === dollarValues.length);
   const scrub = hoverIndex !== null ? {
     index: hoverIndex,
     x: xAt(hoverIndex),
     y: yAt(dollarValues[hoverIndex]!),
     value: dollarValues[hoverIndex]!,
+    spyValue: spyActive ? spyDollars![hoverIndex]! : null,
     date: dates[hoverIndex]!,
   } : null;
   const tipLeft = scrub ? (scrub.x / w) * 100 + "%" : "0%";
@@ -230,7 +233,11 @@ function PortfolioChart({
         className="sim-chart-svg"
         viewBox={"0 0 " + w + " " + h}
         role="img"
-        aria-label="Portfolio value over time. Hover or drag to read a value."
+        aria-label={
+          spyActive
+            ? "Portfolio and SPY benchmark over time. Hover or drag to read values."
+            : "Portfolio value over time. Hover or drag to read a value."
+        }
         onPointerMove={onPointerMove}
         onPointerDown={onPointerMove}
         onPointerLeave={() => setHoverIndex(null)}
@@ -265,6 +272,7 @@ function PortfolioChart({
         >
           <path d={area} className="sim-chart-fill" />
           <path
+            className="sim-chart-portfolio"
             d={d}
             fill="none"
             stroke="var(--ink)"
@@ -272,18 +280,29 @@ function PortfolioChart({
             strokeLinejoin="round"
             strokeLinecap="round"
           />
-          {showSpy && spyDollars && spyDollars.length === dollarValues.length ? (
+          {spyActive ? (
             <path
-              d={pathFor(spyDollars)}
+              className="sim-chart-spy"
+              d={pathFor(spyDollars!)}
               fill="none"
               stroke="var(--ink-3)"
-              strokeWidth="1.8"
+              strokeWidth="2"
               strokeDasharray="5 4"
               strokeLinejoin="round"
               strokeLinecap="round"
             />
           ) : null}
           <circle cx={lastX} cy={lastY} r="4" fill="var(--ink)" />
+          {spyActive ? (
+            <circle
+              cx={xAt(spyDollars!.length - 1)}
+              cy={yAt(spyDollars!.at(-1)!)}
+              r="3.5"
+              fill="var(--panel)"
+              stroke="var(--ink-3)"
+              strokeWidth="1.75"
+            />
+          ) : null}
         </ChartReveal>
         <rect
           className="stock-chart-hit"
@@ -297,6 +316,14 @@ function PortfolioChart({
           <g className="stock-chart-scrub" aria-hidden="true">
             <line className="stock-chart-crosshair" x1={scrub.x} x2={scrub.x} y1={plotTop} y2={plotBottom} />
             <circle className="stock-chart-dot sim-chart-dot" cx={scrub.x} cy={scrub.y} r="5.5" />
+            {scrub.spyValue != null ? (
+              <circle
+                className="sim-chart-spy-dot"
+                cx={scrub.x}
+                cy={yAt(scrub.spyValue)}
+                r="4.5"
+              />
+            ) : null}
           </g>
         ) : null}
       </svg>
@@ -306,9 +333,14 @@ function PortfolioChart({
           style={{ left: tipLeft }}
         >
           <strong>${fmt(scrub.value, 2)}</strong>
+          {scrub.spyValue != null ? <span className="sim-tip-spy">SPY ${fmt(scrub.spyValue, 2)}</span> : null}
           <span>{CLOSE_DATE_FORMAT.format(new Date(scrub.date + "T00:00:00Z"))}</span>
         </div>
       ) : null}
+      <ul className="sim-chart-legend" aria-label="Chart legend">
+        <li className="sim-legend-portfolio">Portfolio</li>
+        {spyActive ? <li className="sim-legend-spy">SPY</li> : null}
+      </ul>
     </div>
   );
 }
@@ -379,11 +411,18 @@ export function SimulationPanels({
 
   const tickers = sim.holdings.map((row) => row.ticker);
   const { series, loading, errors } = usePriceSeries(tickers);
+  const { series: spySeries, loading: spyLoading, errors: spyErrors } = usePriceSeries(
+    sim.showSpy ? ["SPY"] : [],
+  );
 
   const path = useMemo(
     () => buildPortfolioPath(sim.capital, sim.holdings, series, sim.range),
     [sim.capital, sim.holdings, series, sim.range],
   );
+  const spyValues = useMemo(() => {
+    if (!sim.showSpy || !path?.dates.length) return null;
+    return buildBenchmarkPath(spySeries.SPY, path.dates);
+  }, [sim.showSpy, path?.dates, spySeries.SPY]);
 
   const invested = allocatedAmount(sim.holdings);
   const cash = cashAmount(sim.capital, sim.holdings);
@@ -579,11 +618,16 @@ export function SimulationPanels({
                 range={sim.range}
                 capital={sim.capital > 0 ? sim.capital : 100}
                 showSpy={sim.showSpy}
-                spyValues={null}
-                revealKey={chartRevealKey}
+                spyValues={spyValues}
+                revealKey={chartRevealKey + (sim.showSpy ? "|spy" : "")}
               />
             )}
           </div>
+          {sim.showSpy && !spyLoading && !spyValues && path?.dates.length ? (
+            <div className="sim-note" role="status">
+              {spyErrors.SPY || "SPY benchmark prices are unavailable."}
+            </div>
+          ) : null}
 
           <div className="sim-builder">
             <div className="sim-builder-controls">
@@ -746,7 +790,7 @@ export function SimulationPanels({
           {addNote ? <div className="sim-note">{addNote}</div> : null}
 
           <p className="sim-side-note">
-            {sim.showSpy ? "SPY overlay coming soon. " : ""}
+            {sim.showSpy ? "SPY shown as $100 buy & hold over the same dates. " : ""}
             Historical closes · cash earns 0% · not advice
           </p>
         </aside>
