@@ -12,6 +12,7 @@ import {
   evenCapitalAmounts,
   hasTenYearPriceHistory,
   niceAxisTicks,
+  statsFromScaledPath,
   type PriceSeries,
   type SimHolding,
   type SimRange,
@@ -438,18 +439,22 @@ export function SimulationPanels({
 
   const tickers = sim.holdings.map((row) => row.ticker);
   const { series, loading, errors } = usePriceSeries(tickers);
-  const { series: spySeries, loading: spyLoading, errors: spyErrors } = usePriceSeries(
-    sim.showSpy ? ["SPY"] : [],
-  );
-
   const path = useMemo(
     () => buildPortfolioPath(sim.capital, sim.holdings, series, sim.range),
     [sim.capital, sim.holdings, series, sim.range],
   );
+  // Prefetch SPY whenever a path exists so toggling benchmark does not reflow on load.
+  const { series: spySeries, loading: spyLoading, errors: spyErrors } = usePriceSeries(
+    path?.dates.length ? ["SPY"] : [],
+  );
   const spyValues = useMemo(() => {
-    if (!sim.showSpy || !path?.dates.length) return null;
+    if (!path?.dates.length) return null;
     return buildBenchmarkPath(spySeries.SPY, path.dates);
-  }, [sim.showSpy, path?.dates, spySeries.SPY]);
+  }, [path?.dates, spySeries.SPY]);
+  const spyStats = useMemo(
+    () => statsFromScaledPath(spyValues, path?.dates),
+    [spyValues, path?.dates],
+  );
 
   const invested = allocatedAmount(sim.holdings);
   const cash = cashAmount(sim.capital, sim.holdings);
@@ -612,6 +617,25 @@ export function SimulationPanels({
   const diffTone = diffPortfolio > 0 ? "stock-positive" : diffPortfolio < 0 ? "stock-negative" : "";
   const cagr = path?.cagr ?? 0;
   const cagrTone = path ? (cagr > 0 ? "stock-positive" : cagr < 0 ? "stock-negative" : "") : "";
+  const showSpyUi = sim.showSpy;
+  const spyReady = Boolean(spyStats);
+  const spyEndPer100 = spyStats?.endValue ?? 100;
+  const spyCapital = sim.capital > 0 ? sim.capital : 100;
+  const spyEndPortfolio = (spyEndPer100 / 100) * spyCapital;
+  const spyDiffPortfolio = spyEndPortfolio - spyCapital;
+  const spyDiffTone = spyDiffPortfolio > 0 ? "stock-positive" : spyDiffPortfolio < 0 ? "stock-negative" : "";
+  const spyCagr = spyStats?.cagr ?? 0;
+  const spyCagrTone = spyStats
+    ? spyCagr > 0
+      ? "stock-positive"
+      : spyCagr < 0
+        ? "stock-negative"
+        : ""
+    : "";
+  const vsSpyAlpha = endPortfolio - spyEndPortfolio;
+  const vsSpyCagrPts = path ? (cagr - spyCagr) * 100 : 0;
+  const vsSpyTone = vsSpyAlpha > 0 ? "stock-positive" : vsSpyAlpha < 0 ? "stock-negative" : "";
+  const vsBarMax = Math.max(endPortfolio, spyEndPortfolio, 1);
   const chartRevealKey = [
     sim.range,
     String(sim.capital),
@@ -649,7 +673,7 @@ export function SimulationPanels({
                 />
               )}
             </div>
-            {sim.showSpy && !spyLoading && !spyValues && path?.dates.length ? (
+            {showSpyUi && !spyLoading && !spyValues && path?.dates.length ? (
               <div className="sim-note" role="status">
                 {spyErrors.SPY || "SPY benchmark prices are unavailable."}
               </div>
@@ -657,26 +681,88 @@ export function SimulationPanels({
           </section>
 
           <aside className="sim-side" aria-label="Portfolio results">
-            <div className="sim-metrics">
-              <div className="sim-metric">
-                <span className="k">Portfolio</span>
-                <strong>${fmt(endPortfolio, 2)}</strong>
+            <div className="sim-metrics-shell">
+              <div
+                className={"sim-metrics sim-metrics-solo" + (!showSpyUi ? " is-active" : "")}
+                aria-hidden={showSpyUi}
+                aria-label="Portfolio results"
+              >
+                <div className="sim-metric">
+                  <span className="k">Portfolio</span>
+                  <strong>${fmt(endPortfolio, 2)}</strong>
+                </div>
+                <div className="sim-metric">
+                  <span className="k">Difference</span>
+                  <strong className={"sim-metric-secondary" + (diffTone ? " " + diffTone : "")}>
+                    {diffPortfolio >= 0 ? "+" : "−"}${fmt(Math.abs(diffPortfolio), 2)}
+                  </strong>
+                </div>
+                <div className="sim-metric">
+                  <span className="k">Per $100</span>
+                  <strong className="sim-metric-secondary">${fmt(endPer100, 2)}</strong>
+                </div>
+                <div className="sim-metric">
+                  <span className="k">CAGR</span>
+                  <strong className={"sim-metric-secondary" + (cagrTone ? " " + cagrTone : "")}>
+                    {path ? (cagr > 0 ? "+" : "") + fmt(cagr * 100, 2) + "%" : "—"}
+                  </strong>
+                </div>
               </div>
-              <div className="sim-metric">
-                <span className="k">Difference</span>
-                <strong className={"sim-metric-secondary" + (diffTone ? " " + diffTone : "")}>
-                  {diffPortfolio >= 0 ? "+" : "−"}${fmt(Math.abs(diffPortfolio), 2)}
-                </strong>
-              </div>
-              <div className="sim-metric">
-                <span className="k">Per $100</span>
-                <strong className="sim-metric-secondary">${fmt(endPer100, 2)}</strong>
-              </div>
-              <div className="sim-metric">
-                <span className="k">CAGR</span>
-                <strong className={"sim-metric-secondary" + (cagrTone ? " " + cagrTone : "")}>
-                  {path ? (cagr > 0 ? "+" : "") + fmt(cagr * 100, 2) + "%" : "—"}
-                </strong>
+
+              <div
+                className={"sim-metrics sim-metrics-compare" + (showSpyUi ? " is-active" : "")}
+                aria-hidden={!showSpyUi}
+                aria-label="Portfolio versus SPY buy and hold"
+              >
+                <div className="sim-compare-head" aria-hidden="true">
+                  <span />
+                  <span>You</span>
+                  <span>SPY</span>
+                </div>
+                <div className="sim-metric">
+                  <span className="k">Portfolio</span>
+                  <strong>${fmt(endPortfolio, 2)}</strong>
+                  <strong className={"sim-metric-spy" + (!spyReady ? " is-pending" : "")}>
+                    {spyReady ? "$" + fmt(spyEndPortfolio, 2) : "…"}
+                  </strong>
+                </div>
+                <div className="sim-metric">
+                  <span className="k">Difference</span>
+                  <strong className={"sim-metric-secondary" + (diffTone ? " " + diffTone : "")}>
+                    {diffPortfolio >= 0 ? "+" : "−"}${fmt(Math.abs(diffPortfolio), 2)}
+                  </strong>
+                  <strong
+                    className={
+                      "sim-metric-spy sim-metric-secondary" +
+                      (!spyReady ? " is-pending" : spyDiffTone ? " " + spyDiffTone : "")
+                    }
+                  >
+                    {spyReady
+                      ? (spyDiffPortfolio >= 0 ? "+" : "−") + "$" + fmt(Math.abs(spyDiffPortfolio), 2)
+                      : "…"}
+                  </strong>
+                </div>
+                <div className="sim-metric">
+                  <span className="k">Per $100</span>
+                  <strong className="sim-metric-secondary">${fmt(endPer100, 2)}</strong>
+                  <strong className={"sim-metric-spy sim-metric-secondary" + (!spyReady ? " is-pending" : "")}>
+                    {spyReady ? "$" + fmt(spyEndPer100, 2) : "…"}
+                  </strong>
+                </div>
+                <div className="sim-metric">
+                  <span className="k">CAGR</span>
+                  <strong className={"sim-metric-secondary" + (cagrTone ? " " + cagrTone : "")}>
+                    {path ? (cagr > 0 ? "+" : "") + fmt(cagr * 100, 2) + "%" : "—"}
+                  </strong>
+                  <strong
+                    className={
+                      "sim-metric-spy sim-metric-secondary" +
+                      (!spyReady ? " is-pending" : spyCagrTone ? " " + spyCagrTone : "")
+                    }
+                  >
+                    {spyReady ? (spyCagr > 0 ? "+" : "") + fmt(spyCagr * 100, 2) + "%" : "…"}
+                  </strong>
+                </div>
               </div>
             </div>
 
@@ -712,8 +798,38 @@ export function SimulationPanels({
             </button>
             {addNote ? <div className="sim-note">{addNote}</div> : null}
 
+            <div className={"sim-side-fill" + (showSpyUi && spyReady ? " is-spy-on" : "")}>
+              <div className="sim-vs-spy" aria-hidden={!showSpyUi || !spyReady} aria-label="Result versus SPY">
+                <span className="k">vs SPY</span>
+                <strong className={vsSpyTone}>
+                  {vsSpyAlpha >= 0 ? "+" : "−"}${fmt(Math.abs(vsSpyAlpha), 2)}
+                </strong>
+                <span className={"sim-vs-cagr" + (vsSpyTone ? " " + vsSpyTone : "")}>
+                  {vsSpyCagrPts >= 0 ? "+" : "−"}{fmt(Math.abs(vsSpyCagrPts), 2)} pts CAGR
+                </span>
+                <div className="sim-vs-bars">
+                  <div className="sim-vs-row">
+                    <span>You</span>
+                    <div className="sim-vs-track">
+                      <span style={{ width: Math.max(4, (endPortfolio / vsBarMax) * 100) + "%" }} />
+                    </div>
+                  </div>
+                  <div className="sim-vs-row">
+                    <span>SPY</span>
+                    <div className="sim-vs-track is-spy">
+                      <span style={{ width: Math.max(4, (spyEndPortfolio / vsBarMax) * 100) + "%" }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <p className="sim-side-note">
-              {sim.showSpy ? "SPY shown as $100 buy & hold over the same dates. " : ""}
+              {showSpyUi && spyReady
+                ? "SPY is the same capital buy & hold over these dates. "
+                : showSpyUi
+                  ? "SPY benchmark prices are loading… "
+                  : ""}
               Historical closes · cash earns 0% · not advice
             </p>
           </aside>

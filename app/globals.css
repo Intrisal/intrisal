@@ -955,7 +955,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .sim-stage {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(196px, 248px);
+        grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
         gap: 0;
         min-height: 0;
         align-items: stretch;
@@ -1100,37 +1100,110 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .sim-chart-empty p { margin: 0; font-size: 14px; line-height: 1.5; max-width: 28ch; }
 
+      .sim-metrics-shell {
+        display: grid;
+        min-width: 0;
+      }
+      .sim-metrics-shell > .sim-metrics {
+        grid-area: 1 / 1;
+        opacity: 0;
+        transform: translateY(6px);
+        pointer-events: none;
+        transition: opacity 280ms ease, transform 280ms ease;
+      }
+      .sim-metrics-shell > .sim-metrics.is-active {
+        opacity: 1;
+        transform: none;
+        pointer-events: auto;
+      }
       .sim-metrics {
         display: grid;
         grid-template-columns: 1fr;
         gap: 0;
+        min-width: 0;
       }
-      .sim-metric {
-        display: flex;
-        flex-direction: column;
+      .sim-compare-head {
+        display: grid;
+        grid-template-columns: minmax(64px, 78px) minmax(0, 1fr) minmax(0, 1fr);
+        gap: 4px 8px;
+        margin-bottom: 2px;
+        color: var(--ink-3);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .sim-compare-head span:nth-child(2),
+      .sim-compare-head span:nth-child(3) {
+        text-align: right;
+      }
+      .sim-metrics-solo .sim-metric {
+        display: grid;
+        grid-template-columns: 1fr;
         gap: 3px;
         min-width: 0;
         padding: 10px 0;
         border-bottom: 1px solid var(--line);
       }
-      .sim-metric:first-child { padding-top: 0; }
-      .sim-metric:last-child { border-bottom: 0; padding-bottom: 0; }
-      .sim-metric .k {
+      .sim-metrics-solo .sim-metric:first-child { padding-top: 0; }
+      .sim-metrics-solo .sim-metric:last-child { border-bottom: 0; padding-bottom: 0; }
+      .sim-metrics-solo .sim-metric .k {
         font-size: 11px;
         font-weight: 700;
         letter-spacing: 0.1em;
         text-transform: uppercase;
         color: var(--ink-3);
       }
-      .sim-metric strong {
+      .sim-metrics-solo .sim-metric strong {
         font-size: clamp(20px, 2vw, 26px);
         font-weight: 750;
         line-height: 1.1;
         font-variant-numeric: tabular-nums;
       }
-      .sim-metric strong.sim-metric-secondary {
+      .sim-metrics-solo .sim-metric strong.sim-metric-secondary {
         font-size: clamp(17px, 1.7vw, 22px);
         font-weight: 700;
+      }
+      .sim-metrics-compare .sim-metric {
+        display: grid;
+        grid-template-columns: minmax(64px, 78px) minmax(0, 1fr) minmax(0, 1fr);
+        gap: 4px 8px;
+        align-items: baseline;
+        min-width: 0;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .sim-metrics-compare .sim-metric:last-child { border-bottom: 0; padding-bottom: 0; }
+      .sim-metrics-compare .sim-metric .k {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+      .sim-metrics-compare .sim-metric strong {
+        text-align: right;
+        font-size: clamp(14px, 1.35vw, 17px);
+        font-weight: 700;
+        line-height: 1.1;
+        font-variant-numeric: tabular-nums;
+      }
+      .sim-metrics-compare .sim-metric strong.sim-metric-secondary {
+        font-size: clamp(13px, 1.25vw, 16px);
+        font-weight: 650;
+      }
+      .sim-metric strong.sim-metric-spy {
+        color: var(--ink-2);
+        font-weight: 650;
+      }
+      .sim-metric strong.sim-metric-spy.is-pending { opacity: 0.55; }
+      .sim-metric strong.sim-metric-spy.stock-positive { color: var(--stock-green); }
+      .sim-metric strong.sim-metric-spy.stock-negative { color: var(--stock-red); }
+      @media (prefers-reduced-motion: reduce) {
+        .sim-metrics-shell > .sim-metrics,
+        .sim-vs-spy {
+          transition: none;
+        }
       }
 
       .sim-benchmark {
@@ -1428,8 +1501,84 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         justify-self: end;
       }
       .sim-remove:hover { color: var(--ink); background: var(--hover); }
+      .sim-side-fill {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      .sim-vs-spy {
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+        min-height: 120px;
+        padding: 4px 0;
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 320ms ease, transform 320ms ease;
+        pointer-events: none;
+      }
+      .sim-side-fill.is-spy-on .sim-vs-spy {
+        opacity: 1;
+        transform: none;
+        pointer-events: auto;
+      }
+      .sim-vs-spy .k {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+      .sim-vs-spy > strong {
+        font-size: clamp(22px, 2.1vw, 30px);
+        font-weight: 750;
+        line-height: 1.05;
+        font-variant-numeric: tabular-nums;
+      }
+      .sim-vs-cagr {
+        color: var(--ink-2);
+        font-size: 13px;
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+      }
+      .sim-vs-bars {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .sim-vs-row {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+        color: var(--ink-2);
+        font-size: 12px;
+        font-weight: 650;
+      }
+      .sim-vs-track {
+        height: 7px;
+        border-radius: 99px;
+        background: color-mix(in srgb, var(--line) 80%, transparent);
+        overflow: hidden;
+      }
+      .sim-vs-track > span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--ink);
+        transition: width 320ms ease;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .sim-vs-track > span { transition: none; }
+      }
+      .sim-vs-track.is-spy > span {
+        background: color-mix(in srgb, var(--ink-3) 85%, var(--ink));
+      }
       .sim-side-note {
-        margin: auto 0 0;
+        flex: 0 0 auto;
+        margin: 0;
         padding-top: 4px;
         color: var(--ink-3);
         font-size: 11.5px;
@@ -1461,16 +1610,14 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         }
         .sim-holding-logo { width: 30px; height: 30px; }
         .sim-holding-ticker { font-size: 16px; }
-        .sim-metrics {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 0 14px;
+        .sim-metrics-solo .sim-metric strong { font-size: 20px; }
+        .sim-metrics-solo .sim-metric strong.sim-metric-secondary { font-size: 17px; }
+        .sim-metrics-compare .sim-metric strong {
+          font-size: clamp(15px, 3.6vw, 18px);
         }
-        .sim-metric {
-          padding: 8px 0;
-          border-bottom: 1px solid var(--line);
+        .sim-metrics-compare .sim-metric strong.sim-metric-secondary {
+          font-size: clamp(14px, 3.3vw, 16px);
         }
-        .sim-metric strong { font-size: 20px; }
-        .sim-metric strong.sim-metric-secondary { font-size: 17px; }
       }
       @media (max-width: 560px) {
         .sim-builder-controls { grid-template-columns: 1fr; }

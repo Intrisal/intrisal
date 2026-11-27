@@ -136,6 +136,29 @@ export function buildBenchmarkPath(
   return values;
 }
 
+/** Stats for a $100-scaled path aligned to the given dates. */
+export function statsFromScaledPath(
+  values: number[] | null | undefined,
+  dates: string[] | null | undefined,
+): Pick<PortfolioPath, "endValue" | "difference" | "cagr" | "years"> | null {
+  if (!values || !dates || values.length < 2 || dates.length < 2 || values.length !== dates.length) {
+    return null;
+  }
+  const endValue = values.at(-1)!;
+  if (!Number.isFinite(endValue)) return null;
+  const firstMs = Date.parse(dates[0]! + "T00:00:00Z");
+  const lastMs = Date.parse(dates.at(-1)! + "T00:00:00Z");
+  if (!Number.isFinite(firstMs) || !Number.isFinite(lastMs) || lastMs <= firstMs) return null;
+  const years = Math.max((lastMs - firstMs) / MS_PER_YEAR, 1 / 365);
+  const cagr = endValue > 0 ? Math.pow(endValue / 100, 1 / years) - 1 : -1;
+  return {
+    endValue,
+    difference: endValue - 100,
+    cagr,
+    years,
+  };
+}
+
 /**
  * Build a $100 buy-and-hold path. Unallocated capital stays in cash (0% return).
  * Paths start on the first date every equity holding has a price in-range.
