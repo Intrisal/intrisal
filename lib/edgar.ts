@@ -20,7 +20,8 @@ const FACTS_DIR = path.join(CACHE_DIR, "sec-facts");
 const TICKERS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FACTS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const EPS_SPLIT_BASIS_VERSION = 3;
-export type ReportingCurrency = "USD" | "EUR";
+const REPORTING_CURRENCIES = ["USD", "EUR", "TWD", "CAD", "JPY", "CNY", "DKK", "CHF", "INR", "GBP", "BRL", "MXN", "KRW", "AUD", "SEK", "NOK"] as const;
+export type ReportingCurrency = (typeof REPORTING_CURRENCIES)[number];
 
 /** Minimum gap between SEC requests (ms). */
 const MIN_GAP_MS = 250;
@@ -611,8 +612,8 @@ function seriesFromQuarterMap(quarters: Map<string, number>): QuarterlySeries {
   return { ends, values: ends.map((end) => toBillions(quarters.get(end)!)) };
 }
 
-function revenueSeries(facts: CompanyFacts, currency: ReportingCurrency): QuarterlySeries {
-  const quarters = consolidatedQuarters(facts, [
+function revenueSeries(facts: CompanyFacts, currency: ReportingCurrency, preferTotalRevenue: boolean): QuarterlySeries {
+  const concepts = [
     "RevenueFromContractWithCustomerExcludingAssessedTax",
     "Revenues", "SalesRevenueNet", "Revenue",
     "RevenueFromContractWithCustomerIncludingAssessedTax",
@@ -625,7 +626,10 @@ function revenueSeries(facts: CompanyFacts, currency: ReportingCurrency): Quarte
     "RealEstateRevenueNet",
     "HealthCareOrganizationRevenue",
     "FinancialServicesRevenue",
-  ], currency);
+  ];
+  // These issuers separately tag sales from customer contracts inside total revenue.
+  if (preferTotalRevenue) concepts.unshift("Revenues");
+  const quarters = consolidatedQuarters(facts, concepts, currency);
 
   const serviceByFiling = new Map<string, number>();
   for (const point of pickUnit(facts, ["SalesRevenueServicesNet"], [currency])) {
@@ -791,13 +795,31 @@ export async function fetchEdgarFundamentals(
   )) {
     throw new Error("The latest SEC filing is not yet indexed in Company Facts");
   }
-  const usdRevenue = revenueSeries(facts, "USD");
-  const eurRevenue = revenueSeries(facts, "EUR");
-  const reportingCurrency = eurRevenue.ends.length >= 4 && eurRevenue.ends.length > usdRevenue.ends.length ? "EUR" : "USD";
-  const revenue = reportingCurrency === "EUR" ? eurRevenue : usdRevenue;
+  const preferTotalRevenue = id === "CP" || id === "ENB" || id === "BAM";
+  let reportingCurrency: ReportingCurrency = "USD";
+  let revenue = revenueSeries(facts, reportingCurrency, preferTotalRevenue);
+  for (const currency of REPORTING_CURRENCIES.slice(1)) {
+    const candidate = revenueSeries(facts, currency, preferTotalRevenue);
+    if (candidate.ends.length >= 4 && candidate.ends.length > revenue.ends.length) {
+      reportingCurrency = currency;
+      revenue = candidate;
+    }
+  }
   const money = [reportingCurrency];
   const perShare = [`${reportingCurrency}/shares`];
   const epsPts = pickBestUnit(facts, ["EarningsPerShareDiluted", "DilutedEarningsLossPerShare"], perShare);
+  const epsKeys = new Set(epsPts.map((point) => `${point.accn}:${point.start}:${point.end}`));
+  const comparableEpsTags = ["EarningsPerShareBasicAndDiluted", "NetIncomeLossNetOfTaxPerOutstandingLimitedPartnershipUnitDiluted"];
+  // Airbnb tags its consolidated diluted EPS under the continuing-operations concept.
+  if (id === "ABNB") comparableEpsTags.push("IncomeLossFromContinuingOperationsPerDilutedShare");
+  for (const tag of comparableEpsTags) {
+    for (const point of pickUnit(facts, [tag], perShare)) {
+      const key = `${point.accn}:${point.start}:${point.end}`;
+      if (epsKeys.has(key)) continue;
+      epsPts.push(point);
+      epsKeys.add(key);
+    }
+  }
   const cfoPts = pickBestUnit(facts, ["NetCashProvidedByUsedInOperatingActivities", "CashFlowsFromUsedInOperatingActivities"], money);
   const capexConcepts = [
     "PaymentsToAcquirePropertyPlantAndEquipment",

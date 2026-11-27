@@ -9,6 +9,9 @@ import { useCompanySnapshot } from "@/lib/useCompanyData";
 const PERIODS = [1, 2, 5, 10, 15] as const;
 type Period = (typeof PERIODS)[number];
 type Unit = "billions" | "perShare" | "percent";
+const CURRENCY_PREFIX: Partial<Record<ReportingCurrency, string>> = {
+  USD: "$", EUR: "€", TWD: "NT$", CAD: "C$", GBP: "£", JPY: "¥", CNY: "CN¥",
+};
 
 function quarterLabelFromEnd(iso: string) {
   const d = new Date(iso + "T00:00:00Z");
@@ -18,9 +21,12 @@ function quarterLabelFromEnd(iso: string) {
   return `Q${q} ${d.getUTCFullYear()}`;
 }
 
-function formatValue(value: number, unit: Unit, decimals = 2, currency: ReportingCurrency = "USD") {
+function formatValue(value: number, unit: Unit, decimals = 2, currency: ReportingCurrency = "USD", compactScale = false) {
   if (unit === "percent") return fmt(value, decimals) + "%";
-  return (value < 0 ? "-" : "") + (currency === "EUR" ? "€" : "$")
+  if (compactScale && unit === "billions" && Math.abs(value) >= 1_000) {
+    return (value < 0 ? "-" : "") + (CURRENCY_PREFIX[currency] ?? `${currency} `) + fmt(Math.abs(value) / 1_000, 2) + "T";
+  }
+  return (value < 0 ? "-" : "") + (CURRENCY_PREFIX[currency] ?? `${currency} `)
     + fmt(Math.abs(value), decimals) + (unit === "billions" ? "B" : "");
 }
 
@@ -109,12 +115,16 @@ function MetricChart({ label, values, dates, unit, currency, activeIndex, previe
 }) {
   const [keyboardActive, setKeyboardActive] = useState(false);
   const highlightedIndex = previewIndex ?? (keyboardActive ? activeIndex : null);
-  const left = 53;
+  const axis = metricAxis(values);
+  const nativeCurrency = currency !== "USD" && currency !== "EUR";
+  const axisLabels = axis.ticks.map((value) => formatValue(value, unit,
+    Math.abs(value - Number(value.toFixed(axis.decimals))) < 1e-10 ? axis.decimals : Math.min(12, axis.decimals + 2),
+    currency, nativeCurrency));
+  const left = nativeCurrency ? Math.max(53, 8 + 7 * Math.max(...axisLabels.map((label) => label.length))) : 53;
   const right = 373;
   const top = 14;
   const bottom = 191;
   const step = (right - left) / Math.max(1, values.length);
-  const axis = metricAxis(values);
   const yAt = (value: number) => bottom - (value - axis.min) / (axis.max - axis.min) * (bottom - top);
   const zero = yAt(0);
   const tickCount = expanded && values.length >= 7 ? 7 : Math.min(values.length, 4);
@@ -144,8 +154,7 @@ function MetricChart({ label, values, dates, unit, currency, activeIndex, previe
         return <g key={index}>
           <line x1={left} x2={right} y1={y} y2={y} />
           <text x={left - 5} y={y} textAnchor="end" dominantBaseline="middle">
-            {formatValue(value, unit, Math.abs(value - Number(value.toFixed(axis.decimals))) < 1e-10
-              ? axis.decimals : Math.min(12, axis.decimals + 2), currency)}
+            {axisLabels[index]}
           </text>
         </g>;
       })}

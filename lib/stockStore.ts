@@ -1,4 +1,4 @@
-import type { EdgarFundamentals, QuarterlySeries } from "@/lib/edgar";
+import type { EdgarFundamentals, QuarterlySeries, ReportingCurrency } from "@/lib/edgar";
 import { marketstackSymbol, type StockHistory, type StockQuote } from "@/lib/marketstack";
 import { canReviewValuation, prepareValuationReview } from "@/lib/valuationReview";
 
@@ -61,6 +61,42 @@ export async function readTicker(ticker: string) {
     limit: "1",
   });
   return row;
+}
+
+export async function readQuarterlyFundamentals(ticker: StoredTicker, currency: ReportingCurrency): Promise<EdgarFundamentals | null> {
+  if (ticker.cik == null) return null;
+  const rows = await rest<{
+    quarter: string; reporting_currency: ReportingCurrency;
+    revenue: number | null; operating_income: number | null; diluted_eps: number | null;
+    free_cash_flow: number | null; tax: number | null; pretax: number | null;
+    cash: number | null; debt: number | null; shares: number | null; sti: number | null;
+  }[]>("fundamentals_quarterly", {
+    select: "quarter,reporting_currency,revenue,operating_income,diluted_eps,free_cash_flow,tax,pretax,cash,debt,shares,sti",
+    ticker: "eq." + ticker.ticker, reporting_currency: "eq." + currency, order: "quarter.asc",
+  });
+  const last = rows.at(-1);
+  if (!last) return null;
+  const series = (field: "revenue" | "operating_income" | "diluted_eps" | "free_cash_flow" | "tax" | "pretax") => {
+    const points: QuarterlySeries = { ends: [], values: [] };
+    for (const row of rows) {
+      const amount = row[field];
+      if (amount == null || !Number.isFinite(amount)) continue;
+      points.ends.push(row.quarter);
+      points.values.push(amount);
+    }
+    return points;
+  };
+  return {
+    ticker: ticker.ticker, cik: ticker.cik, entityName: ticker.name ?? ticker.ticker,
+    asOf: ticker.edgar_fetched_at ?? last.quarter, reportingCurrency: last.reporting_currency,
+    // The exhibit backfill verifies its split-adjusted EPS before writing quarterly rows.
+    epsSplitBasisVersion: 5,
+    revenue: series("revenue"), operatingIncome: series("operating_income"), dilutedEps: series("diluted_eps"),
+    freeCashFlow: series("free_cash_flow"), tax: series("tax"), pretax: series("pretax"),
+    balances: Object.fromEntries(rows.map(({ quarter, cash, debt, shares, sti }) => [quarter, { cash, debt, shares, sti }])),
+    sharesOutstandingBillions: null, cashBillions: last.cash, debtBillions: last.debt,
+    equityBillions: null, dividendPerShare: null, lastReportEnd: last.quarter, source: "edgar-6k",
+  };
 }
 
 export async function trackedTickers(limit = 50) {
@@ -206,7 +242,7 @@ export async function saveFundamentals(ticker: string, edgar: EdgarFundamentals)
 }
 
 export function calculateValuations(edgar: EdgarFundamentals, history: StockHistory | null): ValuationPoint[] {
-  if (!history || edgar.reportingCurrency === "EUR") return [];
+  if (!history || (edgar.reportingCurrency ?? "USD") !== "USD") return [];
   const { ends, values } = edgar.operatingIncome;
   const tax = valuesByDate(edgar.tax);
   const pretax = valuesByDate(edgar.pretax);

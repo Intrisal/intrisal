@@ -80,7 +80,7 @@ export function prepareValuationReview(ticker: string, edgar: EdgarFundamentals,
     return debt != null && Number.isFinite(debt) && debt >= 0 ? [{ date, debt }] : [];
   });
 
-  const eligible = canReviewValuation(ticker, edgar) && edgar.reportingCurrency !== "EUR";
+  const eligible = canReviewValuation(ticker, edgar) && (edgar.reportingCurrency ?? "USD") === "USD";
   const benchmarkQuarters = valuationBenchmark(ends.map((quarter, index) => ({ quarter, index }))).slice(-40);
 
   function fundamentalsAt(index: number) {

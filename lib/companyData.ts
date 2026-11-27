@@ -6,13 +6,17 @@
 import { readFile } from "node:fs/promises";
 import { EPS_SPLIT_BASIS_VERSION, fetchEdgarFundamentals, latestFinancialFiling, resolveCik, type EdgarFundamentals, type QuarterlySeries, type ReportingCurrency } from "@/lib/edgar";
 import { displayCompanyName, isKnownFund, normalizeTicker } from "@/lib/market";
-import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuationReview, saveValuations, type CurrentValuation, type ValuationPoint } from "@/lib/stockStore";
+import { calculateValuations, hasStockStore, markFilingsChecked, readPrices, readQuarterlyFundamentals, readStoredQuotes, readTicker, readValuationReview, readValuations, saveFundamentals, saveValuationReview, saveValuations, type CurrentValuation, type ValuationPoint } from "@/lib/stockStore";
 import { canReviewValuation, prepareValuationReview, resolveValuationDisplay } from "@/lib/valuationReview";
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 // Stored backfills can use a newer adjustment than the EDGAR importer writes.
 const SUPPORTED_EPS_SPLIT_BASIS_VERSIONS = new Set([EPS_SPLIT_BASIS_VERSION, 4, 5]);
+const QUARTERLY_FILING_BACKFILLS = new Map<string, ReportingCurrency>([
+  ["TSM", "TWD"], ["CP", "CAD"], ["ENB", "CAD"], ["PDD", "CNY"],
+  ["RY", "CAD"], ["TD", "CAD"], ["BMO", "CAD"], ["BNS", "CAD"], ["CM", "CAD"],
+]);
 
 type ValuationUnavailable = { kind: "nonpositive-nopat" | "missing-data"; detail: string };
 const missingValuationInputs: Record<string, string> = {
@@ -136,7 +140,7 @@ function yoyGrowth(series: QuarterlySeries): number | null {
  * Prefer four consecutive fiscal quarters; if a filing is missing (common for
  * older EPS series), fall back to the latest four quarters that still span ~1Y.
  */
-function rollingTtm(series: QuarterlySeries): QuarterlySeries {
+function rollingTtm(series: QuarterlySeries, requireConsecutive = false): QuarterlySeries {
   const ends: string[] = [];
   const values: number[] = [];
   for (let i = 0; i < series.values.length; i++) {
@@ -157,6 +161,7 @@ function rollingTtm(series: QuarterlySeries): QuarterlySeries {
       }
     }
 
+    if (requireConsecutive) continue;
     // Sparse filings: take up to four quarters ending within ~420 days.
     const picked: number[] = [];
     let oldestMs = endMs;
@@ -226,24 +231,25 @@ function buildFromEdgar(
   currentValuation: CurrentValuation | null,
   storedName?: string | null,
 ): CompanySnapshot {
-  const revTtm = ttm(edgar.revenue);
-  const opTtm = ttm(edgar.operatingIncome);
+  const requireConsecutive = QUARTERLY_FILING_BACKFILLS.has(ticker);
   const eps = canUseDilutedEps(ticker, edgar) ? edgar.dilutedEps : null;
   const asmlEpsIsTtm = ticker === "ASML" && edgar.source === "edgar-6k";
-  const revenueHistory = rollingTtm(edgar.revenue);
-  const operatingHistory = rollingTtm(edgar.operatingIncome);
+  const revenueHistory = rollingTtm(edgar.revenue, requireConsecutive);
+  const operatingHistory = rollingTtm(edgar.operatingIncome, requireConsecutive);
   let epsHistory: QuarterlySeries = { ends: [], values: [] };
   if (eps) {
     // The existing ASML 6-K backfill stores a trailing 12-month figure at each quarter end.
     epsHistory = asmlEpsIsTtm
       ? { ends: eps.ends.slice(-68), values: eps.values.slice(-68) }
-      : rollingTtm(eps);
+      : rollingTtm(eps, requireConsecutive);
   }
-  const cashFlowHistory = rollingTtm(edgar.freeCashFlow);
+  const cashFlowHistory = rollingTtm(edgar.freeCashFlow, requireConsecutive);
+  const revTtm = requireConsecutive ? revenueHistory.values.at(-1) ?? null : ttm(edgar.revenue);
+  const opTtm = requireConsecutive ? operatingHistory.values.at(-1) ?? null : ttm(edgar.operatingIncome);
   const epsTtm = epsHistory.values.at(-1) ?? null;
   const reportingCurrency = edgar.reportingCurrency ?? "USD";
   const compatiblePriceCurrency = priceSource === "marketstack" && reportingCurrency === "USD";
-  const fcfTtm = ttm(edgar.freeCashFlow);
+  const fcfTtm = requireConsecutive ? cashFlowHistory.values.at(-1) ?? null : ttm(edgar.freeCashFlow);
   const growthYoY = yoyGrowth(edgar.revenue);
 
   const marketCapBillions =
@@ -293,8 +299,10 @@ function buildFromEdgar(
     : shownEvNopat == null ? valuationUnavailable(latestFinancialReason,
       price == null ? "Closing price unavailable." : "Valuation data unavailable.") : undefined;
 
-  const peTtm = compatiblePriceCurrency && price != null && (!asmlEpsIsTtm || edgar.reportingCurrency === "USD") && epsTtm
-    ? price / epsTtm
+  // Shell's U.S. depositary share represents two ordinary shares. The filings report EPS per ordinary share.
+  const epsPerTradingShare = ticker === "SHEL" && edgar.source === "edgar-6k" && epsTtm != null ? epsTtm * 2 : epsTtm;
+  const peTtm = compatiblePriceCurrency && price != null && (!asmlEpsIsTtm || edgar.reportingCurrency === "USD") && epsPerTradingShare
+    ? price / epsPerTradingShare
     : null;
   const dividendPerShare = edgar.dividendPerShare;
   const dividendYieldPercent = dividendPerShare === 0
@@ -376,6 +384,10 @@ async function loadSnapshot(id: string, isFund: boolean): Promise<CompanySnapsho
     snapshot?: EdgarFundamentals; points?: ValuationPoint[]; current?: CurrentValuation | null;
   }>)[id] : undefined;
   let edgar = isFund ? null : stage?.snapshot ?? stored?.edgar_snapshot ?? null;
+  const backfillCurrency = QUARTERLY_FILING_BACKFILLS.get(id);
+  if (!stage?.snapshot && !isFund && stored && backfillCurrency) {
+    edgar = await readQuarterlyFundamentals(stored, backfillCurrency).catch(() => null) ?? edgar;
+  }
   let refreshedValuation: Awaited<ReturnType<typeof saveValuationReview>> | undefined;
   if (!useStage && !isFund && !edgar && !EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(id)) {
     try {
@@ -433,7 +445,8 @@ export async function refreshStoredValuations(ticker: string, edgar: EdgarFundam
 export async function refreshCompanyFilings(ticker: string) {
   const stored = await readTicker(ticker);
   const previous = stored?.edgar_snapshot;
-  if (ticker === "TEST" || EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(ticker) || previous?.source === "edgar-6k") {
+  const exhibitBackfill = QUARTERLY_FILING_BACKFILLS.has(ticker) && ticker !== "CP" && ticker !== "ENB";
+  if (ticker === "TEST" || exhibitBackfill || EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(ticker) || previous?.source === "edgar-6k") {
     if (stored) await markFilingsChecked(ticker);
     return "excluded";
   }
