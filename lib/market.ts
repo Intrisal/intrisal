@@ -203,34 +203,3 @@ export function searchCatalog(query: string): CatalogEntry[] {
     .map(({ entry }) => entry);
 }
 
-export type SimInput = {
-  start: string;
-  monthly: string;
-  years: number;
-  annual: number;
-};
-
-export const SIM_DEFAULT: SimInput = { start: "10000", monthly: "250", years: 20, annual: 9 };
-
-export function projectSim(sim: SimInput) {
-  const start = parseFloat(sim.start) || 0;
-  const monthly = parseFloat(sim.monthly) || 0;
-  const years = sim.years;
-  const ret = sim.annual / 100;
-  const mr = Math.pow(1 + ret, 1 / 12) - 1;
-  let bal = start;
-  let contributed = start;
-  const pts = [start];
-  for (let m = 1; m <= years * 12; m++) {
-    bal = bal * (1 + mr) + monthly;
-    contributed += monthly;
-    if (m % 12 === 0) pts.push(bal);
-  }
-  return {
-    bal,
-    contributed,
-    years,
-    pts,
-    returnLabel: fmt(ret * 100, 1).replace(/\.0$/, "") + "%",
-  };
-}

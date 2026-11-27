@@ -16,7 +16,8 @@ import {
 import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
-import { SIM_DEFAULT, displayCompanyName, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, searchMatchScore, type SimInput } from "@/lib/market";
+import { displayCompanyName, exchangeOf, fmt, isKnownFund, nameOf, searchCatalog, searchMatchScore } from "@/lib/market";
+import { SIM_DEFAULT, type SimState } from "@/lib/portfolioSim";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 import { SKY_PAN_MS } from "@/components/landing/intro";
@@ -80,7 +81,7 @@ export function Dashboard() {
   const [directoryResults, setDirectoryResults] = useState<{ query: string; rows: [string, string][] } | null>(null);
   const [resultsOpen, setResultsOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
-  const [sim, setSim] = useState<SimInput>(SIM_DEFAULT);
+  const [sim, setSim] = useState<SimState>(SIM_DEFAULT);
   const [toastMsg, setToastMsg] = useState("");
   const [toastOn, setToastOn] = useState(false);
   // pending → matches server HTML; layout effect picks pan vs direct before paint.
@@ -239,6 +240,7 @@ export function Dashboard() {
 
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
+      if (section === "simulation") return;
       const input = inputRef.current;
       const tag = document.activeElement?.tagName ?? "";
       if (ev.key === "/" && document.activeElement !== input && !/INPUT|TEXTAREA/.test(tag)) {
@@ -262,7 +264,7 @@ export function Dashboard() {
       document.removeEventListener("click", onClick);
       if (toastTimer.current) window.clearTimeout(toastTimer.current);
     };
-  }, []);
+  }, [section]);
 
   function toast(msg: string) {
     setToastMsg(msg);
@@ -300,7 +302,12 @@ export function Dashboard() {
 
   function changeSection(name: Section) {
     moveToSection(name);
-    if (name === "simulation") setSim({ ...SIM_DEFAULT });
+    if (name === "simulation") {
+      setSim({ ...SIM_DEFAULT });
+      setResultsOpen(false);
+      setActiveIdx(-1);
+      setQuery("");
+    }
   }
 
   function goHome() {
@@ -416,6 +423,7 @@ export function Dashboard() {
   }
 
   const isStock = section === "stock";
+  const hideSearch = section === "simulation";
   const selectedIsWatched = watchlist.includes(selected);
   const previewWatchlistRemoval = selectedIsWatched && watchlistRemovalPreview === selected;
   const { snapshot, loading: snapshotLoading } = useCompanySnapshot(isStock ? selected : "");
@@ -551,7 +559,7 @@ export function Dashboard() {
             </div>
           </div></header>
 
-        <div className={"layout" + (section === "home" || isStock ? " " + section : "")} id="layout"><nav className="sidenav" aria-label="Sections">
+        <div className={"layout" + (section === "home" || section === "simulation" || isStock ? " " + (isStock ? "stock" : section) : "")} id="layout"><nav className="sidenav" aria-label="Sections">
             <div className="sidenav-dock" id="navDock">
               <ul id="navList">
                 {NAV_ITEMS.map((item) => (
@@ -570,7 +578,7 @@ export function Dashboard() {
                 ))}
               </ul>
             </div>
-          </nav><main className="center"><div className="search-dock">{!isStock && wordmark}<div className="search-wrap" ref={searchRef}>
+          </nav><main className="center"><div className="search-dock">{!isStock && wordmark}{hideSearch ? null : <div className="search-wrap" ref={searchRef}>
               <div className="search-bar"><SearchIcon /><input
                   ref={inputRef}
                   id="searchInput"
@@ -616,7 +624,7 @@ export function Dashboard() {
                     );
                   })}
               </div>
-            </div></div>
+            </div>}</div>
             <div className="watch-dock" ref={watchDockRef}>
               {watchlistReady && watchlist.length === 0 && section === "home" ? (
                 <button type="button" className="watch-create" onClick={createWatchlist}>

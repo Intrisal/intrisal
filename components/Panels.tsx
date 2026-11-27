@@ -7,7 +7,9 @@ import { Fundamentals } from "@/components/Fundamentals";
 import { RemoveIcon } from "@/components/Icons";
 import { ValuationHistory } from "@/components/ValuationHistory";
 import type { CompanySnapshot } from "@/lib/companyData";
-import { displayCompanyName, fmt, nameOf, projectSim, type SimInput } from "@/lib/market";
+import { SimulationPanels } from "@/components/Simulation";
+import { displayCompanyName, fmt, nameOf } from "@/lib/market";
+import type { SimState } from "@/lib/portfolioSim";
 import { useCompanySnapshot, useCompanySnapshots } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 
@@ -286,56 +288,6 @@ function StatsPanel({ selected }: { selected: string }) {
   );
 }
 
-function SimulationPanels({ sim, onSim }: { sim: SimInput; onSim: (next: SimInput) => void }) {
-  const projection = projectSim(sim);
-  return [
-    <article key="controls" className="panel sim">
-        <PanelHead title="Simulation" sub="compound growth" />
-        <label htmlFor="simStart">Starting amount ($)</label>
-        <input id="simStart" type="number" value={sim.start} min={0} step={500} onChange={(e) => onSim({ ...sim, start: e.target.value })} />
-        <label htmlFor="simMonthly">Monthly contribution ($)</label>
-        <input id="simMonthly" type="number" value={sim.monthly} min={0} step={25} onChange={(e) => onSim({ ...sim, monthly: e.target.value })} />
-        <label htmlFor="simYears">
-          Years: <span id="simYearsOut" className="mono">{sim.years}</span>
-        </label>
-        <input
-          id="simYears"
-          type="range"
-          min={1}
-          max={40}
-          value={sim.years}
-          onChange={(e) => onSim({ ...sim, years: parseInt(e.target.value, 10) })}
-        />
-        <label htmlFor="simReturn">
-          Annual return: <span id="simReturnOut" className="mono">{projection.returnLabel}</span>
-        </label>
-        <input
-          id="simReturn"
-          type="range"
-          min={0}
-          max={15}
-          step={0.5}
-          value={sim.annual}
-          onChange={(e) => onSim({ ...sim, annual: parseFloat(e.target.value) })}
-        />
-        <div className="foot">A what-if tool — not a forecast or financial advice.</div>
-      </article>,
-    <article key="result" className="panel sim">
-        <PanelHead title="Projection" sub="" />
-        <div className="out mono" id="simOut">
-          ${fmt(projection.bal, 0)}
-        </div>
-        <div className="out-sub" id="simOutSub">
-          ${fmt(projection.contributed, 0)} contributed · ${fmt(projection.bal - projection.contributed, 0)} growth over {projection.years} years
-        </div>
-        <div className="chart-box" id="simChart">
-          <LineChart data={projection.pts} w={560} h={200} pad={8} label="Projection chart" />
-        </div>
-        <FootNote>Simulation based on your inputs.</FootNote>
-      </article>,
-  ];
-}
-
 function LearnPanels() {
   return [
     <article key="multiple" className="panel learn">
@@ -396,8 +348,8 @@ export function Panels({
   watchlist: string[];
   onSelect: (tk: string) => void;
   onRemove: (tk: string) => void;
-  sim: SimInput;
-  onSim: (next: SimInput) => void;
+  sim: SimState;
+  onSim: (next: SimState) => void;
 }) {
   let body: ReactNode = null;
   if (section === "watchlist") {
@@ -418,9 +370,17 @@ export function Panels({
   } else if (section === "fundamental") {
     body = [<FundamentalPanel key="revenue" selected={selected} />, <StatsPanel key="stats" selected={selected} />];
   } else if (section === "simulation") {
-    body = <SimulationPanels sim={sim} onSim={onSim} />;
+    body = <SimulationPanels key="simulation" sim={sim} onSim={onSim} />;
   } else if (section === "learn") {
     body = <LearnPanels />;
   }
-  return <section className="panels" id="panels" aria-live="polite">{body}</section>;
+  return (
+    <section
+      className={"panels" + (section === "simulation" ? " sim-panels" : "")}
+      id="panels"
+      aria-live="polite"
+    >
+      {body}
+    </section>
+  );
 }
