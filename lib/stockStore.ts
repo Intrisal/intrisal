@@ -1,4 +1,5 @@
 import type { EdgarFundamentals, QuarterlySeries, ReportingCurrency } from "@/lib/edgar";
+import { displayCompanyName } from "@/lib/market";
 import { marketstackSymbol, type StockHistory, type StockQuote } from "@/lib/marketstack";
 import { canReviewValuation, prepareValuationReview } from "@/lib/valuationReview";
 
@@ -78,13 +79,13 @@ export async function hasStoredFund(ticker: string) {
   return isStoredFund(row);
 }
 
-export async function readStoredFundDirectory(): Promise<[string, string][]> {
+export async function readStoredTickerDirectory(): Promise<[string, string][]> {
   if (!hasStockStore()) return [];
   const directory: [string, string][] = [];
   const pageSize = 500;
   for (let offset = 0; ; offset += pageSize) {
     const rows = await rest<{ ticker: string; name: string }[]>("tickers", {
-      select: "ticker,name", cik: "is.null", name: "not.is.null", ticker: "not.is.null",
+      select: "ticker,name", name: "not.is.null", ticker: "not.is.null",
       order: "ticker.asc", limit: String(pageSize), offset: String(offset),
     });
     for (const { ticker, name } of rows) if (name.trim()) directory.push([ticker, name]);
@@ -192,10 +193,10 @@ export async function readTickerNames(tickers: string[]): Promise<Record<string,
     select: "ticker,name",
     ticker: "in.(" + tickers.join(",") + ")",
   });
-  return Object.fromEntries(rows.flatMap(({ ticker, name }) => (name ? [[ticker, name]] : [])));
+  return Object.fromEntries(rows.flatMap(({ ticker, name }) => (name ? [[ticker, displayCompanyName(ticker, name)]] : [])));
 }
 
-export async function readStoredQuotes(tickers: string[]): Promise<Record<string, StockQuote>> {
+export async function readStoredQuotes(tickers: string[]) {
   const names = await readTickerNames(tickers).catch(() => ({} as Record<string, string>));
   const entries = await Promise.all(tickers.map(async (ticker) => {
     const [last, previous] = await priceRows(ticker, 2);
@@ -209,7 +210,7 @@ export async function readStoredQuotes(tickers: string[]): Promise<Record<string
       source: "marketstack",
     } satisfies StockQuote] as const;
   }));
-  return Object.fromEntries(entries.filter((entry) => entry !== null));
+  return { quotes: Object.fromEntries(entries.filter((entry) => entry !== null)), names };
 }
 
 export async function claimPriceRefresh(ticker: string, now: Date) {

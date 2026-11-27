@@ -95,7 +95,7 @@ export function Dashboard() {
   const watchDockRef = useRef<HTMLDivElement>(null);
   const watchDockStart = useRef<Map<string, DOMRect> | null>(null);
   const toastTimer = useRef<number | null>(null);
-  const { quotes } = useQuotes(watchlist);
+  const { quotes, names: watchlistNames } = useQuotes(watchlist);
   const { user, loading: sessionLoading } = useSessionUser();
 
   const watchlistOwner = useRef<string | null>(null);
@@ -659,8 +659,8 @@ export function Dashboard() {
                       {watchlist.slice(0, 8).map((tk) => (
                         <div key={tk} data-watch-motion={tk} className={"watch-chip" + (tk === selected ? " selected" : "")}>
                           <span className="coin-wrap">
-                            <button type="button" className="coin" aria-label={"View " + tk + " — " + nameOf(tk)} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button>
-                            <span className="watch-tooltip" aria-hidden="true">{nameOf(tk)}</span>
+                            <button type="button" className="coin" aria-label={"View " + tk + " — " + (watchlistNames[tk] ?? nameOf(tk))} onClick={() => openStock(tk)}><BrandLogo tk={tk} /></button>
+                            <span className="watch-tooltip" aria-hidden="true">{watchlistNames[tk] ?? nameOf(tk)}</span>
                           </span>
                           <div className="ticker">{tk}</div>
                         </div>
@@ -675,7 +675,7 @@ export function Dashboard() {
                       const up = (quote?.change ?? 0) >= 0;
                       return (
                         <button type="button" key={tk} onClick={() => openStock(tk)}>
-                          <span className="tk">{tk}</span><span className="nm">{nameOf(tk)}</span>
+                          <span className="tk">{tk}</span><span className="nm">{watchlistNames[tk] ?? nameOf(tk)}</span>
                           <span className="mono" title={quote ? "Close as of " + quote.date : undefined}>
                             {quote ? <AnimatedPrice price={quote.price} /> : "—"}
                           </span>

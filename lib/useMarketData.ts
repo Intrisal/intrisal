@@ -33,6 +33,7 @@ type HistoryState = {
 
 type QuotesState = {
   quotes: Record<string, StockQuote>;
+  names: Record<string, string>;
   loading: boolean;
   error: string | null;
 };
@@ -111,14 +112,14 @@ export function useStockHistory(ticker: string): HistoryState {
 /** Live quotes for a watchlist / panel of tickers. */
 export function useQuotes(tickers: string[]): QuotesState {
   const key = tickers.map((tk) => tk.trim().toUpperCase()).filter(Boolean).sort().join(",");
-  const [quotes, setQuotes] = useState<Record<string, StockQuote>>({});
+  const [data, setData] = useState<Pick<QuotesState, "quotes" | "names">>({ quotes: {}, names: {} });
   const [loading, setLoading] = useState(Boolean(key));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     if (!key) {
-      setQuotes({});
+      setData({ quotes: {}, names: {} });
       setLoading(false);
       setError(null);
       return;
@@ -132,16 +133,16 @@ export function useQuotes(tickers: string[]): QuotesState {
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || res.statusText);
-        return body.quotes as Record<string, StockQuote>;
+        return body as Pick<QuotesState, "quotes" | "names">;
       })
       .then((data) => {
         if (cancelled) return;
-        setQuotes(data);
+        setData({ quotes: data.quotes, names: data.names ?? {} });
         setLoading(false);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setQuotes({});
+        setData({ quotes: {}, names: {} });
         setLoading(false);
         setError(err instanceof Error ? err.message : "Failed to load quotes");
       });
@@ -151,5 +152,5 @@ export function useQuotes(tickers: string[]): QuotesState {
     };
   }, [key]);
 
-  return { quotes, loading, error };
+  return { ...data, loading, error };
 }

@@ -19,9 +19,9 @@ export async function GET(request: Request) {
   }
 
   try {
-    const quotes = await readStoredQuotes(symbols);
+    const data = await readStoredQuotes(symbols);
     return NextResponse.json(
-      { quotes },
+      data,
       { headers: { "Cache-Control": "private, max-age=120" } },
     );
   } catch {

@@ -6,7 +6,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
-import { isKnownFund, normalizeTicker, searchMatchScore } from "@/lib/market";
+import { displayCompanyName, isKnownFund, isSearchableTicker, normalizeTicker, searchMatchScore } from "@/lib/market";
 import { isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
@@ -213,20 +213,17 @@ export async function lookupStockKind(ticker: string): Promise<"company" | "fund
   return Object.hasOwn(directory.map, id) || Object.hasOwn(directory.map, secKey) ? "company" : null;
 }
 
-// Alphabet's convertible preferred depositary shares are outside stock search.
-const SEARCH_EXCLUDED_TICKERS = new Set(["GOOGM", "GOOGN"]);
-
 export async function searchEdgarTickers(query: string) {
   const term = query.toUpperCase();
   const normalizedTerm = normalizeTicker(term);
-  if (SEARCH_EXCLUDED_TICKERS.has(term) || SEARCH_EXCLUDED_TICKERS.has(normalizedTerm)) return [];
+  if (!isSearchableTicker(normalizedTerm)) return [];
   const { names } = await getTickerDirectory();
   const seen = new Set<string>();
   const matches: { ticker: string; name: string; score: number }[] = [];
   for (const [rawTicker, name] of Object.entries(names ?? {})) {
     const ticker = normalizeTicker(rawTicker);
-    if (SEARCH_EXCLUDED_TICKERS.has(ticker) || seen.has(ticker)) continue;
-    const score = searchMatchScore(normalizedTerm, ticker, name);
+    if (!isSearchableTicker(ticker) || seen.has(ticker)) continue;
+    const score = searchMatchScore(normalizedTerm, ticker, displayCompanyName(ticker, name));
     if (!Number.isFinite(score)) continue;
     seen.add(ticker);
     matches.push({ ticker, name, score });

@@ -34,7 +34,7 @@ export function isCanadianFund(ticker: string) {
 export const CATALOG: readonly CatalogEntry[] = [
   ["VFV", "Vanguard S&P 500 Index ETF", "TSX"],
   ["META", "Meta Platforms", "NASDAQ"],
-  ["GOOG", "Alphabet (Google)", "NASDAQ"],
+  ["GOOG", "Google", "NASDAQ"],
   ["MSFT", "Microsoft", "NASDAQ"],
   ["AMZN", "Amazon", "NASDAQ"],
   ["NFLX", "Netflix", "NASDAQ"],
@@ -110,9 +110,42 @@ export function rng(seed: number): () => number {
 
 export function nameOf(tk: string): string {
   const id = normalizeTicker(tk);
+  const shortName = COMPANY_DISPLAY_NAMES[id];
+  if (shortName) return shortName;
   for (let i = 0; i < CATALOG.length; i++) if (CATALOG[i][0] === id) return CATALOG[i][1];
   return id;
 }
+
+const COMPANY_DISPLAY_NAMES: Readonly<Record<string, string | undefined>> = {
+  AME: "AMETEK",
+  ARM: "Arm Holdings",
+  BAC: "Bank of America",
+  DIS: "Walt Disney",
+  FDX: "FedEx",
+  GOOGL: "Google",
+  KO: "Coca-Cola",
+  LHX: "L3Harris Technologies",
+  MCD: "McDonald’s",
+  MCO: "Moody’s",
+  NEE: "NextEra Energy",
+  NI: "NiSource",
+  NOW: "ServiceNow",
+  ORLY: "O’Reilly Automotive",
+  PEP: "PepsiCo",
+  PHM: "PulteGroup",
+  QCOM: "Qualcomm",
+  SCHW: "Charles Schwab",
+  TROW: "T. Rowe Price",
+  VRSN: "Verisign",
+  WRB: "W. R. Berkley",
+};
+
+const COMPANY_INITIALS = new Set([
+  "AES", "APA", "AT", "CBRE", "CDW", "CF", "CME", "CMS", "CSX", "CVS", "DTE",
+  "EMCOR", "EOG", "EQT", "GE", "GM", "HCA", "HP", "IBM", "IDEX", "IDEXX", "IFF",
+  "IQVIA", "KKR", "KLA", "MGM", "MSCI", "NRG", "NVR", "PACCAR", "PG", "PPG",
+  "PPL", "PTC", "RTX", "SBA", "SLB", "TJX", "TKO", "UDR", "UK", "US", "USA",
+]);
 
 /** Prefer curated catalog names; otherwise clean an EDGAR/Supabase entity name for display. */
 export function displayCompanyName(ticker: string, rawName?: string | null): string {
@@ -125,16 +158,21 @@ export function displayCompanyName(ticker: string, rawName?: string | null): str
 
 function formatEntityName(rawName?: string | null) {
   if (!rawName?.trim()) return "";
-  let name = rawName.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  const original = rawName.replace(/\s+/g, " ").trim();
+  let name = original.replace(/\s*[\\/]\s*(?:[A-Z]{2}|CAN|NEW)\s*[\\/]?\s*$/, "")
+    .replace(/\s*[\\/]$/, "");
+  const legalSuffix = /(?:[ ,]+)(?:incorporated|corporation|company|limited|inc|corp|ltd|co|plc|l\.?l\.?c|l\.?p|pbc|n\.?v|s\.?a|a\.?g)\.?$/i;
+  while (legalSuffix.test(name)) name = name.replace(legalSuffix, "").trim();
   name = name
-    .replace(/,?\s*\b(incorporated|corporation|company|limited|inc|corp|ltd|co|plc|nv|sa)\b\.?$/i, "")
-    .replace(/,+$/g, "")
+    .replace(/[ ,]+$/, "")
+    .replace(/\s+&$/, "")
     .replace(/^the\s+/i, "")
     .trim();
-  if (!name) return rawName.trim();
+  if (!name) return original;
   // SEC names are often ALL CAPS — title-case them for the identity header.
   if (name === name.toUpperCase() && /[A-Z]/.test(name)) {
-    name = name.toLowerCase().replace(/\b[a-z0-9]/g, (ch) => ch.toUpperCase());
+    name = name.replace(/[A-Z]+(?:[’'][A-Z]+)?/g, (word) =>
+      COMPANY_INITIALS.has(word) ? word : word[0] + word.slice(1).toLowerCase());
   }
   return name;
 }
@@ -207,6 +245,7 @@ export function searchMatchScore(query: string, ticker: string, name: string) {
   if (!normalizedQuery) return Number.POSITIVE_INFINITY;
   if (id === normalizedQuery) return 0;
   if (id.startsWith(normalizedQuery)) return 100 + id.length;
+  if ((id === "GOOG" || id === "GOOGL") && "ALPHABET".startsWith(normalizedQuery)) return 208;
   if (label.startsWith(normalizedQuery)) return 200 + Math.min(label.length, 80);
   // Prefer "MA" matching "Mastercard" over "Amazon" (substring mid-word).
   const wordStart = new RegExp(`(?:^|[\\s,.(/-])${normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
@@ -214,6 +253,11 @@ export function searchMatchScore(query: string, ticker: string, name: string) {
   if (label.includes(normalizedQuery)) return 400 + Math.min(label.indexOf(normalizedQuery), 40) + Math.min(label.length, 80);
   if (id.includes(normalizedQuery)) return 500 + id.length;
   return Number.POSITIVE_INFINITY;
+}
+
+export function isSearchableTicker(ticker: string) {
+  const id = normalizeTicker(ticker);
+  return id !== "GOOGM" && id !== "GOOGN" && id !== "TEST";
 }
 
 export function searchCatalog(query: string): CatalogEntry[] {

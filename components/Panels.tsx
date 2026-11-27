@@ -8,7 +8,7 @@ import { RemoveIcon } from "@/components/Icons";
 import { ValuationHistory } from "@/components/ValuationHistory";
 import type { CompanySnapshot } from "@/lib/companyData";
 import { SimulationPanels } from "@/components/Simulation";
-import { displayCompanyName, fmt, nameOf } from "@/lib/market";
+import { fmt, nameOf } from "@/lib/market";
 import type { SimState } from "@/lib/portfolioSim";
 import { useCompanySnapshot, useCompanySnapshots } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
@@ -82,7 +82,7 @@ function WatchPanel({
   onSelect: (tk: string) => void;
   onRemove: (tk: string) => void;
 }) {
-  const { quotes } = useQuotes(watchlist);
+  const { quotes, names } = useQuotes(watchlist);
   const countLabel = watchlist.length === 0
     ? "Empty"
     : watchlist.length === 1
@@ -102,12 +102,13 @@ function WatchPanel({
             const live = quotes[tk];
             const quote = live?.source === "marketstack" ? live : null;
             const up = (quote?.change ?? 0) >= 0;
+            const name = names[tk] ?? live?.name ?? nameOf(tk);
             return (
               <div key={tk} role="listitem" className={"watch-card" + (tk === selected ? " sel" : "")}>
-                <button type="button" className="watch-card-main" onClick={() => onSelect(tk)} aria-label={"Open " + displayCompanyName(tk, quote?.name) + " — " + tk}>
+                <button type="button" className="watch-card-main" onClick={() => onSelect(tk)} aria-label={"Open " + name + " — " + tk}>
                   <span className="watch-card-logo" aria-hidden="true"><BrandLogo tk={tk} /></span>
                   <span className="watch-card-meta">
-                    <strong>{displayCompanyName(tk, quote?.name)}</strong>
+                    <strong>{name}</strong>
                     <span>{tk}</span>
                   </span>
                   <span className="watch-card-quote mono">
@@ -204,7 +205,7 @@ function ValuationDetailPanel({ selected, watchlist, showStockName = true }: { s
     : s.evn < med ? "Trading below the watchlist median EV/NOPAT." : "Trading above the watchlist median EV/NOPAT.";
   return (
     <article className="panel">
-      <PanelHead title={showStockName ? "Valuation — " + selected : "Valuation"} sub={showStockName ? nameOf(selected) : undefined} />
+      <PanelHead title={showStockName ? "Valuation — " + selected : "Valuation"} sub={showStockName ? (snapshot?.name ?? nameOf(selected)) : undefined} />
       <BarRow label="P/E (TTM)" val={s.fpe} max={50} suffix="x" />
       <BarRow label="EV/NOPAT" val={s.evn} max={55} suffix="x" />
       <BarRow label={(snapshot?.valuationAverageYears ?? 10) + "Y average"} val={s.avg} max={55} suffix="x" />

@@ -396,7 +396,7 @@ async function loadSnapshot(id: string, knownFund: boolean): Promise<CompanySnap
       console.error("Could not read stock cache", error);
       return undefined;
     }),
-    readStoredQuotes([id]).then((quotes) => quotes[id] ?? null).catch(() => null),
+    readStoredQuotes([id]).then(({ quotes }) => quotes[id] ?? null).catch(() => null),
   ]) : [undefined, null];
   const isFund = knownFund || isStoredFund(stored);
 
