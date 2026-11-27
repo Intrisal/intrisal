@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { AnimatedPrice } from "@/components/AnimatedPrice";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Fundamentals } from "@/components/Fundamentals";
@@ -71,6 +71,18 @@ export function LineChart({ data, w, h, pad, label }: { data: number[]; w: numbe
   );
 }
 
+const watchMetrics = { revenue: "Revenue growth", eps: "EPS growth", value: "EV/NOPAT" } as const;
+type WatchMetric = keyof typeof watchMetrics;
+
+function trailingGrowth(values: number[], dates: string[] = []) {
+  if (!dates.length || dates.length !== values.length) return null;
+  const end = Date.parse(dates[dates.length - 1]);
+  const prior = dates.findIndex(date => Math.abs((end - Date.parse(date)) / 86400000 - 365.25) <= 16);
+  if (prior < 0 || values[prior] <= 0) return null;
+  const growth = (values[values.length - 1] / values[prior] - 1) * 100;
+  return Number.isFinite(growth) ? growth : null;
+}
+
 function WatchPanel({
   watchlist,
   selected,
@@ -83,57 +95,80 @@ function WatchPanel({
   onRemove: (tk: string) => void;
 }) {
   const { quotes, names } = useQuotes(watchlist);
-  const countLabel = watchlist.length === 0
-    ? "Empty"
-    : watchlist.length === 1
-      ? "1 stock"
-      : watchlist.length + " stocks";
+  const { snapshots, loading } = useCompanySnapshots(watchlist);
+  const [editing, setEditing] = useState(false);
+  const [sort, setSort] = useState<{ key: WatchMetric; descending: boolean }>({ key: "value", descending: true });
+  const rows = watchlist.map(tk => {
+    const snap = snapshots[tk.toUpperCase()];
+    const current = snap?.evNopat;
+    const avg = snap?.evNopatAvg;
+    const value = !snap?.isFund && !snap?.valuationHidden && !snap?.valuationHasNegativeOperatingIncome &&
+      snap?.valuationAverageYears && current != null && current > 0 && avg != null && avg > 0 ? (avg / current - 1) * 100 : null;
+    return { tk, snap, value, revenue: snap && !snap.isFund ? trailingGrowth(snap.revenueHistory, snap.filingDates?.revenue) : null,
+      eps: snap && !snap.isFund ? trailingGrowth(snap.epsHistory, snap.filingDates?.eps) : null };
+  }).sort((left, right) => {
+    const a = left[sort.key], b = right[sort.key];
+    if (a === b) return left.tk.localeCompare(right.tk);
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return sort.descending ? b - a : a - b;
+  });
 
   return (
-    <article className={"panel watch-panel" + (watchlist.length === 0 ? " is-empty" : "")}>
-      <PanelHead title="Watchlist" sub={countLabel} />
-      {watchlist.length === 0 ? (
-        <div className="watch-empty">
-          <p>Search to add stocks to your watchlist.</p>
-        </div>
-      ) : (
-        <div className="watch-gallery" role="list" aria-label="Your watchlist">
-          {watchlist.map(function (tk) {
-            const live = quotes[tk];
-            const quote = live?.source === "marketstack" ? live : null;
-            const up = (quote?.change ?? 0) >= 0;
-            const name = names[tk] ?? live?.name ?? nameOf(tk);
-            return (
-              <div key={tk} role="listitem" className={"watch-card" + (tk === selected ? " sel" : "")}>
-                <button type="button" className="watch-card-main" onClick={() => onSelect(tk)} aria-label={"Open " + name + " — " + tk}>
+    <article className={"panel watch-panel" + (!rows.length ? " is-empty" : "")}>
+      {!rows.length ? <>
+        <PanelHead title="Watchlist" />
+        <div className="watch-empty"><p>Search to add stocks to your watchlist.</p></div>
+      </> :
+        <div className="watch-table-wrap">
+          <table className={editing ? "watch-table is-editing" : "watch-table"} aria-label="Watchlist comparison">
+            <thead><tr>
+              <th colSpan={2} aria-label="Company" className="watch-company-heading">
+                <span className="watch-table-title">Watchlist</span>
+                <button type="button" className="watch-table-edit" onClick={() => setEditing(!editing)}>
+                  {editing ? "Done" : "Edit"}
+                </button>
+              </th>
+              <th scope="col">
+                <span className="watch-price-heading">Price</span>
+                <small>last close</small>
+              </th>
+              {(Object.keys(watchMetrics) as WatchMetric[]).map(key =>
+                <th scope="col" key={key} aria-sort={key !== sort.key ? "none" : sort.descending ? "descending" : "ascending"}>
+                  <button type="button" onClick={() => setSort(prev => ({ key, descending: prev.key === key ? !prev.descending : true }))}>
+                    {watchMetrics[key]} <span aria-hidden="true">{key !== sort.key ? "↕" : sort.descending ? "↓" : "↑"}</span>
+                  </button><small>{key === "value" ? "vs. own average" : "TTM year over year"}</small>
+                </th>)}
+            </tr></thead>
+            <tbody>{rows.map(({ tk, snap, value, revenue, eps }) => {
+              const quote = quotes[tk]?.source === "marketstack" ? quotes[tk] : null;
+              const name = names[tk] ?? snap?.name ?? nameOf(tk);
+              const missing = loading && !snap ? "…" : "—";
+              return <tr key={tk}>
+                <td className="watch-remove-cell" aria-hidden={!editing}>
+                  <div className="watch-remove-slot">
+                    <button className="watch-row-remove" type="button" disabled={!editing} aria-label={"Remove " + tk + " from watchlist"} onClick={() => {
+                      if (rows.length === 1) setEditing(false);
+                      onRemove(tk);
+                    }}><RemoveIcon /></button>
+                  </div>
+                </td>
+                <th scope="row"><button className="watch-company" type="button" onClick={() => onSelect(tk)} aria-label={"Open " + name + " — " + tk} aria-current={selected === tk || undefined}>
                   <span className="watch-card-logo" aria-hidden="true"><BrandLogo tk={tk} /></span>
-                  <span className="watch-card-meta">
-                    <strong>{name}</strong>
-                    <span>{tk}</span>
-                  </span>
-                  <span className="watch-card-quote mono">
-                    <span className="watch-card-price" title={quote ? "Close as of " + quote.date : undefined}>
-                      {quote ? <AnimatedPrice price={quote.price} /> : "Data unavailable"}
-                    </span>
-                    <span className={quote ? (up ? "chg-up" : "chg-dn") : "watch-card-chg-empty"}>
-                      {quote ? ((up ? "▲ +" : "▼ ") + fmt(quote.change, 2) + "%") : "—"}
-                    </span>
-                  </span>
-                  {quote && <time className="watch-card-date" dateTime={quote.date}>Close as of {quote.date}</time>}
-                </button>
-                <button
-                  type="button"
-                  className="watch-card-remove"
-                  aria-label={"Remove " + tk + " from watchlist"}
-                  onClick={() => onRemove(tk)}
-                >
-                  <RemoveIcon />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                  <span><strong>{tk}</strong><small>{name}</small></span>
+                </button></th>
+                <td title={quote ? "Close as of " + quote.date : undefined}>{quote ? <><AnimatedPrice price={quote.price} /><small><Chg c={quote.change} /></small></> : "—"}</td>
+                {[revenue, eps].map((growth, i) => <td key={i} className={growth == null || growth === 0 ? "" : growth > 0 ? "chg-up" : "chg-dn"}>
+                  {growth == null ? missing : (growth > 0 ? "+" : "") + fmt(growth, 1) + "%"}
+                </td>)}
+                <td>{value != null && snap ? <>
+                  <strong className={value > 0 ? "chg-up" : value < 0 ? "chg-dn" : ""}>{fmt(Math.abs(value), 1)}% {value > 0 ? "under" : value < 0 ? "over" : "at avg"}</strong>
+                  <small>{fmt(snap.evNopat!, 1)}× vs {fmt(snap.evNopatAvg!, 1)}× · {snap.valuationAverageYears}Y</small>
+                </> : missing}</td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>}
     </article>
   );
 }
