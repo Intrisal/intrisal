@@ -11,6 +11,8 @@ import { canReviewValuation, prepareValuationReview, resolveValuationDisplay } f
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
+// Stored backfills can use a newer adjustment than the EDGAR importer writes.
+const SUPPORTED_EPS_SPLIT_BASIS_VERSIONS = new Set([EPS_SPLIT_BASIS_VERSION, 4, 5]);
 
 type ValuationUnavailable = { kind: "nonpositive-nopat" | "missing-data"; detail: string };
 const missingValuationInputs: Record<string, string> = {
@@ -415,7 +417,8 @@ export function getCompanySnapshot(ticker: string, isFund = isKnownFund(ticker))
 }
 
 function canUseDilutedEps(ticker: string, edgar: EdgarFundamentals | null | undefined) {
-  return edgar?.epsSplitBasisVersion === EPS_SPLIT_BASIS_VERSION
+  const version = edgar?.epsSplitBasisVersion;
+  return (version !== undefined && SUPPORTED_EPS_SPLIT_BASIS_VERSIONS.has(version))
     || (EPS_SPLIT_CHECK_EXEMPT_TICKERS.has(ticker) && Boolean(edgar?.dilutedEps.values.length));
 }
 
