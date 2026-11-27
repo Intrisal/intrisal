@@ -917,11 +917,17 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
 
       .sim-workspace {
+        --stock-green: #08754f;
+        --stock-red: #b33529;
         display: flex;
         flex-direction: column;
         gap: 0;
         min-height: 0;
         padding: 16px 18px 14px;
+      }
+      [data-theme="dark"] .sim-workspace {
+        --stock-green: #65d29f;
+        --stock-red: #ff8c7c;
       }
       .sim-top {
         display: flex;
@@ -942,32 +948,42 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .sim-ranges { margin-top: 0; flex-shrink: 0; }
 
       .sim-body {
-        display: grid;
-        grid-template-columns: minmax(0, 1.75fr) minmax(200px, 0.65fr);
+        display: flex;
+        flex-direction: column;
         gap: 0;
         min-height: 0;
       }
+      .sim-stage {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(196px, 248px);
+        gap: 0;
+        min-height: 0;
+        align-items: stretch;
+      }
       .sim-main {
         min-width: 0;
-        padding: 12px 18px 6px 0;
+        width: 100%;
+        min-height: 0;
+        padding: 12px 18px 4px 0;
         border-right: 1px solid var(--line);
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 4px;
       }
       .sim-side {
         min-width: 0;
-        padding: 12px 0 6px 18px;
+        padding: 12px 0 8px 16px;
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 10px;
       }
       .sim-builder {
         display: flex;
         flex-direction: column;
         gap: 8px;
-        padding-top: 10px;
+        padding-top: 12px;
         border-top: 1px solid var(--line);
+        min-width: 0;
       }
       .sim-builder-controls {
         display: grid;
@@ -991,17 +1007,33 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         color: var(--ink-2);
         font-size: 13px;
         white-space: nowrap;
+        font-variant-numeric: tabular-nums;
       }
       .sim-alloc-sep { color: var(--ink-3); }
 
-      .sim-chart-box { min-height: 0; }
+      .sim-chart-box {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
       .sim-chart-wrap {
+        flex: 1 1 auto;
+        min-height: 280px;
         margin-top: 0;
         cursor: crosshair;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .sim-chart-plot {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
       }
       .sim-chart-svg {
         width: 100%;
-        height: auto;
+        height: 100%;
         display: block;
         overflow: hidden;
         cursor: crosshair;
@@ -1013,7 +1045,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .sim-chart-label {
         fill: var(--ink-2);
         font-size: 12px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-variant-numeric: tabular-nums;
       }
       .sim-chart-dot {
         stroke: var(--ink);
@@ -1026,8 +1058,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .sim-chart-legend {
         display: flex;
         flex-wrap: wrap;
+        flex: 0 0 auto;
         gap: 10px 18px;
-        margin: 10px 0 0;
+        margin: 0;
         padding: 0;
         list-style: none;
         font-size: 12.5px;
@@ -1057,7 +1090,8 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         color: var(--ink-3) !important;
       }
       .sim-chart-empty {
-        min-height: 240px;
+        flex: 1 1 auto;
+        min-height: 280px;
         display: grid;
         place-items: center;
         color: var(--ink-2);
@@ -1092,6 +1126,11 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         font-size: clamp(20px, 2vw, 26px);
         font-weight: 750;
         line-height: 1.1;
+        font-variant-numeric: tabular-nums;
+      }
+      .sim-metric strong.sim-metric-secondary {
+        font-size: clamp(17px, 1.7vw, 22px);
+        font-weight: 700;
       }
 
       .sim-benchmark {
@@ -1117,6 +1156,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         color: var(--ink);
         font: inherit;
         font-size: 15px;
+        font-variant-numeric: tabular-nums;
         padding: 8px 10px;
         height: 40px;
       }
@@ -1263,9 +1303,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
       .sim-holding {
         display: grid;
-        grid-template-columns: minmax(108px, 132px) minmax(0, 1fr) 92px 48px 28px;
+        grid-template-columns: minmax(108px, 140px) minmax(0, 1fr) 100px 72px 28px;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
         padding: 9px 0;
         border-top: 1px solid var(--line);
       }
@@ -1328,7 +1368,6 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         font-size: 14px;
         font-weight: 750;
         color: var(--ink-2);
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
       .sim-holding-ticker {
         font-size: 17px;
@@ -1401,12 +1440,13 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
 
       @media (max-width: 900px) {
         .sim-workspace { padding: 14px 14px 12px; }
-        .sim-body { grid-template-columns: 1fr; }
+        .sim-stage { grid-template-columns: 1fr; }
         .sim-main {
           padding: 12px 0;
           border-right: 0;
           border-bottom: 1px solid var(--line);
         }
+        .sim-chart-wrap { min-height: clamp(220px, 42vw, 320px); }
         .sim-side { padding: 12px 0 4px; }
         .sim-builder-controls {
           grid-template-columns: 1fr 1fr;
@@ -1430,6 +1470,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
           border-bottom: 1px solid var(--line);
         }
         .sim-metric strong { font-size: 20px; }
+        .sim-metric strong.sim-metric-secondary { font-size: 17px; }
       }
       @media (max-width: 560px) {
         .sim-builder-controls { grid-template-columns: 1fr; }

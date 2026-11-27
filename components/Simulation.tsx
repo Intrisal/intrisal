@@ -131,17 +131,14 @@ function PortfolioChart({
   showSpy: boolean;
   revealKey: string;
 }) {
-  const w = 720;
-  const h = 320;
-  const padL = 58;
-  const padR = 18;
-  const padT = 16;
-  const padB = 36;
-  const plotLeft = padL;
-  const plotRight = w - padR;
-  const plotTop = padT;
-  const plotBottom = h - padB;
+  const BASE_W = 920;
+  const padL = 62;
+  const padR = 20;
+  const padT = 10;
+  const padB = 34;
+  const plotRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const [chartH, setChartH] = useState(400);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const prevRevealKey = useRef(revealKey);
   const previousKey = prevRevealKey.current;
@@ -153,10 +150,37 @@ function PortfolioChart({
     setHoverIndex(null);
   }, [revealKey]);
 
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const sync = () => {
+      const width = el.clientWidth;
+      const height = el.clientHeight;
+      if (width <= 0 || height <= 0) return;
+      setChartH(Math.max(260, Math.round(BASE_W * (height / width))));
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const w = BASE_W;
+  const h = chartH;
+  const plotLeft = padL;
+  const plotRight = w - padR;
+  const plotTop = padT;
+  const plotBottom = h - padB;
+  const spyActive = Boolean(
+    showSpy && spyValues && values.length >= 2 && spyValues.length === values.length,
+  );
+
   if (values.length < 2 || dates.length < 2) {
     return (
-      <div className="sim-chart-empty">
-        <p>Add tickers and capital on the right to simulate a portfolio.</p>
+      <div className="sim-chart-wrap">
+        <div className="sim-chart-empty">
+          <p>Add tickers and capital below to simulate a portfolio.</p>
+        </div>
       </div>
     );
   }
@@ -164,15 +188,15 @@ function PortfolioChart({
   const scale = capital / 100;
   const dollarValues = values.map((v) => v * scale);
   const spyDollars = spyValues?.map((v) => v * scale) ?? null;
-  const compared = showSpy && spyDollars && spyDollars.length === dollarValues.length
+  const compared = spyActive && spyDollars
     ? [...dollarValues, ...spyDollars]
     : dollarValues;
 
   const min0 = Math.min(...compared, capital);
   const max0 = Math.max(...compared, capital);
   let span = max0 - min0 || 1;
-  const min = min0 - span * 0.08;
-  const max = max0 + span * 0.1;
+  const min = min0 - span * 0.03;
+  const max = max0 + span * 0.035;
   span = max - min;
   const yTicks = niceAxisTicks(min, max, 5);
   const xIndexes = dateTickIndexes(dates.length, range === "1Y" || range === "2Y" ? 5 : 6);
@@ -215,128 +239,131 @@ function PortfolioChart({
   const lastY = yAt(dollarValues.at(-1)!);
   const baseY = yAt(capital);
   const area = d + " L" + lastX.toFixed(1) + " " + plotBottom + " L" + plotLeft.toFixed(1) + " " + plotBottom + " Z";
-  const spyActive = Boolean(showSpy && spyDollars && spyDollars.length === dollarValues.length);
   const scrub = hoverIndex !== null ? {
     index: hoverIndex,
     x: xAt(hoverIndex),
     y: yAt(dollarValues[hoverIndex]!),
     value: dollarValues[hoverIndex]!,
-    spyValue: spyActive ? spyDollars![hoverIndex]! : null,
+    spyValue: spyActive && spyDollars ? spyDollars[hoverIndex]! : null,
     date: dates[hoverIndex]!,
   } : null;
   const tipLeft = scrub ? (scrub.x / w) * 100 + "%" : "0%";
 
   return (
     <div className={"stock-chart-wrap sim-chart-wrap" + (scrub ? " is-scrubbing" : "")}>
-      <svg
-        ref={svgRef}
-        className="sim-chart-svg"
-        viewBox={"0 0 " + w + " " + h}
-        role="img"
-        aria-label={
-          spyActive
-            ? "Portfolio and SPY benchmark over time. Hover or drag to read values."
-            : "Portfolio value over time. Hover or drag to read a value."
-        }
-        onPointerMove={onPointerMove}
-        onPointerDown={onPointerMove}
-        onPointerLeave={() => setHoverIndex(null)}
-      >
-        {yTicks.map((tick) => {
-          const y = yAt(tick);
-          return (
-            <g key={"y-" + tick}>
-              <line x1={plotLeft} x2={plotRight} y1={y} y2={y} className="sim-chart-grid" />
-              <text x={plotLeft - 10} y={y + 3.5} textAnchor="end" className="sim-chart-label">
-                {formatAxisMoney(tick)}
-              </text>
-            </g>
-          );
-        })}
-        {xIndexes.map((index) => {
-          const x = xAt(index);
-          return (
-            <text key={"x-" + index} x={x} y={h - 12} textAnchor="middle" className="sim-chart-label">
-              {formatAxisDate(dates[index]!, range)}
-            </text>
-          );
-        })}
-        <line x1={plotLeft} x2={plotRight} y1={baseY} y2={baseY} className="sim-chart-base" />
-        <ChartReveal
-          key={revealKey}
-          left={plotLeft}
-          right={plotRight}
-          top={plotTop}
-          bottom={plotBottom}
-          quick={quickReveal}
+      <div className="sim-chart-plot" ref={plotRef}>
+        <svg
+          ref={svgRef}
+          className="sim-chart-svg"
+          viewBox={"0 0 " + w + " " + h}
+          role="img"
+          aria-label={
+            spyActive
+              ? "Portfolio and SPY benchmark over time. Hover or drag to read values."
+              : "Portfolio value over time. Hover or drag to read a value."
+          }
+          onPointerMove={onPointerMove}
+          onPointerDown={onPointerMove}
+          onPointerLeave={() => setHoverIndex(null)}
         >
-          <path d={area} className="sim-chart-fill" />
-          <path
-            className="sim-chart-portfolio"
-            d={d}
-            fill="none"
-            stroke="var(--ink)"
-            strokeWidth="2.6"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-          {spyActive ? (
+          {yTicks.map((tick) => {
+            const y = yAt(tick);
+            return (
+              <g key={"y-" + tick}>
+                <line x1={plotLeft} x2={plotRight} y1={y} y2={y} className="sim-chart-grid" />
+                <text x={plotLeft - 10} y={y + 3.5} textAnchor="end" className="sim-chart-label">
+                  {formatAxisMoney(tick)}
+                </text>
+              </g>
+            );
+          })}
+          {xIndexes.map((index) => {
+            const x = xAt(index);
+            return (
+              <text key={"x-" + index} x={x} y={h - 12} textAnchor="middle" className="sim-chart-label">
+                {formatAxisDate(dates[index]!, range)}
+              </text>
+            );
+          })}
+          <line x1={plotLeft} x2={plotRight} y1={baseY} y2={baseY} className="sim-chart-base" />
+          <ChartReveal
+            key={revealKey}
+            left={plotLeft}
+            right={plotRight}
+            top={plotTop}
+            bottom={plotBottom}
+            quick={quickReveal}
+          >
+            <path d={area} className="sim-chart-fill" />
             <path
-              className="sim-chart-spy"
-              d={pathFor(spyDollars!)}
+              className="sim-chart-portfolio"
+              d={d}
               fill="none"
-              stroke="var(--ink-3)"
-              strokeWidth="2"
-              strokeDasharray="5 4"
+              stroke="var(--ink)"
+              strokeWidth="1.7"
               strokeLinejoin="round"
               strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
             />
-          ) : null}
-          <circle cx={lastX} cy={lastY} r="4" fill="var(--ink)" />
-          {spyActive ? (
-            <circle
-              cx={xAt(spyDollars!.length - 1)}
-              cy={yAt(spyDollars!.at(-1)!)}
-              r="3.5"
-              fill="var(--panel)"
-              stroke="var(--ink-3)"
-              strokeWidth="1.75"
-            />
-          ) : null}
-        </ChartReveal>
-        <rect
-          className="stock-chart-hit"
-          x={plotLeft}
-          y={plotTop}
-          width={plotRight - plotLeft}
-          height={plotBottom - plotTop}
-          fill="transparent"
-        />
-        {scrub ? (
-          <g className="stock-chart-scrub" aria-hidden="true">
-            <line className="stock-chart-crosshair" x1={scrub.x} x2={scrub.x} y1={plotTop} y2={plotBottom} />
-            <circle className="stock-chart-dot sim-chart-dot" cx={scrub.x} cy={scrub.y} r="5.5" />
-            {scrub.spyValue != null ? (
-              <circle
-                className="sim-chart-spy-dot"
-                cx={scrub.x}
-                cy={yAt(scrub.spyValue)}
-                r="4.5"
+            {spyActive && spyDollars ? (
+              <path
+                className="sim-chart-spy"
+                d={pathFor(spyDollars)}
+                fill="none"
+                stroke="var(--ink-3)"
+                strokeWidth="1.4"
+                strokeDasharray="4 4"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
               />
             ) : null}
-          </g>
+            <circle cx={lastX} cy={lastY} r="3" fill="var(--ink)" />
+            {spyActive && spyDollars ? (
+              <circle
+                cx={xAt(spyDollars.length - 1)}
+                cy={yAt(spyDollars.at(-1)!)}
+                r="2.75"
+                fill="var(--panel)"
+                stroke="var(--ink-3)"
+                strokeWidth="1.4"
+              />
+            ) : null}
+          </ChartReveal>
+          <rect
+            className="stock-chart-hit"
+            x={plotLeft}
+            y={plotTop}
+            width={plotRight - plotLeft}
+            height={plotBottom - plotTop}
+            fill="transparent"
+          />
+          {scrub ? (
+            <g className="stock-chart-scrub" aria-hidden="true">
+              <line className="stock-chart-crosshair" x1={scrub.x} x2={scrub.x} y1={plotTop} y2={plotBottom} />
+              <circle className="stock-chart-dot sim-chart-dot" cx={scrub.x} cy={scrub.y} r="4.25" />
+              {scrub.spyValue != null ? (
+                <circle
+                  className="sim-chart-spy-dot"
+                  cx={scrub.x}
+                  cy={yAt(scrub.spyValue)}
+                  r="3.5"
+                />
+              ) : null}
+            </g>
+          ) : null}
+        </svg>
+        {scrub ? (
+          <div
+            className={"stock-chart-tip" + (scrub.x > (plotLeft + plotRight) / 2 ? " is-left" : "")}
+            style={{ left: tipLeft }}
+          >
+            <strong>${fmt(scrub.value, 2)}</strong>
+            {scrub.spyValue != null ? <span className="sim-tip-spy">SPY ${fmt(scrub.spyValue, 2)}</span> : null}
+            <span>{CLOSE_DATE_FORMAT.format(new Date(scrub.date + "T00:00:00Z"))}</span>
+          </div>
         ) : null}
-      </svg>
-      {scrub ? (
-        <div
-          className={"stock-chart-tip" + (scrub.x > (plotLeft + plotRight) / 2 ? " is-left" : "")}
-          style={{ left: tipLeft }}
-        >
-          <strong>${fmt(scrub.value, 2)}</strong>
-          {scrub.spyValue != null ? <span className="sim-tip-spy">SPY ${fmt(scrub.spyValue, 2)}</span> : null}
-          <span>{CLOSE_DATE_FORMAT.format(new Date(scrub.date + "T00:00:00Z"))}</span>
-        </div>
-      ) : null}
+      </div>
       <ul className="sim-chart-legend" aria-label="Chart legend">
         <li className="sim-legend-portfolio">Portfolio</li>
         {spyActive ? <li className="sim-legend-spy">SPY</li> : null}
@@ -581,12 +608,10 @@ export function SimulationPanels({
 
   const endPer100 = path?.endValue ?? 100;
   const endPortfolio = (endPer100 / 100) * sim.capital;
-  const diffPer100 = path?.difference ?? 0;
   const diffPortfolio = endPortfolio - sim.capital;
-  const valueTone = endPer100 > 100 ? "stock-positive" : endPer100 < 100 ? "stock-negative" : "";
-  const diffTone = diffPer100 > 0 ? "stock-positive" : diffPer100 < 0 ? "stock-negative" : "";
+  const diffTone = diffPortfolio > 0 ? "stock-positive" : diffPortfolio < 0 ? "stock-negative" : "";
   const cagr = path?.cagr ?? 0;
-  const cagrTone = path ? (cagr >= 0 ? "stock-positive" : "stock-negative") : "";
+  const cagrTone = path ? (cagr > 0 ? "stock-positive" : cagr < 0 ? "stock-negative" : "") : "";
   const chartRevealKey = [
     sim.range,
     String(sim.capital),
@@ -607,193 +632,195 @@ export function SimulationPanels({
       </header>
 
       <div className="sim-body">
-        <section className="sim-main" aria-label="Chart and holdings">
-          <div className="sim-chart-box">
-            {loading && sim.holdings.length > 0 ? (
-              <div className="sim-chart-empty"><p>Loading prices…</p></div>
-            ) : (
-              <PortfolioChart
-                values={path?.values?.length ? path.values : [100]}
-                dates={path?.dates?.length ? path.dates : []}
-                range={sim.range}
-                capital={sim.capital > 0 ? sim.capital : 100}
-                showSpy={sim.showSpy}
-                spyValues={spyValues}
-                revealKey={chartRevealKey + (sim.showSpy ? "|spy" : "")}
-              />
-            )}
-          </div>
-          {sim.showSpy && !spyLoading && !spyValues && path?.dates.length ? (
-            <div className="sim-note" role="status">
-              {spyErrors.SPY || "SPY benchmark prices are unavailable."}
+        <div className="sim-stage">
+          <section className="sim-main" aria-label="Portfolio chart">
+            <div className="sim-chart-box">
+              {loading && sim.holdings.length > 0 ? (
+                <div className="sim-chart-empty"><p>Loading prices…</p></div>
+              ) : (
+                <PortfolioChart
+                  values={path?.values?.length ? path.values : [100]}
+                  dates={path?.dates?.length ? path.dates : []}
+                  range={sim.range}
+                  capital={sim.capital > 0 ? sim.capital : 100}
+                  showSpy={sim.showSpy}
+                  spyValues={spyValues}
+                  revealKey={chartRevealKey + (sim.showSpy ? "|spy" : "")}
+                />
+              )}
             </div>
-          ) : null}
-
-          <div className="sim-builder">
-            <div className="sim-builder-controls">
-              <div className="sim-capital-block">
-                <label className="sim-capital-label" htmlFor="simCapital">Capital</label>
-                <div className="sim-capital-row">
-                  <span aria-hidden="true">$</span>
-                  <input
-                    id="simCapital"
-                    type="text"
-                    inputMode="decimal"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={capitalDraft}
-                    onChange={(e) => setCapitalDraft(formatCapitalInput(e.target.value))}
-                    onBlur={() => commitCapital(capitalDraft)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") e.currentTarget.blur();
-                    }}
-                  />
-                </div>
+            {sim.showSpy && !spyLoading && !spyValues && path?.dates.length ? (
+              <div className="sim-note" role="status">
+                {spyErrors.SPY || "SPY benchmark prices are unavailable."}
               </div>
+            ) : null}
+          </section>
 
-              <form
-                className="sim-add-row"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void addTicker();
-                }}
-              >
-                <label className="sr-only" htmlFor="simTicker">Ticker</label>
+          <aside className="sim-side" aria-label="Portfolio results">
+            <div className="sim-metrics">
+              <div className="sim-metric">
+                <span className="k">Portfolio</span>
+                <strong>${fmt(endPortfolio, 2)}</strong>
+              </div>
+              <div className="sim-metric">
+                <span className="k">Difference</span>
+                <strong className={"sim-metric-secondary" + (diffTone ? " " + diffTone : "")}>
+                  {diffPortfolio >= 0 ? "+" : "−"}${fmt(Math.abs(diffPortfolio), 2)}
+                </strong>
+              </div>
+              <div className="sim-metric">
+                <span className="k">Per $100</span>
+                <strong className="sim-metric-secondary">${fmt(endPer100, 2)}</strong>
+              </div>
+              <div className="sim-metric">
+                <span className="k">CAGR</span>
+                <strong className={"sim-metric-secondary" + (cagrTone ? " " + cagrTone : "")}>
+                  {path ? (cagr > 0 ? "+" : "") + fmt(cagr * 100, 2) + "%" : "—"}
+                </strong>
+              </div>
+            </div>
+
+            <label className="sim-benchmark">
+              <input
+                type="checkbox"
+                checked={sim.showSpy}
+                onChange={(e) => onSim({ ...sim, showSpy: e.target.checked })}
+              />
+              <span>Benchmark vs SPY</span>
+            </label>
+
+            <button
+              type="button"
+              className="stock-watchlist-button sim-watchlist-button"
+              data-added={watchlistAdded}
+              disabled={importingWatchlist || watchlistTickers.length === 0 || !(sim.capital > 0)}
+              aria-label={watchlistAdded ? "Watchlist added to simulation" : "Add watchlist to simulation"}
+              onClick={() => void addWatchlist()}
+            >
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path className="stock-watchlist-plus" d="M10 5v10M5 10h10" />
+                <path className="stock-watchlist-check" pathLength={1} d="m5 10 3.2 3.2L15 6.6" />
+              </svg>
+              <span>
+                {importingWatchlist
+                  ? "Adding…"
+                  : watchlistAdded
+                    ? "Watchlist Added"
+                    : "Add Watchlist"}
+              </span>
+            </button>
+            {addNote ? <div className="sim-note">{addNote}</div> : null}
+
+            <p className="sim-side-note">
+              {sim.showSpy ? "SPY shown as $100 buy & hold over the same dates. " : ""}
+              Historical closes · cash earns 0% · not advice
+            </p>
+          </aside>
+        </div>
+
+        <div className="sim-builder">
+          <div className="sim-builder-controls">
+            <div className="sim-capital-block">
+              <label className="sim-capital-label" htmlFor="simCapital">Capital</label>
+              <div className="sim-capital-row">
+                <span aria-hidden="true">$</span>
                 <input
-                  id="simTicker"
+                  id="simCapital"
                   type="text"
-                  inputMode="text"
+                  inputMode="decimal"
                   autoComplete="off"
                   spellCheck={false}
-                  placeholder="Add ticker"
-                  value={draftTicker}
-                  onChange={(e) => {
-                    setDraftTicker(e.target.value.toUpperCase());
-                    setAddError(null);
-                    setAddNote(null);
-                    setWatchlistAdded(false);
+                  value={capitalDraft}
+                  onChange={(e) => setCapitalDraft(formatCapitalInput(e.target.value))}
+                  onBlur={() => commitCapital(capitalDraft)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
                   }}
                 />
-                <button type="submit" disabled={adding || remaining <= 0}>
-                  {adding ? "…" : "Add"}
-                </button>
-              </form>
-
-              <div className="sim-alloc-chip mono" title="Invested vs cash">
-                <span>${fmt(invested, 0)} in</span>
-                <span className="sim-alloc-sep">·</span>
-                <span>${fmt(cash, 0)} cash</span>
               </div>
             </div>
-            {addError ? <div className="sim-error" role="alert">{addError}</div> : null}
 
-            <div className="sim-alloc-meter" aria-hidden="true">
-              <span className="sim-alloc-invested" style={{ width: investedPct + "%" }} />
-            </div>
-
-            <div className="sim-holdings-head">
-              <span className="sim-holdings-label">Holdings</span>
-              <button
-                type="button"
-                className="sim-remove-all"
-                disabled={sim.holdings.length === 0}
-                onClick={removeAllHoldings}
-              >
-                Remove all
+            <form
+              className="sim-add-row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void addTicker();
+              }}
+            >
+              <label className="sr-only" htmlFor="simTicker">Ticker</label>
+              <input
+                id="simTicker"
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Add ticker"
+                value={draftTicker}
+                onChange={(e) => {
+                  setDraftTicker(e.target.value.toUpperCase());
+                  setAddError(null);
+                  setAddNote(null);
+                  setWatchlistAdded(false);
+                }}
+              />
+              <button type="submit" disabled={adding || remaining <= 0}>
+                {adding ? "…" : "Add"}
               </button>
-            </div>
+            </form>
 
-            <ul className="sim-holdings">
-              {sim.holdings.length === 0 ? (
-                <li className="sim-holdings-empty">Add a ticker, then set how much capital it gets. Leftover stays cash.</li>
-              ) : (
-                sim.holdings.map((row) => (
-                  <HoldingRow
-                    key={row.ticker}
-                    row={row}
-                    max={sim.capital - (invested - row.amount)}
-                    capital={sim.capital}
-                    error={errors[row.ticker]}
-                    onAmount={(amount) => updateAmount(row.ticker, amount)}
-                    onRemove={() => removeHolding(row.ticker)}
-                  />
-                ))
-              )}
-              <li className="sim-holding sim-holding-cash" aria-label="Cash allocation">
-                <span className="sim-holding-identity">
-                  <span className="sim-holding-logo sim-holding-logo-cash" aria-hidden="true">$</span>
-                  <span className="sim-holding-ticker">Cash</span>
-                </span>
-                <span className="sim-holding-slider-spacer" aria-hidden="true" />
-                <span className="sim-holding-cash-pct mono">{fmt(cashPct, 1)}%</span>
-                <span className="sim-holding-capital mono">${fmt(cash, 0)}</span>
-                <span className="sim-holding-spacer" aria-hidden="true" />
-              </li>
-            </ul>
-          </div>
-        </section>
-
-        <aside className="sim-side" aria-label="Portfolio results">
-          <div className="sim-metrics">
-            <div className="sim-metric">
-              <span className="k">Portfolio</span>
-              <strong className={"mono " + valueTone}>${fmt(endPortfolio, 2)}</strong>
-            </div>
-            <div className="sim-metric">
-              <span className="k">Difference</span>
-              <strong className={"mono " + diffTone}>
-                {diffPortfolio >= 0 ? "+" : "−"}${fmt(Math.abs(diffPortfolio), 2)}
-              </strong>
-            </div>
-            <div className="sim-metric">
-              <span className="k">Per $100</span>
-              <strong className={"mono " + valueTone}>${fmt(endPer100, 2)}</strong>
-            </div>
-            <div className="sim-metric">
-              <span className="k">CAGR</span>
-              <strong className={"mono " + cagrTone}>
-                {path ? (cagr >= 0 ? "+" : "") + fmt(cagr * 100, 2) + "%" : "—"}
-              </strong>
+            <div className="sim-alloc-chip" title="Invested vs cash">
+              <span>${fmt(invested, 0)} in</span>
+              <span className="sim-alloc-sep">·</span>
+              <span>${fmt(cash, 0)} cash</span>
             </div>
           </div>
+          {addError ? <div className="sim-error" role="alert">{addError}</div> : null}
 
-          <label className="sim-benchmark">
-            <input
-              type="checkbox"
-              checked={sim.showSpy}
-              onChange={(e) => onSim({ ...sim, showSpy: e.target.checked })}
-            />
-            <span>Benchmark vs SPY</span>
-          </label>
+          <div className="sim-alloc-meter" aria-hidden="true">
+            <span className="sim-alloc-invested" style={{ width: investedPct + "%" }} />
+          </div>
 
-          <button
-            type="button"
-            className="stock-watchlist-button sim-watchlist-button"
-            data-added={watchlistAdded}
-            disabled={importingWatchlist || watchlistTickers.length === 0 || !(sim.capital > 0)}
-            aria-label={watchlistAdded ? "Watchlist added to simulation" : "Add watchlist to simulation"}
-            onClick={() => void addWatchlist()}
-          >
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path className="stock-watchlist-plus" d="M10 5v10M5 10h10" />
-              <path className="stock-watchlist-check" pathLength={1} d="m5 10 3.2 3.2L15 6.6" />
-            </svg>
-            <span>
-              {importingWatchlist
-                ? "Adding…"
-                : watchlistAdded
-                  ? "Watchlist Added"
-                  : "Add Watchlist"}
-            </span>
-          </button>
-          {addNote ? <div className="sim-note">{addNote}</div> : null}
+          <div className="sim-holdings-head">
+            <span className="sim-holdings-label">Holdings</span>
+            <button
+              type="button"
+              className="sim-remove-all"
+              disabled={sim.holdings.length === 0}
+              onClick={removeAllHoldings}
+            >
+              Remove all
+            </button>
+          </div>
 
-          <p className="sim-side-note">
-            {sim.showSpy ? "SPY shown as $100 buy & hold over the same dates. " : ""}
-            Historical closes · cash earns 0% · not advice
-          </p>
-        </aside>
+          <ul className="sim-holdings">
+            {sim.holdings.length === 0 ? (
+              <li className="sim-holdings-empty">Add a ticker, then set how much capital it gets. Leftover stays cash.</li>
+            ) : (
+              sim.holdings.map((row) => (
+                <HoldingRow
+                  key={row.ticker}
+                  row={row}
+                  max={sim.capital - (invested - row.amount)}
+                  capital={sim.capital}
+                  error={errors[row.ticker]}
+                  onAmount={(amount) => updateAmount(row.ticker, amount)}
+                  onRemove={() => removeHolding(row.ticker)}
+                />
+              ))
+            )}
+            <li className="sim-holding sim-holding-cash" aria-label="Cash allocation">
+              <span className="sim-holding-identity">
+                <span className="sim-holding-logo sim-holding-logo-cash" aria-hidden="true">$</span>
+                <span className="sim-holding-ticker">Cash</span>
+              </span>
+              <span className="sim-holding-slider-spacer" aria-hidden="true" />
+              <span className="sim-holding-cash-pct">{fmt(cashPct, 1)}%</span>
+              <span className="sim-holding-capital">${fmt(cash, 0)}</span>
+              <span className="sim-holding-spacer" aria-hidden="true" />
+            </li>
+          </ul>
+        </div>
       </div>
     </article>
   );
@@ -872,7 +899,7 @@ function HoldingRow({
         />
         <span>%</span>
       </div>
-      <span className="sim-holding-capital mono">${fmt(amount, 0)}</span>
+      <span className="sim-holding-capital">${fmt(amount, 0)}</span>
       <button type="button" className="sim-remove" onClick={onRemove} aria-label={"Remove " + row.ticker}>
         ×
       </button>
