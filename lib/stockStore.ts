@@ -248,13 +248,41 @@ export async function readLatestPriceDate(ticker: string) {
   return (await priceRows(ticker, 1))[0]?.date;
 }
 
+function tickerInFilter(tickers: string[]) {
+  return "in.(" + tickers.map((ticker) => `"${ticker.replace(/"/g, "")}"`).join(",") + ")";
+}
+
 export async function readTickerNames(tickers: string[]): Promise<Record<string, string>> {
   if (!tickers.length) return {};
   const rows = await rest<{ ticker: string; name: string | null }[]>("tickers", {
     select: "ticker,name",
-    ticker: "in.(" + tickers.join(",") + ")",
+    ticker: tickerInFilter(tickers),
   });
   return Object.fromEntries(rows.flatMap(({ ticker, name }) => (name ? [[ticker, displayCompanyName(ticker, name)]] : [])));
+}
+
+/** Batch identity + stored EDGAR snapshot for watchlist rows. */
+export async function readTickers(tickers: string[]) {
+  if (!tickers.length) return [] as StoredTicker[];
+  return rest<StoredTicker[]>("tickers", {
+    select: "ticker,name,cik,edgar_snapshot,edgar_fetched_at,prices_fetched_at",
+    ticker: tickerInFilter(tickers),
+  });
+}
+
+/** Batch valuation review rows already saved for watchlist EV/NOPAT. */
+export async function readValuationReviews(tickers: string[]) {
+  if (!tickers.length) return {} as Record<string, StoredValuation>;
+  const rows = await rest<{ ticker: string; points: ValuationPoint[]; current_point: CurrentValuation | null }[]>(
+    "valuation_history_review",
+    { select: "ticker,points,current_point", ticker: tickerInFilter(tickers) },
+  );
+  return Object.fromEntries(rows.map((row) => [row.ticker, { points: row.points ?? [], current: row.current_point ?? null }]));
+}
+
+/** Recent closes for SMA signal — enough for 50/200-day averages. */
+export async function readRecentPriceHistory(ticker: string, limit = 252): Promise<StockHistory | null> {
+  return readPrices(ticker, limit);
 }
 
 export async function readStoredQuotes(tickers: string[]) {

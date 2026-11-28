@@ -1,5 +1,14 @@
 export type StockSignal = "Sell" | "Hold" | "Buy" | "Strong Buy";
 
+/** Strong Buy → Buy → Hold → Sell (lower = more bullish). Missing signals sort last. */
+export function stockSignalRank(signal: StockSignal | null | undefined) {
+  if (signal === "Strong Buy") return 0;
+  if (signal === "Buy") return 1;
+  if (signal === "Hold") return 2;
+  if (signal === "Sell") return 3;
+  return null;
+}
+
 export function movingAverage(prices: number[], end: number, days: number) {
   const start = Math.max(0, end - days + 1);
   const slice = prices.slice(start, end + 1);

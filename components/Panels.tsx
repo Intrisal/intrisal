@@ -11,7 +11,7 @@ import { trailingGrowth } from "@/lib/fiscalQuarter";
 import { SimulationPanels } from "@/components/Simulation";
 import { fmt, nameOf } from "@/lib/market";
 import type { SimState } from "@/lib/portfolioSim";
-import { stockSignalClass } from "@/lib/stockSignal";
+import { stockSignalClass, stockSignalRank } from "@/lib/stockSignal";
 import { useCompanySnapshot, useCompanySnapshots } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 
@@ -74,7 +74,7 @@ export function LineChart({ data, w, h, pad, label }: { data: number[]; w: numbe
 }
 
 const watchMetrics = { revenue: "Revenue growth", eps: "EPS growth", value: "EV/NOPAT" } as const;
-type WatchMetric = keyof typeof watchMetrics;
+type WatchSortKey = "signal" | keyof typeof watchMetrics;
 
 function WatchPanel({
   watchlist,
@@ -90,7 +90,7 @@ function WatchPanel({
   const { quotes, names } = useQuotes(watchlist);
   const { snapshots, loading } = useCompanySnapshots(watchlist, true);
   const [editing, setEditing] = useState(false);
-  const [sort, setSort] = useState<{ key: WatchMetric; descending: boolean }>({ key: "value", descending: false });
+  const [sort, setSort] = useState<{ key: WatchSortKey; descending: boolean }>({ key: "value", descending: false });
   const rows = watchlist.map(tk => {
     const snap = snapshots[tk.toUpperCase()];
     const daily = snap?.latestDailyValuation;
@@ -98,8 +98,12 @@ function WatchPanel({
     const avg = snap?.evNopatAvg;
     const value = !snap?.isFund && !snap?.valuationHidden && !snap?.valuationHasNegativeOperatingIncome &&
       snap?.valuationAverageYears && current != null && current > 0 && avg != null && avg > 0 ? (current / avg - 1) * 100 : null;
-    return { tk, snap, daily, value, revenue: snap && !snap.isFund ? trailingGrowth(snap.revenueHistory, snap.filingDates?.revenue) : null,
-      eps: snap && !snap.isFund ? trailingGrowth(snap.epsHistory, snap.filingDates?.eps) : null };
+    return {
+      tk, snap, daily, value,
+      signal: stockSignalRank(snap?.signal),
+      revenue: snap && !snap.isFund ? trailingGrowth(snap.revenueHistory, snap.filingDates?.revenue) : null,
+      eps: snap && !snap.isFund ? trailingGrowth(snap.epsHistory, snap.filingDates?.eps) : null,
+    };
   }).sort((left, right) => {
     const a = left[sort.key], b = right[sort.key];
     if (a === b) return left.tk.localeCompare(right.tk);
@@ -107,6 +111,14 @@ function WatchPanel({
     if (b == null) return -1;
     return sort.descending ? b - a : a - b;
   });
+
+  function toggleSort(key: WatchSortKey) {
+    setSort((prev) => ({
+      key,
+      // Signal defaults to Strong Buy → Sell; growth to high→low; EV/NOPAT to under→over.
+      descending: prev.key === key ? !prev.descending : key === "revenue" || key === "eps",
+    }));
+  }
 
   return (
     <article className={"panel watch-panel" + (!rows.length ? " is-empty" : "")}>
@@ -127,12 +139,16 @@ function WatchPanel({
                 <span className="watch-price-heading">Price</span>
                 <small>last close</small>
               </th>
-              <th scope="col"><span className="watch-price-heading">Signal</span></th>
-              {(Object.keys(watchMetrics) as WatchMetric[]).map(key =>
+              <th scope="col" aria-sort={sort.key !== "signal" ? "none" : sort.descending ? "descending" : "ascending"}>
+                <button type="button" onClick={() => toggleSort("signal")}>
+                  Signal <span aria-hidden="true">{sort.key !== "signal" ? "↕" : sort.descending ? "↓" : "↑"}</span>
+                </button>
+              </th>
+              {(Object.keys(watchMetrics) as (keyof typeof watchMetrics)[]).map(key =>
                 <th scope="col" key={key} aria-sort={key !== sort.key ? "none" : sort.descending ? "descending" : "ascending"}>
-                  <button type="button" onClick={() => setSort(prev => ({ key, descending: prev.key === key ? !prev.descending : key !== "value" }))}>
+                  <button type="button" onClick={() => toggleSort(key)}>
                     {watchMetrics[key]} <span aria-hidden="true">{key !== sort.key ? "↕" : sort.descending ? "↓" : "↑"}</span>
-                  </button><small>{key === "value" ? "daily vs. quarterly avg" : "TTM year over year"}</small>
+                  </button><small>{key === "value" ? "daily vs 10Y avg" : "TTM year over year"}</small>
                 </th>)}
             </tr></thead>
             <tbody>{rows.map(({ tk, snap, daily, value, revenue, eps }) => {

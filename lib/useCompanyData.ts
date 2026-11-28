@@ -59,7 +59,7 @@ export function useCompanySnapshot(ticker: string): State {
   return { snapshot, loading, error };
 }
 
-/** Batch load for watchlist valuation tables (sequential on server, cached). */
+/** Batch load for watchlist / valuation tables. Watchlist reads stored metrics in one request. */
 export function useCompanySnapshots(tickers: string[], includeWatchlistMetrics = false): BatchState {
   const key = useMemo(
     () =>
@@ -84,25 +84,44 @@ export function useCompanySnapshots(tickers: string[], includeWatchlistMetrics =
     setError(null);
 
     const controller = new AbortController();
-    async function loadBatches() {
+    async function load() {
+      // Watchlist: one stored-metrics request. Other panels: small sequential batches.
+      if (includeWatchlistMetrics) {
+        try {
+          const params = new URLSearchParams({ symbols: key, view: "watchlist" });
+          const res = await fetch("/api/fundamentals?" + params, { signal: controller.signal });
+          if (!res.ok) throw new Error("Failed to load fundamentals");
+          const { snapshots: next } = await res.json() as { snapshots: Record<string, CompanySnapshot> };
+          if (!cancelled) {
+            setSnapshots(next);
+            setLoading(false);
+          }
+        } catch (err) {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : "Failed to load fundamentals");
+            setLoading(false);
+          }
+        }
+        return;
+      }
+
       const symbols = key.split(",");
       setSnapshots({});
       for (let start = 0; start < symbols.length && !cancelled; start += 4) {
         const batch = symbols.slice(start, start + 4).join(",");
         try {
           const params = new URLSearchParams({ symbols: batch });
-          if (includeWatchlistMetrics) params.set("view", "watchlist");
           const res = await fetch("/api/fundamentals?" + params, { signal: controller.signal });
           if (!res.ok) throw new Error("Failed to load fundamentals");
           const { snapshots: next } = await res.json() as { snapshots: Record<string, CompanySnapshot> };
-          if (!cancelled) setSnapshots(prev => ({ ...prev, ...next }));
+          if (!cancelled) setSnapshots((prev) => ({ ...prev, ...next }));
         } catch (err) {
           if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load fundamentals");
         }
       }
       if (!cancelled) setLoading(false);
     }
-    void loadBatches();
+    void load();
 
     return () => {
       cancelled = true;
