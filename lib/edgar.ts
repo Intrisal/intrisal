@@ -248,13 +248,13 @@ export async function resolveCik(ticker: string): Promise<number | null> {
   return map[id] ?? map[id.replace(/\./g, "-")] ?? null;
 }
 
-type CompanyFacts = {
+export type CompanyFacts = {
   cik: number;
   entityName?: string;
   facts?: Record<string, Record<string, { units?: Record<string, FactPoint[]> }>>;
 };
 
-async function loadCompanyFacts(cik: number, refresh = false): Promise<CompanyFacts> {
+export async function loadCompanyFacts(cik: number, refresh = false): Promise<CompanyFacts> {
   const file = path.join(FACTS_DIR, `CIK${String(cik).padStart(10, "0")}.json`);
   const cached = readJsonFile<{ at: number; body: CompanyFacts }>(file);
   if (!refresh && cached && Date.now() - cached.at < FACTS_TTL_MS) return cached.body;

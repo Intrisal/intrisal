@@ -1,15 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatedPrice, useAnimatedNumber } from "@/components/AnimatedPrice";
 import { ChartReveal } from "@/components/ChartReveal";
+import { ChartRangeControl, monthsBefore, RANGE_MONTHS, type Range } from "@/components/ChartRangeControl";
 import { fmt } from "@/lib/market";
 import type { CompanySnapshot } from "@/lib/companyData";
+import { trailingGrowth } from "@/lib/fiscalQuarter";
+import { movingAverage, stockSignal, stockSignalClass } from "@/lib/stockSignal";
 import { useStockHistory } from "@/lib/useMarketData";
 
-const RANGE_MONTHS = { "3M": 3, "6M": 6, "1Y": 12, "5Y": 60, "10Y": 120 };
-type Range = keyof typeof RANGE_MONTHS;
-const RANGE_OPTIONS = Object.keys(RANGE_MONTHS) as Range[];
 const TICK_MONTHS = { "6M": 1, "1Y": 2, "5Y": 12, "10Y": 24 };
 const CLOSE_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
@@ -69,16 +69,6 @@ function priceAxis(low: number, high: number) {
   return { min, max, step: fallbackStep };
 }
 
-function monthsBefore(date: Date, months: number) {
-  const target = new Date(date);
-  target.setUTCDate(1);
-  target.setUTCMonth(target.getUTCMonth() - months);
-  const end = new Date(target);
-  end.setUTCMonth(end.getUTCMonth() + 1, 0);
-  target.setUTCDate(Math.min(date.getUTCDate(), end.getUTCDate()));
-  return target;
-}
-
 function chartDateTicks(range: Range, first: Date, last: Date) {
   const ticks: Date[] = [];
   if (range === "3M") {
@@ -98,12 +88,6 @@ function chartDateTicks(range: Range, first: Date, last: Date) {
     ticks.push(tick);
   }
   return ticks.reverse();
-}
-
-function average(prices: number[], end: number, days: number) {
-  const start = Math.max(0, end - days + 1);
-  const slice = prices.slice(start, end + 1);
-  return slice.reduce((sum, price) => sum + price, 0) / slice.length;
 }
 
 function formatReturn(value: number) {
@@ -317,8 +301,8 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
     }
 
     // Warm-up window for SMAs when history is short (free plans ≈ 1y).
-    const shortSma = closes.map((_, index) => average(closes, index, Math.min(50, index + 1)));
-    const longSma = closes.map((_, index) => average(closes, index, Math.min(200, index + 1)));
+    const shortSma = closes.map((_, index) => movingAverage(closes, index, 50));
+    const longSma = closes.map((_, index) => movingAverage(closes, index, 200));
     return { closes, shortSma, longSma, dates };
   }, [history]);
 
@@ -328,11 +312,9 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
   // Never substitute sample placeholders for filing-backed fields — show N/A instead of a fake number.
   const marketCapBillions = hasFilings ? snapshot.marketCapBillions : null;
   const dividendYieldPercent = hasFilings ? snapshot.dividendYieldPercent : null;
-  const short = chart.shortSma[chart.shortSma.length - 1] ?? price;
-  const long = chart.longSma[chart.longSma.length - 1] ?? price;
-  const signal = price === null || short === null || long === null || chart.closes.length < 2
-    ? null : price < long ? "Strong Buy" : price < short ? "Buy" : "Hold";
-  const signalClass = signal === "Hold" ? "stock-neutral" : "stock-positive";
+  const revenueGrowth = hasFilings && !snapshot.isFund
+    ? trailingGrowth(snapshot.revenueHistory, snapshot.filingDates?.revenue) : null;
+  const signal = stockSignal(revenueGrowth, history);
 
   const year = chart.closes.slice(-252).filter((value) => value > 0 && Number.isFinite(value));
   const lowCandidate = history?.low52 && history.low52 > 0 ? history.low52 : null;
@@ -373,23 +355,10 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
     <section className="panel stock-detail" aria-label={ticker + " stock details"}>
       <article className="stock-chart-panel">
         <div className="stock-chart-header">
-          <div
-            className="stock-ranges"
-            role="group"
-            aria-label="Chart range"
-            style={{ "--range-index": RANGE_OPTIONS.indexOf(range) } as CSSProperties}
-          >
-            {RANGE_OPTIONS.map((item) => (
-              <button type="button" key={item} aria-pressed={item === range} onClick={() => {
-                if (item !== range) {
-                  setScrubIndex(null);
-                  setSelection({ range: item, ticker });
-                }
-              }}>
-                {item}
-              </button>
-            ))}
-          </div>
+          <ChartRangeControl range={range} onChange={(item) => {
+            setScrubIndex(null);
+            setSelection({ range: item, ticker });
+          }} />
           <div className={"stock-chart-return" + (scrubActive ? " is-scrubbing" : "")}>
             {scrubActive && scrubPrice !== null && scrubDate ? (
               <>
@@ -442,7 +411,9 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
         <dl>
           <div>
             <dt>Signal</dt>
-            <dd className={signal ? signalClass : undefined}>{signal === null ? "Data unavailable" : signal === "Hold" ? signal : <SnapshotGlow label={signal} />}</dd>
+            <dd className={stockSignalClass(signal)}>
+              {signal === "Buy" || signal === "Strong Buy" ? <SnapshotGlow label={signal} /> : signal ?? "Data unavailable"}
+            </dd>
           </div>
           <div>
             <dt>Market trend</dt>

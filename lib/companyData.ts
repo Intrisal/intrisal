@@ -10,6 +10,7 @@ import { calculateValuations, hasStockStore, isStoredFund, markFilingsChecked, r
 import { canReviewValuation, prepareValuationReview, resolveValuationDisplay } from "@/lib/valuationReview";
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 import { translateFundamentalsToUsd } from "@/lib/fundamentalsFx";
+import type { StockSignal } from "@/lib/stockSignal";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 // Stored backfills can use a newer adjustment than the EDGAR importer writes.
@@ -51,6 +52,8 @@ export type CompanySnapshot = {
   /** Trailing P/E when from filings; may stand in for UI "Fwd P/E" with a footnote */
   peTtm: number | null;
   evNopat: number | null;
+  latestDailyValuation?: { date: string; multiple: number } | null;
+  signal?: StockSignal | null;
   /** Average of available quarterly multiples in the 5Y or 10Y window ending at the latest valuation quarter. */
   evNopatAvg: number | null;
   evNopatAverageQuarters?: number;

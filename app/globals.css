@@ -478,6 +478,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       /* ---------- Center column ---------- */
       .center { min-width: 0; max-width: 820px; margin: 0 auto; width: 100%; }
       .layout > .center { grid-column: 2; }
+      .layout > .center:has(.watch-panel) { max-width: 960px; }
 
       /* ---------- Home: search + watchlist, one viewport, no idle scroll ---------- */
       .layout.home {
@@ -2026,6 +2027,8 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         text-transform: uppercase; color: var(--ink-2);
       }
       .valuation-status-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 3px; }
+      .valuation-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+      .valuation-header .stock-ranges { --stock-gold: var(--valuation-trace); margin-inline-start: auto; }
       .valuation-source { margin: 0; color: var(--ink-3); font-size: 11.5px; }
       .valuation-status {
         color: var(--valuation-side);
@@ -2188,19 +2191,23 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         }
         .layout.stock { grid-template-columns: 64px minmax(0, 1fr) 64px; gap: clamp(14px, 2vw, 32px); }
       }
-      .panel.stock-detail {
-        --stock-gold: #9b6000;
+      .panel.stock-detail, .watch-panel {
         --stock-green: #08754f;
         --stock-red: #b33529;
         --stock-neutral: #626b78;
+      }
+      [data-theme="dark"] :is(.stock-detail, .watch-panel) {
+        --stock-green: #65d29f;
+        --stock-red: #ff8c7c;
+        --stock-neutral: #aab2c1;
+      }
+      .panel.stock-detail {
+        --stock-gold: #9b6000;
         display: grid; grid-template-columns: minmax(0, 1fr) clamp(196px, 20%, 248px);
         min-height: 0; padding: 0; border-top: 4px solid var(--stock-gold);
       }
       [data-theme="dark"] .stock-detail {
         --stock-gold: #f6b644;
-        --stock-green: #65d29f;
-        --stock-red: #ff8c7c;
-        --stock-neutral: #aab2c1;
       }
       .stock-chart-panel { min-width: 0; padding: clamp(15px, 2vw, 26px); }
       .stock-snapshot {
@@ -2236,7 +2243,8 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         background: transparent; color: var(--ink-2); cursor: pointer; font: inherit; font-size: 13px; font-weight: 700;
         transition: color 160ms ease, background-color 160ms ease;
       }
-      .stock-ranges button[aria-pressed="false"]:hover { background: var(--hover); color: var(--ink); }
+      .stock-ranges button[aria-pressed="false"]:enabled:hover { background: var(--hover); color: var(--ink); }
+      .stock-ranges button:disabled { opacity: 0.45; cursor: default; }
       .stock-ranges button[aria-pressed="true"] { color: var(--panel); }
       @media (prefers-reduced-motion: reduce) {
         .stock-ranges::before, .stock-ranges button { transition: none; }

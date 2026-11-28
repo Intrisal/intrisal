@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { sanitizeHistory } from "@/lib/stockSignal";
 
 /** Mirrors /api/market/history — kept local so the client never imports the server Marketstack module. */
 export type StockHistory = {
@@ -37,31 +38,6 @@ type QuotesState = {
   loading: boolean;
   error: string | null;
 };
-
-/** Drop Marketstack glitch bars (close ≤ 0) and recompute 52-week range. */
-function sanitizeHistory(history: StockHistory): StockHistory {
-  const dates: string[] = [];
-  const closes: number[] = [];
-  for (let i = 0; i < history.closes.length; i++) {
-    const close = history.closes[i];
-    if (typeof close !== "number" || !Number.isFinite(close) || close <= 0) continue;
-    dates.push(history.dates[i] ?? "");
-    closes.push(close);
-  }
-  if (closes.length === history.closes.length || closes.length < 2) return history;
-  const price = closes[closes.length - 1];
-  const prev = closes[closes.length - 2] ?? price;
-  const year = closes.slice(-252);
-  return {
-    ...history,
-    dates,
-    closes,
-    price,
-    change: prev ? ((price - prev) / prev) * 100 : history.change,
-    high52: Math.max(...year),
-    low52: Math.min(...year),
-  };
-}
 
 /** Live daily history for one ticker (charts, SMAs, 52-week range). */
 export function useStockHistory(ticker: string): HistoryState {

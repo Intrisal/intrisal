@@ -11,7 +11,7 @@ const META_FIRST_BOND_MONTH = "2022-08-01";
 const MAX_DAILY_FINANCIAL_AGE = 185 * DAY_MS;
 export type DailyValuation = { date: string; filed: string; point: ValuationPoint | null };
 
-function priceSplits(history: StockHistory) {
+export function priceSplits(history: StockHistory) {
   const splits: { date: string; factor: number }[] = [];
   for (let i = 1; i < history.dates.length; i++) {
     const rawBefore = history.rawCloses?.[i - 1];

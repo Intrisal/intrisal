@@ -7,9 +7,11 @@ import { Fundamentals } from "@/components/Fundamentals";
 import { RemoveIcon } from "@/components/Icons";
 import { ValuationHistory } from "@/components/ValuationHistory";
 import type { CompanySnapshot } from "@/lib/companyData";
+import { trailingGrowth } from "@/lib/fiscalQuarter";
 import { SimulationPanels } from "@/components/Simulation";
 import { fmt, nameOf } from "@/lib/market";
 import type { SimState } from "@/lib/portfolioSim";
+import { stockSignalClass } from "@/lib/stockSignal";
 import { useCompanySnapshot, useCompanySnapshots } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
 
@@ -74,15 +76,6 @@ export function LineChart({ data, w, h, pad, label }: { data: number[]; w: numbe
 const watchMetrics = { revenue: "Revenue growth", eps: "EPS growth", value: "EV/NOPAT" } as const;
 type WatchMetric = keyof typeof watchMetrics;
 
-function trailingGrowth(values: number[], dates: string[] = []) {
-  if (!dates.length || dates.length !== values.length) return null;
-  const end = Date.parse(dates[dates.length - 1]);
-  const prior = dates.findIndex(date => Math.abs((end - Date.parse(date)) / 86400000 - 365.25) <= 16);
-  if (prior < 0 || values[prior] <= 0) return null;
-  const growth = (values[values.length - 1] / values[prior] - 1) * 100;
-  return Number.isFinite(growth) ? growth : null;
-}
-
 function WatchPanel({
   watchlist,
   selected,
@@ -95,16 +88,17 @@ function WatchPanel({
   onRemove: (tk: string) => void;
 }) {
   const { quotes, names } = useQuotes(watchlist);
-  const { snapshots, loading } = useCompanySnapshots(watchlist);
+  const { snapshots, loading } = useCompanySnapshots(watchlist, true);
   const [editing, setEditing] = useState(false);
-  const [sort, setSort] = useState<{ key: WatchMetric; descending: boolean }>({ key: "value", descending: true });
+  const [sort, setSort] = useState<{ key: WatchMetric; descending: boolean }>({ key: "value", descending: false });
   const rows = watchlist.map(tk => {
     const snap = snapshots[tk.toUpperCase()];
-    const current = snap?.evNopat;
+    const daily = snap?.latestDailyValuation;
+    const current = daily?.multiple;
     const avg = snap?.evNopatAvg;
     const value = !snap?.isFund && !snap?.valuationHidden && !snap?.valuationHasNegativeOperatingIncome &&
-      snap?.valuationAverageYears && current != null && current > 0 && avg != null && avg > 0 ? (avg / current - 1) * 100 : null;
-    return { tk, snap, value, revenue: snap && !snap.isFund ? trailingGrowth(snap.revenueHistory, snap.filingDates?.revenue) : null,
+      snap?.valuationAverageYears && current != null && current > 0 && avg != null && avg > 0 ? (current / avg - 1) * 100 : null;
+    return { tk, snap, daily, value, revenue: snap && !snap.isFund ? trailingGrowth(snap.revenueHistory, snap.filingDates?.revenue) : null,
       eps: snap && !snap.isFund ? trailingGrowth(snap.epsHistory, snap.filingDates?.eps) : null };
   }).sort((left, right) => {
     const a = left[sort.key], b = right[sort.key];
@@ -133,14 +127,15 @@ function WatchPanel({
                 <span className="watch-price-heading">Price</span>
                 <small>last close</small>
               </th>
+              <th scope="col"><span className="watch-price-heading">Signal</span></th>
               {(Object.keys(watchMetrics) as WatchMetric[]).map(key =>
                 <th scope="col" key={key} aria-sort={key !== sort.key ? "none" : sort.descending ? "descending" : "ascending"}>
-                  <button type="button" onClick={() => setSort(prev => ({ key, descending: prev.key === key ? !prev.descending : true }))}>
+                  <button type="button" onClick={() => setSort(prev => ({ key, descending: prev.key === key ? !prev.descending : key !== "value" }))}>
                     {watchMetrics[key]} <span aria-hidden="true">{key !== sort.key ? "↕" : sort.descending ? "↓" : "↑"}</span>
-                  </button><small>{key === "value" ? "vs. own average" : "TTM year over year"}</small>
+                  </button><small>{key === "value" ? "daily vs. quarterly avg" : "TTM year over year"}</small>
                 </th>)}
             </tr></thead>
-            <tbody>{rows.map(({ tk, snap, value, revenue, eps }) => {
+            <tbody>{rows.map(({ tk, snap, daily, value, revenue, eps }) => {
               const quote = quotes[tk]?.source === "marketstack" ? quotes[tk] : null;
               const name = names[tk] ?? snap?.name ?? nameOf(tk);
               const missing = loading && !snap ? "…" : "—";
@@ -158,12 +153,13 @@ function WatchPanel({
                   <span><strong>{tk}</strong><small>{name}</small></span>
                 </button></th>
                 <td title={quote ? "Close as of " + quote.date : undefined}>{quote ? <><AnimatedPrice price={quote.price} /><small><Chg c={quote.change} /></small></> : "—"}</td>
+                <td className={stockSignalClass(snap?.signal)}>{snap?.signal ?? missing}</td>
                 {[revenue, eps].map((growth, i) => <td key={i} className={growth == null || growth === 0 ? "" : growth > 0 ? "chg-up" : "chg-dn"}>
                   {growth == null ? missing : (growth > 0 ? "+" : "") + fmt(growth, 1) + "%"}
                 </td>)}
-                <td>{value != null && snap ? <>
-                  <strong className={value > 0 ? "chg-up" : value < 0 ? "chg-dn" : ""}>{fmt(Math.abs(value), 1)}% {value > 0 ? "under" : value < 0 ? "over" : "at avg"}</strong>
-                  <small>{fmt(snap.evNopat!, 1)}× vs {fmt(snap.evNopatAvg!, 1)}× · {snap.valuationAverageYears}Y</small>
+                <td title={daily ? "Daily EV/NOPAT as of " + daily.date : undefined}>{value != null && snap && daily ? <>
+                  <strong className={value < 0 ? "chg-up" : value > 0 ? "chg-dn" : ""}>{fmt(Math.abs(value), 1)}% {value < 0 ? "under" : value > 0 ? "over" : "at avg"}</strong>
+                  <small>{fmt(daily.multiple, 1)}× vs {fmt(snap.evNopatAvg!, 1)}× · {snap.valuationAverageYears}Y</small>
                 </> : missing}</td>
               </tr>;
             })}</tbody>
@@ -365,7 +361,12 @@ export function StockAnalysis({ mode, selected, snapshot, loading, showUsd }: {
       {mode === "fundamental" ? (
         <Fundamentals ticker={selected} snapshot={snapshot} loading={loading} showUsd={showUsd} />
       ) : (
-        <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} />
+        <>
+          <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} />
+          {(selected === "AMZN" || selected === "GOOG") && (
+            <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} adjustedPe />
+          )}
+        </>
       )}
     </section>
   );

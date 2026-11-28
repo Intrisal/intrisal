@@ -60,7 +60,7 @@ export function useCompanySnapshot(ticker: string): State {
 }
 
 /** Batch load for watchlist valuation tables (sequential on server, cached). */
-export function useCompanySnapshots(tickers: string[]): BatchState {
+export function useCompanySnapshots(tickers: string[], includeWatchlistMetrics = false): BatchState {
   const key = useMemo(
     () =>
       [...new Set(tickers.map((t) => t.trim().toUpperCase()).filter(Boolean))]
@@ -90,7 +90,9 @@ export function useCompanySnapshots(tickers: string[]): BatchState {
       for (let start = 0; start < symbols.length && !cancelled; start += 4) {
         const batch = symbols.slice(start, start + 4).join(",");
         try {
-          const res = await fetch("/api/fundamentals?symbols=" + encodeURIComponent(batch), { signal: controller.signal });
+          const params = new URLSearchParams({ symbols: batch });
+          if (includeWatchlistMetrics) params.set("view", "watchlist");
+          const res = await fetch("/api/fundamentals?" + params, { signal: controller.signal });
           if (!res.ok) throw new Error("Failed to load fundamentals");
           const { snapshots: next } = await res.json() as { snapshots: Record<string, CompanySnapshot> };
           if (!cancelled) setSnapshots(prev => ({ ...prev, ...next }));
@@ -106,7 +108,7 @@ export function useCompanySnapshots(tickers: string[]): BatchState {
       cancelled = true;
       controller.abort();
     };
-  }, [key]);
+  }, [key, includeWatchlistMetrics]);
 
   return { snapshots, loading, error };
 }
