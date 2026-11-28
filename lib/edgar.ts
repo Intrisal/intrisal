@@ -96,7 +96,7 @@ function userAgent() {
   return raw || "Intrisal contact@intrisal.com";
 }
 
-async function secFetch(url: string): Promise<Response> {
+async function secFetch(url: string, allowMissing = false): Promise<Response> {
   const now = Date.now();
   const requestAt = Math.max(now, nextRequestAt);
   nextRequestAt = requestAt + MIN_GAP_MS;
@@ -112,7 +112,7 @@ async function secFetch(url: string): Promise<Response> {
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) {
+  if (!res.ok && !(allowMissing && res.status === 404)) {
     throw new Error(`SEC ${res.status} for ${url}`);
   }
   return res;
@@ -266,29 +266,66 @@ export async function loadCompanyFacts(cik: number, refresh = false): Promise<Co
 }
 
 export type FinancialFiling = { accession: string; date: string; document: string; filed?: string; amendment?: boolean };
+const PERIODIC_FORMS = /^(10-K|10-Q|20-F|40-F)(\/A)?$/;
+const DAILY_INDEX_ROOT = "https://www.sec.gov/Archives/edgar/daily-index/";
+const dailyIndexQuarter = (date: string) => date.slice(0, 4) + "/QTR" + Math.ceil(Number(date.slice(5, 7)) / 3);
+
+export async function publishedEarningsIndexDates(dates: string[]) {
+  const quarters = [...new Set(dates.map(dailyIndexQuarter))];
+  const published = await Promise.all(quarters.map(async (quarter) => {
+    const response = await secFetch(DAILY_INDEX_ROOT + quarter + "/index.json");
+    const { directory } = await response.json() as { directory: { item: { name: string }[] } };
+    return new Set(directory.item.map(({ name }) => name));
+  }));
+  return dates.filter((date) => published[quarters.indexOf(dailyIndexQuarter(date))]
+    .has(`master.${date.replaceAll("-", "")}.idx`));
+}
+
+/** The SEC publishes a daily index covering all filers, including their accession numbers. */
+export async function listIndexedEarnings(date: string) {
+  const url = `${DAILY_INDEX_ROOT}${dailyIndexQuarter(date)}/master.${date.replaceAll("-", "")}.idx`;
+  const index = await secFetch(url, true);
+  if (index.status === 404) return [];
+  const body = await index.text();
+  if (!/CIK\|Company Name\|Form Type\|Date Filed\|File ?Name/i.test(body)) {
+    throw new Error("Invalid SEC daily filing index for " + date);
+  }
+  return body.split(/\r?\n/).flatMap((line) => {
+    const [cik, , form, , file] = line.split("|");
+    if (!PERIODIC_FORMS.test(form ?? "")) return [];
+    const accession = file?.match(/(\d{10}-\d{2}-\d{6})\.txt\s*$/)?.[1];
+    return accession && /^\d+$/.test(cik) ? [{ cik: Number(cik), accession }] : [];
+  });
+}
+
 type SubmissionRows = {
   form: string[]; accessionNumber: string[]; reportDate: string[]; primaryDocument: string[];
   filingDate?: string[];
   isXBRL?: (number | boolean)[];
 };
 
-export async function listFinancialFilings(cik: number, since: string, includeAmendments = false): Promise<FinancialFiling[]> {
+export async function listFinancialFilings(cik: number, since: string, includeAmendments = false, options: {
+  includeForeignAnnual?: boolean; recentOnly?: boolean;
+} = {}): Promise<FinancialFiling[]> {
   const root = "https://data.sec.gov/submissions/";
   const response = await secFetch(root + "CIK" + String(cik).padStart(10, "0") + ".json");
   const { filings } = await response.json() as {
     filings: { recent: SubmissionRows; files: { name: string; filingTo: string }[] };
   };
   const pages = [filings.recent];
-  for (const file of filings.files.filter(({ filingTo }) => filingTo >= since)) {
-    pages.push(await (await secFetch(root + file.name)).json() as SubmissionRows);
+  if (!options.recentOnly) {
+    for (const file of filings.files.filter(({ filingTo }) => filingTo >= since)) {
+      pages.push(await (await secFetch(root + file.name)).json() as SubmissionRows);
+    }
   }
   return pages.flatMap((page) => page.form.flatMap((form, index) => {
     const date = page.reportDate[index];
-    const periodic = /^(10-K|10-Q)$/.test(form) ||
-      (includeAmendments && /^(10-K|10-Q)\/A$/.test(form) && page.isXBRL?.[index] !== 0 && page.isXBRL?.[index] !== false);
+    const amendment = form.endsWith("/A");
+    const periodic = PERIODIC_FORMS.test(form) && (options.includeForeignAnnual || form.startsWith("10-")) &&
+      (!amendment || (includeAmendments && page.isXBRL?.[index] !== 0 && page.isXBRL?.[index] !== false));
     return periodic && date >= since && page.primaryDocument[index]
       ? [{ accession: page.accessionNumber[index], date, document: page.primaryDocument[index],
-        filed: page.filingDate?.[index], amendment: form.endsWith("/A") }] : [];
+        filed: page.filingDate?.[index], amendment }] : [];
   }));
 }
 
@@ -693,7 +730,7 @@ function cashFlowQuarters(points: FactPoint[]) {
   return [...quarters.values()].sort((a, b) => a.end.localeCompare(b.end));
 }
 
-function splitAdjustedEps(facts: CompanyFacts, eps: FactPoint[]) {
+export function splitAdjustedEps(facts: CompanyFacts, eps: FactPoint[]) {
   const tags = pickUnit(facts, ["StockholdersEquityNoteStockSplitConversionRatio1"], ["pure"]);
   const today = new Date().toISOString().slice(0, 10);
   const activeTags = tags.filter(({ end, val }) => end <= today && Number.isFinite(val) && val > 0 && val !== 1);
@@ -767,15 +804,17 @@ function splitAdjustedEps(facts: CompanyFacts, eps: FactPoint[]) {
     if (dates.size === 1) events.push({ date: [...dates][0], ratio });
   }
 
+  const factorAtFiling = (basisDate: string) => events.reduce((total, event) =>
+    basisDate < event.date ? total * event.ratio : total, 1);
   const points = eps.map((point) => {
     // A comparative value filed after the split is already on the new basis.
     // Normalize each submission before choosing a quarter or subtracting annual totals.
     const basisDate = point.filed ?? point.end;
-    const factor = events.reduce((total, event) => basisDate < event.date ? total * event.ratio : total, 1);
+    const factor = factorAtFiling(basisDate);
     return factor === 1 ? point : { ...point, val: point.val / factor };
   });
   const basis = events.sort((a, b) => a.date.localeCompare(b.date)).map(({ ratio }) => ratio).join(",") || "1";
-  return { points, basis };
+  return { points, basis, factorAtFiling };
 }
 
 /**

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ADJUSTED_EPS_TICKERS, refreshAdjustedEps } from "@/lib/adjustedPe";
+import { refreshBackfilledAdjustedEps } from "@/lib/adjustedPe";
 import { authorizedCron } from "@/lib/cronAuth";
 import { refreshCompanyFilings } from "@/lib/companyData";
 import { hasStockStore, trackedTickers } from "@/lib/stockStore";
@@ -20,18 +20,15 @@ export async function GET(request: Request) {
 
   if (!hasStockStore()) return NextResponse.json({ error: "Stock storage unavailable" }, { status: 503 });
   const startedAt = Date.now();
-  const [tickers, adjustedEps] = await Promise.all([
-    trackedTickers(50).catch(() => null),
-    Promise.all(ADJUSTED_EPS_TICKERS.map(async (ticker) => {
-      try {
-        return { ticker, ...await refreshAdjustedEps(ticker) };
-      } catch (error) {
-        console.error("Cron adjusted EPS refresh failed for " + ticker, error);
-        return { ticker, status: "error", rows: 0 };
-      }
-    })),
-  ]);
-  if (!tickers) return NextResponse.json({ error: "Unable to read stock storage" }, { status: 502 });
+  const adjustedEpsRefresh = refreshBackfilledAdjustedEps(startedAt).catch((error) => {
+    console.error("Cron could not check adjusted EPS filings", error);
+    return null;
+  });
+  const tickers = await trackedTickers(50).catch(() => null);
+  if (!tickers) {
+    await adjustedEpsRefresh;
+    return NextResponse.json({ error: "Unable to read stock storage" }, { status: 502 });
+  }
 
   const results: Array<{ ticker: string; status: string }> = [];
   for (const ticker of tickers) {
@@ -44,12 +41,18 @@ export async function GET(request: Request) {
     }
   }
 
+  const adjustedEps = await adjustedEpsRefresh;
+  const errors = results.filter(({ status }) => status === "error").length +
+    (adjustedEps ? adjustedEps.results.filter(({ status }) => status === "error").length + adjustedEps.indexErrors.length : 1);
   return NextResponse.json({
     ranAt: new Date().toISOString(),
     attempted: results.length,
     updated: results.filter((r) => r.status === "updated").length,
-    errors: [...results, ...adjustedEps].filter((r) => r.status === "error").length,
+    errors,
     results,
-    adjustedEps,
+    adjustedEps: adjustedEps?.results ?? [],
+    adjustedEpsEnrolled: adjustedEps?.enrolled,
+    adjustedEpsDeferredIssuers: adjustedEps?.deferredIssuers,
+    adjustedEpsIndexErrors: adjustedEps?.indexErrors,
   }, { status: results.length && results.every(({ status }) => status === "error") ? 502 : 200 });
 }

@@ -82,8 +82,36 @@ export function readAdjustedEps(ticker: string) {
   );
 }
 
-export function saveAdjustedEps(rows: AdjustedEpsRecord[]) {
-  return upsert("adjusted_eps_history", "ticker,source_accession", rows);
+export async function insertAdjustedEps(rows: AdjustedEpsRecord[]) {
+  if (!rows.length) return 0;
+  const inserted = await rest<{ source_accession: string }[]>("adjusted_eps_history",
+    { on_conflict: "ticker,source_accession", select: "source_accession" }, rows, "POST",
+    "resolution=ignore-duplicates,return=representation");
+  return inserted.length;
+}
+
+export async function readAdjustedEpsIssuers() {
+  const rows: { ticker: string; cik: number }[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const page = await rest<typeof rows>("tickers", {
+      select: "ticker,cik,adjusted_eps_history!inner()",
+      cik: "not.is.null", order: "ticker.asc", offset: String(offset), limit: "500",
+    });
+    rows.push(...page);
+    if (page.length < 500) return rows;
+  }
+}
+
+export async function readAdjustedEpsAccessionsSince(since: string) {
+  const seen = new Set<string>();
+  for (let offset = 0; ; offset += 500) {
+    const page = await rest<{ ticker: string; source_accession: string }[]>("adjusted_eps_history", {
+      select: "ticker,source_accession", filed_on: "gte." + since,
+      order: "ticker.asc,source_accession.asc", offset: String(offset), limit: "500",
+    });
+    for (const row of page) seen.add(row.ticker + ":" + row.source_accession);
+    if (page.length < 500) return seen;
+  }
 }
 
 export async function readTicker(ticker: string) {

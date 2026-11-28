@@ -349,25 +349,23 @@ function LearnPanels() {
   ];
 }
 
-export function StockAnalysis({ mode, selected, snapshot, loading, showUsd }: {
+export function StockAnalysis({ mode, selected, snapshot, loading, showUsd, active = true }: {
   mode: "fundamental" | "valuation";
   selected: string;
   snapshot: CompanySnapshot | null;
   loading: boolean;
   showUsd?: boolean;
+  active?: boolean;
 }) {
+  if (mode === "fundamental") return (
+    <section className="panels stock-analysis-panels" data-analysis={mode} aria-label="Stock fundamentals">
+      <Fundamentals ticker={selected} snapshot={snapshot} loading={loading} showUsd={showUsd} />
+    </section>
+  );
   return (
-    <section className="panels stock-analysis-panels" data-analysis={mode} aria-label={mode === "fundamental" ? "Stock fundamentals" : "Stock valuation"}>
-      {mode === "fundamental" ? (
-        <Fundamentals ticker={selected} snapshot={snapshot} loading={loading} showUsd={showUsd} />
-      ) : (
-        <>
-          <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} />
-          {(selected === "AMZN" || selected === "GOOG") && (
-            <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} adjustedPe />
-          )}
-        </>
-      )}
+    <section className="panel panels stock-analysis-panels" data-analysis={mode} data-paired="true" aria-label="Stock valuation">
+      <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} paired />
+      <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} paired adjustedPe loadAdjustedHistory={active} />
     </section>
   );
 }

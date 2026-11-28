@@ -10,7 +10,6 @@ create table if not exists public.adjusted_eps_history (
   adjusted_ttm_eps double precision,
   inputs jsonb,
   primary key (ticker, source_accession),
-  check (ticker in ('AMZN', 'GOOG')),
   check (filed_on >= source_quarter and filed_on >= ttm_quarter),
   check (inputs is null or jsonb_typeof(inputs) = 'object')
 );

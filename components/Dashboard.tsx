@@ -774,7 +774,8 @@ export function Dashboard() {
                       <StockAnalysis mode="fundamental" selected={selected} snapshot={selectedSnapshot} loading={selectedSnapshotLoading} showUsd={fundamentalsInUsd} />
                     </div>
                     <div className="stock-analysis-pane" hidden={stockAnalysis !== "valuation"}>
-                      <StockAnalysis mode="valuation" selected={selected} snapshot={selectedSnapshot} loading={selectedSnapshotLoading} />
+                      <StockAnalysis mode="valuation" selected={selected} snapshot={selectedSnapshot}
+                        loading={selectedSnapshotLoading} active={stockAnalysis === "valuation"} />
                     </div>
                   </>}
                 </>

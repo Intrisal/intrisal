@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ChartReveal } from "@/components/ChartReveal";
 import { ChartRangeControl, monthsBefore, RANGE_MONTHS, RANGE_OPTIONS, type Range } from "@/components/ChartRangeControl";
+import { fittedChartAxis } from "@/lib/chartAxis";
 import { fmt } from "@/lib/market";
 import type { CompanySnapshot } from "@/lib/companyData";
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
@@ -13,24 +14,45 @@ import type { AdjustedPeDay } from "@/lib/adjustedPe";
 const VALUATION_MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 const VALUATION_DAY_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const VALUATION_CLOSE_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-const FAIR_VALUE_PERCENT = 5.5;
+const FAIR_VALUE_PERCENT = 10;
 const VALUATION_STATUS = { below: "Undervalued", fair: "Fair Value", above: "Overvalued" } as const;
+const MEDIAN_WINDOWS = [5, 10] as const;
+type MedianYears = typeof MEDIAN_WINDOWS[number];
+const DEFAULT_CHART_RANGE: Range = "5Y";
 
 function multiple(value: number) {
   return `${fmt(value, 1)}x`;
 }
 
-export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false }: {
+const PLOT_WIDTH = 800;
+const DEFAULT_PLOT_HEIGHT = 278;
+
+export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false, paired = false, loadAdjustedHistory = true }: {
   ticker: string;
   snapshot: CompanySnapshot | null;
   loading: boolean;
   adjustedPe?: boolean;
+  paired?: boolean;
+  loadAdjustedHistory?: boolean;
 }) {
   const id = useId();
+  const panelClass = paired ? "valuation-history" : "panel valuation-history";
+  const [plotHeight, setPlotHeight] = useState(DEFAULT_PLOT_HEIGHT);
+  const plotObserver = useRef<ResizeObserver | null>(null);
+  const plotRef = useCallback((plot: SVGSVGElement | null) => {
+    plotObserver.current?.disconnect();
+    if (!paired || !plot) return;
+    // Measure the CSS-sized plot so the axes and hover coordinates share an undistorted viewBox.
+    plotObserver.current = new ResizeObserver(([{ contentRect: { width, height } }]) => {
+      if (width > 0 && height > 0) setPlotHeight(Math.round(height * PLOT_WIDTH / width));
+    });
+    plotObserver.current.observe(plot);
+  }, [paired]);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [rangeSelection, setRangeSelection] = useState<{ ticker: string; range: Range }>({ ticker, range: "10Y" });
+  const [rangeSelection, setRangeSelection] = useState<{ ticker: string; range: Range }>({ ticker, range: DEFAULT_CHART_RANGE });
+  const [medianSelection, setMedianSelection] = useState<{ ticker: string; years: MedianYears }>({ ticker, years: 5 });
   const [dailyData, setDailyData] = useState<{ ticker: string; daily: DailyValuation[] } | null>(null);
-  const [peData, setPeData] = useState<{ ticker: string; daily: AdjustedPeDay[] } | null>(null);
+  const [peData, setPeData] = useState<{ ticker: string; daily: AdjustedPeDay[] | null } | null>(null);
   const metric = adjustedPe ? "Adjusted TTM P/E" : "EV/NOPAT";
   const loadDaily = !adjustedPe && !loading && snapshot?.ticker === ticker && snapshot.valuationReview === true &&
     snapshot.valuationAverageYears != null && snapshot.evNopatAvg != null &&
@@ -51,7 +73,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   }, [loadDaily, ticker]);
 
   useEffect(() => {
-    if (!adjustedPe) return;
+    if (!adjustedPe || !loadAdjustedHistory) return;
     const controller = new AbortController();
     fetch(`/api/stock/${encodeURIComponent(ticker)}/adjusted-pe`, { signal: controller.signal })
       .then(async (response) => {
@@ -60,14 +82,14 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
         if (!controller.signal.aborted) setPeData({ ticker, daily });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setPeData({ ticker, daily: [] });
+        if (!controller.signal.aborted) setPeData({ ticker, daily: null });
       });
     return () => controller.abort();
-  }, [adjustedPe, ticker]);
+  }, [adjustedPe, loadAdjustedHistory, ticker]);
 
   if (!adjustedPe && !loading && snapshot?.valuationHasNegativeOperatingIncome) {
     return (
-      <article className="panel valuation-history" aria-labelledby={id + "-title"}>
+      <article className={panelClass} aria-labelledby={id + "-title"}>
         <h3 id={id + "-title"}>EV/NOPAT</h3>
         <p className="valuation-caption" role="status">
           Can’t calculate data for this stock because trailing 12-month operating income was negative.
@@ -77,14 +99,19 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   }
 
   if (!adjustedPe && !loading && snapshot?.valuationHidden) {
-    return <article className="panel valuation-history" aria-labelledby={id + "-title"} />;
+    return (
+      <article className={panelClass} aria-labelledby={id + "-title"}>
+        <h3 id={id + "-title"}>{metric}</h3>
+        <p className="valuation-caption" role="status">EV/NOPAT history is unavailable for this stock.</p>
+      </article>
+    );
   }
 
   const quarterly = adjustedPe ? [] : snapshot?.valuationPoints ?? [];
   const daily = loadDaily && dailyData?.ticker === ticker ? dailyData.daily : [];
-  const peDays = adjustedPe && peData?.ticker === ticker ? peData.daily : [];
-  const dailyPoints = adjustedPe ? peDays.map(({ date, quarter, close, adjustedEps, reportedEps, pe }) => ({
-    date, point: pe == null ? null : { quarter, close, value: pe, adjustedEps, reportedEps },
+  const peDays = adjustedPe && peData?.ticker === ticker ? peData.daily ?? [] : [];
+  const dailyPoints = adjustedPe ? peDays.map(({ date, quarter, close, adjustedEps, pe }) => ({
+    date, point: pe == null ? null : { quarter, close, value: pe, adjustedEps },
   })) : daily.map(({ date, point }) => ({
     date, point: point ? { ...point, value: point.ev_nopat } : null,
   }));
@@ -99,7 +126,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   const cutoffFor = (range: Range) => monthsBefore(new Date(latestDate), RANGE_MONTHS[range]).getTime();
   const penultimateDate = Date.parse(series.at(-2)?.date ?? "");
   const unavailableRanges = RANGE_OPTIONS.filter((range) => range !== "10Y" && penultimateDate < cutoffFor(range));
-  const selectedRange = rangeSelection.ticker === ticker ? rangeSelection.range : "10Y";
+  const selectedRange = rangeSelection.ticker === ticker ? rangeSelection.range : DEFAULT_CHART_RANGE;
   const range = unavailableRanges.includes(selectedRange) ? "10Y" : selectedRange;
   const visibleSeries = range === "10Y" ? series : series.filter(({ date }) => Date.parse(date) >= cutoffFor(range));
   const quarters = visibleSeries.map((point) => ({
@@ -107,17 +134,25 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
     value: point.value, price: point.close,
     nopat: "nopat" in point ? point.nopat : null,
     adjustedEps: "adjustedEps" in point ? point.adjustedEps : null,
-    reportedEps: "reportedEps" in point ? point.reportedEps : null,
     sharesEstimated: "sharesEstimated" in point && point.sharesEstimated,
     earningsRelease: "earningsRelease" in point && point.earningsRelease,
     debtEstimate: "debtEstimate" in point ? point.debtEstimate : undefined,
   }));
   const count = quarters.length;
-  const average = adjustedPe ? (series.length ? series.reduce((sum, point) => sum + point.value, 0) / series.length : null)
-    : snapshot?.evNopatAvg;
-  const averageYears = adjustedPe ? 10 : snapshot?.valuationAverageYears ?? 10;
-  const averageLabel = adjustedPe ? "10Y window avg" : `${averageYears}Y avg`;
-  const benchmarkQuarters = adjustedPe ? undefined : snapshot?.evNopatAverageQuarters;
+  const tenYearMedianAvailable = adjustedPe || snapshot?.valuationAverageYears === 10;
+  const medianYears = medianSelection.ticker === ticker && tenYearMedianAvailable ? medianSelection.years : 5;
+  const medianLabel = `${medianYears}Y median`;
+  const benchmarkPoints = adjustedPe ? peDays.map(({ date, pe }) => ({ date, value: pe }))
+    : quarterly.map(({ quarter, ev_nopat }) => ({ date: quarter, value: ev_nopat }));
+  const benchmarkEnd = Date.parse(benchmarkPoints.at(-1)?.date ?? "");
+  const benchmarkStart = monthsBefore(new Date(benchmarkEnd), medianYears * 12).getTime();
+  const benchmarkSample = benchmarkPoints.filter(({ date }) =>
+    adjustedPe ? Date.parse(date) >= benchmarkStart : Date.parse(date) > benchmarkStart);
+  const benchmarkValues = benchmarkSample.flatMap(({ value }) => value != null && Number.isFinite(value) ? [value] : [])
+    .sort((a, b) => a - b);
+  const midpoint = Math.floor(benchmarkValues.length / 2);
+  const median = benchmarkValues.length === 0 ? null : benchmarkValues.length % 2 === 0
+    ? (benchmarkValues[midpoint - 1] + benchmarkValues[midpoint]) / 2 : benchmarkValues[midpoint];
   const review = adjustedPe || snapshot?.valuationReview === true;
   const currentUnavailable = snapshot?.currentValuationUnavailable;
   const currentCannotCalculate = currentUnavailable?.kind === "nonpositive-nopat";
@@ -138,12 +173,15 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
       {snapshot.valuationDebtEstimate && " · Estimated debt"}
     </p>
   );
-  if (count < 2 || average == null || (!adjustedPe && quarterly.length === 0)) return (
-    <article className="panel valuation-history" aria-labelledby={id + "-title"}>
-      {adjustedPe && <h3 id={id + "-title"}>{metric}</h3>}
-      {adjustedPe ? <p className="valuation-caption" role="status">
-        {peData?.ticker !== ticker ? "Loading adjusted P/E history…" : "Insufficient data for TTM diluted EPS excluding equity-investment gains and losses."}
-      </p> : loading ? <p>Loading valuation history…</p> : null}
+  if (count < 2 || median == null) return (
+    <article className={panelClass} aria-labelledby={id + "-title"}>
+      <h3 id={id + "-title"}>{metric}</h3>
+      <p className="valuation-caption" role="status">
+        {adjustedPe ? peData?.ticker !== ticker ? "Loading adjusted P/E history…"
+          : peData.daily == null ? "Adjusted P/E history couldn’t load."
+          : "Insufficient price or adjusted EPS history for this stock."
+          : loading ? "Loading valuation history…" : "EV/NOPAT history is unavailable for this stock."}
+      </p>
     </article>
   );
   const selectedIndex = quarters.findIndex(({ quarter }) => quarter === hovered);
@@ -157,17 +195,26 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   const current = quarters[active];
   const currentComparison = adjustedPe ? peDays.at(-1)?.pe : dailyAvailable ? latest.value : review ? snapshot?.evNopat : null;
   const comparison = currentComparison ?? latestQuarter?.ev_nopat;
-  const difference = comparison == null ? 0 : (comparison / average - 1) * 100;
+  const difference = comparison == null ? 0 : (comparison / median - 1) * 100;
   // Keep the exact boundaries inclusive despite floating-point noise.
   const comparisonPercent = Number(difference.toFixed(10));
   const valuationSide = comparisonPercent < -FAIR_VALUE_PERCENT ? "below"
     : comparisonPercent > FAIR_VALUE_PERCENT ? "above" : "fair";
   const tickIndexes = [...new Set(Array.from({ length: 5 }, (_, i) => Math.round(i * (count - 1) / 4)))];
 
-  const left = 46;
+  const { min, max, step: tickStep } = fittedChartAxis(Math.min(median, ...values), Math.max(median, ...values), 7);
+  const tickDecimals = tickStep.toFixed(12).replace(/0+$/, "").split(".")[1]?.length ?? 0;
+  const yTicks = Array.from({ length: Math.round((max - min) / tickStep) + 1 }, (_, index) => {
+    const value = Number((min + index * tickStep).toFixed(tickDecimals));
+    return { value, label: fmt(value, tickDecimals) + "x" };
+  });
+  const longestTick = Math.max(...yTicks.map(({ label }) => label.length));
+  const left = 46 + Math.max(0, longestTick - 4) * 13;
   const right = 784;
   const top = 24;
-  const bottom = 248;
+  const height = paired ? plotHeight : DEFAULT_PLOT_HEIGHT;
+  const bottom = height - 30;
+  const dateLabelY = height - 6;
   const step = (right - left) / Math.max(1, count - 1);
   const dates = quarters.map(({ quarter }) => Date.parse(quarter));
   const firstDate = dates[0];
@@ -178,11 +225,6 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   const dateSpan = chartEnd - firstDate;
   const dateX = (date: number) => left + (right - left) * (date - firstDate) / dateSpan;
   const hoverWidth = review ? Math.min(step, (right - left) * 90 * DAY_MS / dateSpan) : step;
-  const visibleLow = Math.min(average, ...values);
-  const visibleHigh = Math.max(average, ...values);
-  const padding = (visibleHigh - visibleLow) * 0.13 || 1;
-  const min = visibleLow - padding;
-  const max = visibleHigh + padding;
   const x = (index: number) => review ? dateX(dates[index]) : left + index * step;
   const visibleGaps = dailyAvailable ? dailyPoints.flatMap(({ date, point }) =>
     point || date < quarters[0].quarter || date > latest.quarter ? [] : [{
@@ -192,13 +234,19 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
     return date >= firstDate && date <= chartEnd;
   }) : [];
   const activeGap = visibleGaps.find(({ quarter }) => quarter === hovered);
+  const activeDate = activeGap?.quarter ?? current.quarter;
+  const detailNotes = activeGap ? [activeGap.detail] : [
+    current.earningsRelease && "Earnings release",
+    current.sharesEstimated && "Estimated shares",
+    current.debtEstimate && (current.debtEstimate.method === "assumed-zero" ? "Debt assumed $0" : "Debt carried forward"),
+  ].filter(Boolean);
   const activeX = activeGap ? dateX(Date.parse(activeGap.quarter)) : x(active);
   const hitTargets = [
     ...quarters.map(({ quarter }, index) => ({ quarter, x: x(index), gap: false })),
     ...visibleGaps.map(({ quarter }) => ({ quarter, x: dateX(Date.parse(quarter)), gap: true })),
   ].sort((a, b) => a.x - b.x);
   const y = (value: number) => bottom - ((value - min) / (max - min)) * (bottom - top);
-  const baseline = y(average);
+  const baseline = y(median);
   const segments: { start: number; end: number; path: string }[] = [];
   for (const [index, value] of values.entries()) {
     const segment = segments.at(-1);
@@ -218,9 +266,21 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   }
   const line = segments.map(({ path }) => path).join(" ");
   const fill = segments.map(({ start, end, path }) => `${path} L ${x(end)} ${baseline} H ${x(start)} Z`).join(" ");
+  const firstBenchmarkPeDate = adjustedPe ? benchmarkSample.find(({ value }) => value != null && Number.isFinite(value))?.date : undefined;
+  const historyNotes = adjustedPe ? [
+    firstBenchmarkPeDate && Date.parse(firstBenchmarkPeDate) - benchmarkStart > 31 * DAY_MS &&
+      `${medianLabel} uses data from ${VALUATION_MONTH_FORMAT.format(Date.parse(firstBenchmarkPeDate))}`,
+  ].filter(Boolean) : [
+    currentComparison == null && !currentCannotCalculate && "Badge uses latest quarter-end EV/NOPAT",
+    !dailyAvailable && (loadDaily && dailyData?.ticker !== ticker
+      ? "Loading daily valuation history…" : loadDaily ? "Daily history unavailable · Showing quarterly history" : "Quarterly history"),
+    benchmarkValues.length < medianYears * 4 &&
+      `${medianLabel} uses ${benchmarkValues.length} available quarters`,
+    quarters.some(({ debtEstimate }) => debtEstimate) && "Includes estimated debt",
+  ].filter(Boolean);
 
   return (
-    <article className="panel valuation-history" aria-labelledby={id + "-title"}>
+    <article className={panelClass} aria-labelledby={id + "-title"}>
       <div className="valuation-header">
         <div>
           <h3 id={id + "-title"}>{metric}</h3>
@@ -228,7 +288,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
             <div className="valuation-status">{VALUATION_STATUS[valuationSide]}</div>
             <span className="valuation-badge">
               {difference > 0 ? "+" : ""}
-              {fmt(difference, 1)}% vs {averageLabel}
+              {fmt(difference, 1)}% vs {medianLabel}
             </span>
           </div>}
         </div>
@@ -237,29 +297,38 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
           setRangeSelection({ ticker, range: item });
         }} />
       </div>
-      {adjustedPe && currentComparison == null ? <p className="valuation-caption">
-        Current adjusted P/E unavailable.
-      </p> : dailyAvailable ? (
-        <p className="valuation-caption">
-          Latest daily {metric} <strong>{multiple(latest.value)}</strong>
-          {" · Close as of "}
-          <time dateTime={latest.quarter}>{VALUATION_CLOSE_FORMAT.format(Date.parse(latest.quarter))}</time>
-        </p>
-      ) : currentMultiple}
-      <p className="valuation-caption">
-        {!adjustedPe && currentComparison == null && !currentCannotCalculate ? "Badge uses latest quarter-end EV/NOPAT · " : ""}
-        {adjustedPe ? `Excludes disclosed equity-investment gains and losses · Estimated adjustments · ${series.length.toLocaleString("en-US")} of ${peDays.length.toLocaleString("en-US")} trading days in the average`
-          : dailyAvailable ? "Daily closes · Financials take effect after SEC filing" : loadDaily && dailyData?.ticker !== ticker
-          ? "Loading daily valuation history…" : loadDaily ? "Daily history unavailable · Showing quarterly history" : "Quarterly history"}{benchmarkQuarters != null && benchmarkQuarters < averageYears * 4
-          ? ` · ${averageYears}Y average uses ${benchmarkQuarters} available quarters` : ""}
-        {quarters.some(({ debtEstimate }) => debtEstimate) && " · Includes estimated debt"}
-      </p>
+      <div className="valuation-meta">
+        {adjustedPe && currentComparison == null ? <p className="valuation-caption">
+          Current adjusted P/E unavailable.
+        </p> : dailyAvailable ? (
+          <p className="valuation-caption">
+            Latest {metric} <strong>{multiple(latest.value)}</strong>
+            {" · Close as of "}
+            <time dateTime={latest.quarter}>{VALUATION_CLOSE_FORMAT.format(Date.parse(latest.quarter))}</time>
+          </p>
+        ) : currentMultiple}
+        <div className="valuation-median">
+          <span>Median</span>
+          <div className="valuation-median-control" role="group" aria-label={metric + " median window"}>
+            {MEDIAN_WINDOWS.map((years) => (
+              <button type="button" key={years} aria-pressed={medianYears === years}
+                disabled={years === 10 && !tenYearMedianAvailable}
+                title={years === 10 && !tenYearMedianAvailable ? "10-year EV/NOPAT history unavailable" : undefined}
+                onClick={() => setMedianSelection({ ticker, years })}>
+                {years}Y
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      {historyNotes.length > 0 && <p className="valuation-caption">{historyNotes.join(" · ")}</p>}
 
       <svg
+        ref={plotRef}
         className="valuation-plot"
-        viewBox="0 0 800 278"
+        viewBox={`0 0 ${PLOT_WIDTH} ${height}`}
         role="img"
-        aria-label={`${ticker} ${metric} over ${count} ${dailyAvailable ? "trading days" : "quarters"} with a dashed ${averageYears}-year ${adjustedPe ? "daily" : "quarterly"} average`}
+        aria-label={`${ticker} ${metric} over ${count} ${dailyAvailable ? "trading days" : "quarters"} with a dashed ${medianYears}-year ${adjustedPe ? "daily" : "quarterly"} median`}
         onPointerLeave={() => setHovered(null)}
       >
         <defs>
@@ -270,13 +339,12 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
             <rect x={left} y={baseline} width={right - left} height={Math.max(0, bottom - baseline)} />
           </clipPath>
         </defs>
-        {[0, 1, 2, 3, 4].map((tick) => {
-          const value = min + ((max - min) * tick) / 4;
+        {yTicks.map(({ value, label }) => {
           return (
-            <g key={tick}>
+            <g key={value}>
               <line className="valuation-gridline" x1={left} x2={right} y1={y(value)} y2={y(value)} />
               <text x={left - 7} y={y(value)} textAnchor="end" dominantBaseline="middle">
-                {fmt(value, 0)}x
+                {label}
               </text>
             </g>
           );
@@ -284,7 +352,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
         {review ? tickIndexes.map((_, index) => {
           const progress = index / (tickIndexes.length - 1);
           const date = new Date(firstDate + dateSpan * progress);
-          return <text key={index} x={dateX(date.getTime())} y={272} textAnchor={progress === 0 ? "start" : progress === 1 ? "end" : "middle"}>
+          return <text key={index} x={dateX(date.getTime())} y={dateLabelY} textAnchor={progress === 0 ? "start" : progress === 1 ? "end" : "middle"}>
             {dateSpan >= 4 * 365 * DAY_MS ? date.getUTCFullYear()
               : range === "3M" || range === "6M" ? VALUATION_DAY_FORMAT.format(date)
                 : VALUATION_MONTH_FORMAT.format(date)}
@@ -293,7 +361,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
           <text
             key={index}
             x={x(index)}
-            y={272}
+            y={dateLabelY}
             textAnchor={index === 0 ? "start" : index === count - 1 ? "end" : "middle"}
           >
             {quarterLabelFromEnd(quarters[index].quarter).slice(-4)}
@@ -341,30 +409,29 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
 
       <div className="valuation-legend">
         <span>{metric} by {dailyAvailable ? "trading day" : "quarter"}</span>
-        <span>{adjustedPe ? "10Y window daily average" : `${averageYears}Y quarterly average`} · {multiple(average)}</span>
+        <span>{medianYears}Y {adjustedPe ? "daily" : "quarterly"} median · {multiple(median)}</span>
       </div>
-      {activeGap ? <p className="valuation-quarter">
-        <strong>{dailyAvailable ? VALUATION_CLOSE_FORMAT.format(Date.parse(activeGap.quarter)) : quarterLabelFromEnd(activeGap.quarter)}</strong>
-        <span>{metric} <strong>{activeGap.kind === "nonpositive-nopat" ? "Can’t calculate" : "Data unavailable"}</strong></span>
-        <span>{activeGap.detail}</span>
-      </p> : <p className="valuation-quarter">
-        <strong>{dailyAvailable ? VALUATION_CLOSE_FORMAT.format(Date.parse(current.quarter)) : quarterLabelFromEnd(current.quarter)}</strong>
-        <span>
-          {metric} <strong>{multiple(current.value)}</strong>
-        </span>
-        <span>
-          {adjustedPe ? "Split-adjusted close" : "Price"} <strong>${fmt(current.price, 2)}</strong>
-        </span>
-        {adjustedPe ? <>
-          {current.adjustedEps != null && <span>Adjusted TTM EPS <strong>${fmt(current.adjustedEps, 2)}</strong></span>}
-          {current.reportedEps != null && <span>Reported TTM EPS <strong>${fmt(current.reportedEps, 2)}</strong></span>}
-        </> : current.nopat != null && <span>TTM NOPAT <strong>${fmt(current.nopat, 1)}B</strong></span>}
-        {current.earningsRelease && <span>Earnings release</span>}
-        {dailyAvailable && <span>Financials through {quarterLabelFromEnd(current.financialQuarter)}</span>}
-        {current.sharesEstimated && <span>Estimated shares</span>}
-        {current.debtEstimate && <span>{current.debtEstimate.method === "assumed-zero"
-          ? "Debt assumed $0" : "Debt carried forward"}</span>}
-      </p>}
+      <dl className="valuation-summary valuation-details" data-adjusted-pe={adjustedPe || undefined}>
+        <div>
+          <dt>{dailyAvailable ? "Date" : "Quarter"}</dt>
+          <dd>{dailyAvailable ? VALUATION_CLOSE_FORMAT.format(Date.parse(activeDate)) : quarterLabelFromEnd(activeDate)}</dd>
+        </div>
+        <div>
+          <dt>{metric}</dt>
+          <dd>{activeGap ? activeGap.kind === "nonpositive-nopat" ? "Can’t calculate" : "Data unavailable" : multiple(current.value)}</dd>
+        </div>
+        {!adjustedPe && <div>
+          <dt>Price</dt>
+          <dd>{activeGap ? "—" : "$" + fmt(current.price, 2)}</dd>
+        </div>}
+        <div>
+          <dt>{adjustedPe ? "Adjusted TTM EPS" : "TTM NOPAT"}</dt>
+          <dd>{activeGap ? "—" : adjustedPe
+            ? current.adjustedEps == null ? "—" : "$" + fmt(current.adjustedEps, 2)
+            : current.nopat == null ? "—" : "$" + fmt(current.nopat, 1) + "B"}</dd>
+        </div>
+      </dl>
+      {detailNotes.length > 0 && <p className="valuation-caption">{detailNotes.join(" · ")}</p>}
 
       <dl className="valuation-summary">
         <div>
@@ -376,9 +443,9 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
           <dd>{multiple(high)}</dd>
         </div>
         <div>
-          <dt>Current vs {averageLabel}</dt>
+          <dt>Current vs {medianLabel}</dt>
           <dd>
-            {currentComparison == null ? "Data unavailable" : `${multiple(currentComparison)} vs ${multiple(average)}`}
+            {currentComparison == null ? "Data unavailable" : `${multiple(currentComparison)} vs ${multiple(median)}`}
           </dd>
         </div>
         <div>
