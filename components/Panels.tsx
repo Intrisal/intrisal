@@ -5,6 +5,7 @@ import { AnimatedPrice } from "@/components/AnimatedPrice";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Fundamentals } from "@/components/Fundamentals";
 import { RemoveIcon } from "@/components/Icons";
+import { SignalDataWarning } from "@/components/SignalDataWarning";
 import { ValuationHistory } from "@/components/ValuationHistory";
 import { ValuationOverallSignal } from "@/components/ValuationOverallSignal";
 import type { CompanySnapshot } from "@/lib/companyData";
@@ -167,7 +168,12 @@ function WatchPanel({
                   <span><strong>{tk}</strong><small>{name}</small></span>
                 </button></th>
                 <td title={quote ? "Close as of " + quote.date : undefined}>{quote ? <><AnimatedPrice price={quote.price} /><small><Chg c={quote.change} /></small></> : "—"}</td>
-                <td className={stockSignalClass(snap?.signal)}>{snap?.signal ?? missing}</td>
+                <td className={stockSignalClass(snap?.signal)}>
+                  <span className="stock-signal-row watch-signal">
+                    {snap?.signal ?? missing}
+                    {snap?.signal && (revenue === null || overall === null) && <SignalDataWarning />}
+                  </span>
+                </td>
                 {[revenue, eps].map((growth, i) => <td key={i} className={growth == null || growth === 0 ? "" : growth > 0 ? "chg-up" : "chg-dn"}>
                   {growth == null ? missing : (growth > 0 ? "+" : "") + fmt(growth, 1) + "%"}
                 </td>)}

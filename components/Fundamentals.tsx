@@ -1,13 +1,15 @@
 "use client";
 
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { availableChartRanges } from "@/components/ChartRangeControl";
 import type { CompanySnapshot } from "@/lib/companyData";
 import type { ReportingCurrency } from "@/lib/edgar";
+import { DAY_MS } from "@/lib/fiscalQuarter";
 import { fmt } from "@/lib/market";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 
 const PERIODS = [1, 2, 5, 10, 15] as const;
-type Period = (typeof PERIODS)[number];
+type Period = (typeof PERIODS)[number] | "MAX";
 type Unit = "billions" | "perShare" | "percent";
 const CURRENCY_PREFIX: Partial<Record<ReportingCurrency, string>> = {
   USD: "$", EUR: "€", TWD: "NT$", CAD: "C$", GBP: "£", JPY: "¥", CNY: "CN¥",
@@ -57,43 +59,13 @@ function metricAxis(values: number[]) {
   };
 }
 
-function periodStart(latest: string, years: Period) {
-  return `${Number(latest.slice(0, 4)) - years}${latest.slice(4)}`;
-}
-
-function periodChange(values: number[], dates: string[], years: Period, unit: Unit) {
-  const latestDate = dates.at(-1);
+function periodChange(values: number[], dates: string[], index: number, unit: Unit) {
   const latest = values.at(-1);
-  if (!latestDate || latest == null) return null;
-  const latestMs = Date.parse(latestDate);
-  const target = Date.parse(periodStart(latestDate, years));
-  if (!Number.isFinite(latestMs) || !Number.isFinite(target)) return null;
-
-  // Find the closest available TTM point to the N-year anniversary.
-  let index = -1;
-  let best = Infinity;
-  for (let i = 0; i < dates.length; i++) {
-    const diff = Math.abs(Date.parse(dates[i]) - target);
-    if (diff < best) {
-      best = diff;
-      index = i;
-    }
-  }
-  if (index < 0) return null;
-
-  // Allow fiscal drift; longer windows get more slack so early-history edges still count.
-  const maxDriftDays = years >= 10 ? 220 : years >= 5 ? 140 : 100;
-  if (best > maxDriftDays * 86_400_000) return null;
-
   const start = values[index];
-  const startMs = Date.parse(dates[index]);
+  if (latest == null || start == null) return null;
   if (unit === "percent") return latest - start;
-  if (!(start > 0) || !(latest > 0) || !Number.isFinite(startMs)) return null;
-
-  // CAGR over the actual elapsed span so a 15Y button still works when the
-  // earliest comparable quarter is a few months off the exact anniversary.
-  const actualYears = (latestMs - startMs) / (365.25 * 86_400_000);
-  if (actualYears < years * 0.82 || actualYears > years * 1.18) return null;
+  const actualYears = (Date.parse(dates.at(-1) ?? "") - Date.parse(dates[index])) / (365.25 * DAY_MS);
+  if (!(start > 0) || !(latest > 0) || !(actualYears > 0)) return null;
   return ((latest / start) ** (1 / actualYears) - 1) * 100;
 }
 
@@ -120,7 +92,8 @@ function MetricChart({ label, values, dates, unit, currency, activeIndex, previe
   const axisLabels = axis.ticks.map((value) => formatValue(value, unit,
     Math.abs(value - Number(value.toFixed(axis.decimals))) < 1e-10 ? axis.decimals : Math.min(12, axis.decimals + 2),
     currency, nativeCurrency));
-  const left = nativeCurrency ? Math.max(53, 8 + 7 * Math.max(...axisLabels.map((label) => label.length))) : 53;
+  // Leave room for the longest right-aligned label, including its currency prefix.
+  const left = Math.max(53, 10 + 10 * Math.max(...axisLabels.map((label) => label.length)));
   const right = 373;
   const top = 14;
   const bottom = 191;
@@ -165,6 +138,8 @@ function MetricChart({ label, values, dates, unit, currency, activeIndex, previe
           return (
             <g key={index} onPointerEnter={() => { setKeyboardActive(false); onPreview(index); }} onClick={() => onSelect(index)}>
               <rect className="fundamental-bar" data-active={index === highlightedIndex}
+                data-negative={value < 0 || undefined}
+                style={{ "--bar-entry-delay": `${360 * index / (values.length - 1)}ms` } as CSSProperties}
                 x={x} y={Math.min(y, zero)} width={step * 0.8} height={Math.abs(y - zero)} rx={Math.min(2, step / 4)} />
               <rect className="fundamental-bar-target" x={x} y={top} width={step} height={bottom - top} />
             </g>
@@ -190,13 +165,15 @@ function MetricCard({ label, values, dates, unit, currency, sourceNote, shareBas
 }) {
   const dialogId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [period, setPeriod] = useState<Period>(15);
+  const [selectedPeriod, setPeriod] = useState<Period | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<number | null>(null);
-  const latestDate = dates.at(-1);
-  const cutoff = latestDate ? Date.parse(periodStart(latestDate, period)) - 7 * 86_400_000 : null;
-  const start = cutoff === null ? 0 : Math.max(0, dates.findIndex((date) => Date.parse(date) >= cutoff));
+  // Fiscal quarters can shift by a week across years.
+  const ranges = availableChartRanges(dates, PERIODS, (years) => years * 12, 7, 7);
+  const visibleRange = ranges.find(({ range }) => range === selectedPeriod) ?? ranges.at(-1);
+  const period = visibleRange?.range;
+  const start = visibleRange?.start ?? 0;
   const displayedValues = values.slice(start);
   const last = displayedValues.length - 1;
   const displayedDates = dates.slice(start);
@@ -206,14 +183,14 @@ function MetricCard({ label, values, dates, unit, currency, sourceNote, shareBas
   const title = label.replace(/^TTM\s+/, "");
   const estimated = estimatedEnds?.includes(displayedDates[activeIndex]);
 
-  function selectPeriod(years: Period) {
-    if (years === period) return;
-    setPeriod(years);
+  function selectPeriod(next: Period) {
+    if (next === period) return;
+    setPeriod(next);
     setPreview(null);
     setSelected(null);
   }
 
-  if (displayedValues.length < 2) {
+  if (!visibleRange || displayedValues.length < 2) {
     return (
       <article className="panel fundamental-card">
         <header className="fundamental-card-header">
@@ -234,10 +211,10 @@ function MetricCard({ label, values, dates, unit, currency, sourceNote, shareBas
 
   const periodControls = (
       <div className="fundamental-ranges" role="group" aria-label={label + " chart period"}>
-        {PERIODS.map((years) => {
-          const change = periodChange(values, dates, years, unit);
-          return <button key={years} type="button" aria-pressed={years === period} onClick={() => selectPeriod(years)}>
-            <span>{years}Y</span>
+        {ranges.map(({ range, start }) => {
+          const change = periodChange(values, dates, start, unit);
+          return <button key={range} type="button" aria-pressed={range === period} onClick={() => selectPeriod(range)}>
+            <span>{range === "MAX" ? range : `${range}Y`}</span>
             <strong className={change == null ? undefined : change < 0 ? "chg-dn" : "chg-up"}>
               {change == null ? "—" : formatChange(change, unit)}
             </strong>

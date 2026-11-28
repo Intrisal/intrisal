@@ -1917,7 +1917,40 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         transition: color 0.2s ease;
       }
       .stock-analysis-switch button[aria-pressed="true"] { color: var(--btn-ink); }
+      .stock-analysis-switch button[aria-disabled="true"] { color: var(--ink-3); cursor: not-allowed; }
       .stock-analysis-switch button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+      .stock-analysis-switch button[aria-disabled="true"]:is(:hover, :focus-visible) {
+        background: var(--hover);
+        color: var(--ink-2);
+      }
+      .stock-analysis-tooltip {
+        position: absolute; inset-block-start: calc(100% + 6px); inset-inline-start: 50%;
+        transform: translateX(-50%); width: max-content; max-width: 100%;
+        padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
+        background: var(--panel); color: var(--ink); box-shadow: var(--shadow);
+        font-size: 12px; text-align: center; visibility: hidden; pointer-events: none;
+      }
+      .stock-analysis-switch:has(button[aria-disabled="true"]:is(:hover, :focus-visible)) { z-index: 2; }
+      .stock-analysis-switch:has(button[aria-disabled="true"]:is(:hover, :focus-visible)) .stock-analysis-tooltip {
+        visibility: visible;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        .stock-analysis-switch button[aria-disabled="true"] {
+          transition: background-color 180ms ease, color 180ms ease, transform 180ms ease;
+        }
+        .stock-analysis-switch button[aria-disabled="true"]:is(:hover, :focus-visible) {
+          transform: translateY(-1px);
+        }
+        .stock-analysis-tooltip {
+          opacity: 0;
+          transform: translate(-50%, -4px);
+          transition: opacity 160ms ease, transform 180ms ease, visibility 180ms;
+        }
+        .stock-analysis-switch:has(button[aria-disabled="true"]:is(:hover, :focus-visible)) .stock-analysis-tooltip {
+          opacity: 1;
+          transform: translate(-50%, 0);
+        }
+      }
       html:has(.sidenav) { scrollbar-gutter: stable; }
       .stock-overview {
         display: grid; grid-template-columns: minmax(176px, 1fr) minmax(0, max-content) minmax(176px, 1fr);
@@ -2314,6 +2347,27 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .fundamental-bar { fill: var(--fundamental-bar); opacity: 0.86; }
       .fundamental-bar[data-active="true"] { fill: var(--ink); opacity: 1; }
       .fundamental-bar-target { fill: transparent; cursor: pointer; }
+      @media (prefers-reduced-motion: no-preference) {
+        .fundamental-card:nth-child(2) { --chart-entry-delay: 65ms; }
+        .fundamental-card:nth-child(3) { --chart-entry-delay: 130ms; }
+        .fundamental-card:nth-child(4) { --chart-entry-delay: 195ms; }
+        .fundamental-card:nth-child(5) { --chart-entry-delay: 260ms; }
+        .fundamental-card:nth-child(6) { --chart-entry-delay: 325ms; }
+        .stock-analysis-pane:not([hidden]) .fundamental-card > .fundamental-plot .fundamental-bar {
+          transform-box: fill-box;
+          transform-origin: center bottom;
+          animation: fundamental-bar-enter 520ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+          animation-delay: calc(var(--chart-entry-delay, 0ms) + var(--bar-entry-delay));
+        }
+        .stock-analysis-pane:not([hidden]) .fundamental-card > .fundamental-plot .fundamental-bar[data-negative] {
+          transform-origin: center top;
+        }
+        @keyframes fundamental-bar-enter {
+          0% { opacity: 0; transform: scaleY(0); }
+          65% { opacity: 1; }
+          100% { transform: scaleY(1); }
+        }
+      }
       .fundamental-range-label { margin-top: auto; padding-top: 2px; }
       .fundamental-ranges { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-top: 8px; }
       .fundamental-ranges button { display: grid; gap: 3px; padding: 5px 1px; min-height: 42px; font-variant-numeric: tabular-nums; }
@@ -2338,6 +2392,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .fundamental-dialog .fundamental-ranges {
         grid-template-columns: repeat(5, minmax(0, 1fr)); max-width: 440px; gap: 6px;
       }
+      .fundamental-ranges:has(> :nth-child(6)) { grid-template-columns: repeat(6, minmax(0, 1fr)); }
       @media (max-width: 900px) {
         .fundamental-dialog .fundamental-plot text { font-size: 7px; }
       }
@@ -2370,22 +2425,20 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         .layout.stock { grid-template-columns: 64px minmax(0, 1fr) 64px; gap: clamp(14px, 2vw, 32px); }
       }
       .panel.stock-detail, .watch-panel {
+        --stock-gold: #9b6000;
         --stock-green: #08754f;
         --stock-red: #b33529;
         --stock-neutral: #626b78;
       }
       [data-theme="dark"] :is(.stock-detail, .watch-panel) {
+        --stock-gold: #f6b644;
         --stock-green: #65d29f;
         --stock-red: #ff8c7c;
         --stock-neutral: #aab2c1;
       }
       .panel.stock-detail {
-        --stock-gold: #9b6000;
         display: grid; grid-template-columns: minmax(0, 1fr) clamp(196px, 20%, 248px);
         min-height: 0; padding: 0; border-top: 4px solid var(--stock-gold);
-      }
-      [data-theme="dark"] .stock-detail {
-        --stock-gold: #f6b644;
       }
       .stock-chart-panel { min-width: 0; padding: clamp(15px, 2vw, 26px); }
       .stock-snapshot {
@@ -2542,6 +2595,25 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .stock-snapshot dl > div:last-child { padding-bottom: 0; }
       .stock-snapshot dt { color: var(--ink-2); font-size: 12px; font-weight: 600; }
       .stock-snapshot dd { margin-inline-start: 0; margin-top: 5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .stock-signal-row { position: relative; display: flex; align-items: center; gap: 6px; }
+      .stock-signal-row .stock-signal-warning {
+        display: inline-grid; place-items: center; flex: none;
+        padding: 0; border: 0; border-radius: 4px; background: transparent;
+        color: var(--stock-gold); cursor: help;
+      }
+      .stock-signal-warning:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+      .stock-signal-tooltip {
+        position: absolute; z-index: 2; inset-block-start: calc(100% + 6px); inset-inline-start: 0;
+        max-width: min(220px, 100%); padding: 7px 9px; border: 1px solid var(--line);
+        border-radius: 8px; background: var(--panel); color: var(--ink); box-shadow: var(--shadow);
+        font-size: 12px; font-weight: 550; line-height: 1.4; visibility: hidden;
+      }
+      .stock-signal-warning:is(:hover, :focus) + .stock-signal-tooltip { visibility: visible; }
+      .watch-signal { display: inline-flex; white-space: nowrap; }
+      .watch-signal .stock-signal-tooltip {
+        inset-block: auto calc(100% + 4px); inset-inline-start: 50%;
+        transform: translateX(-50%); width: 180px; max-width: none; white-space: normal;
+      }
       .stock-positive { color: var(--stock-green); }
       .stock-status-glow { position: relative; display: inline-block; }
       .stock-status-shimmer { display: none; }

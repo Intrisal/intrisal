@@ -1,4 +1,5 @@
 import { unstable_cache } from "next/cache";
+import { refreshAsmlAdjustedEps } from "@/lib/asmlAdjustedEps";
 import { listFinancialFilings, listIndexedEarnings, loadCompanyFacts, publishedEarningsIndexDates, splitAdjustedEps, type FactPoint, type FinancialFiling } from "@/lib/edgar";
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 import { insertAdjustedEps, readAdjustedEps, readAdjustedEpsAccessionsSince, readAdjustedEpsIssuers, readPrices, type AdjustedEpsRecord } from "@/lib/stockStore";
@@ -171,6 +172,8 @@ function buildAdjustedEps(ticker: string, filings: FinancialFiling[], facts: Awa
 }
 
 async function refreshAdjustedEps(cik: number, targets: { ticker: string; accessions: Set<string> }[], since: string) {
+  const asml = targets.find(({ ticker }) => ticker === "ASML");
+  if (asml) return [await refreshAsmlAdjustedEps(asml.accessions, since)];
   const filings = await listFinancialFilings(cik, since, true, { includeForeignAnnual: true, recentOnly: true });
   const pending = new Set(filings.filter(({ filed, accession }) =>
     filed && targets.some(({ accessions }) => accessions.has(accession))).map(({ accession }) => accession));
@@ -270,4 +273,4 @@ export const loadAdjustedPe = unstable_cache(async (ticker: string): Promise<Adj
       reportedEps: active.reported_ttm_eps,
       pe: pe != null && Number.isFinite(pe) ? pe : null }];
   });
-}, ["adjusted-pe-stored-eps-v2"], { revalidate: 300 });
+}, ["adjusted-pe-stored-eps-v4"], { revalidate: 300 });

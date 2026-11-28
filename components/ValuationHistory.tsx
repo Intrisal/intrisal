@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ChartReveal } from "@/components/ChartReveal";
-import { ChartRangeControl, monthsBefore, RANGE_MONTHS, RANGE_OPTIONS, type Range } from "@/components/ChartRangeControl";
+import { availableChartRanges, ChartRangeControl, monthsBefore, RANGE_MONTHS, RANGE_OPTIONS, type ChartRange } from "@/components/ChartRangeControl";
 import { fittedChartAxis } from "@/lib/chartAxis";
 import { fmt } from "@/lib/market";
 import type { CompanySnapshot } from "@/lib/companyData";
@@ -18,7 +18,7 @@ const FAIR_VALUE_PERCENT = 10;
 const VALUATION_STATUS = { below: "Undervalued", fair: "Fair Value", above: "Overvalued" } as const;
 const MEDIAN_WINDOWS = [5, 10] as const;
 type MedianYears = typeof MEDIAN_WINDOWS[number];
-const DEFAULT_CHART_RANGE: Range = "5Y";
+const DEFAULT_CHART_RANGE: ChartRange = "5Y";
 
 function multiple(value: number) {
   return `${fmt(value, 1)}x`;
@@ -59,7 +59,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
     plotObserver.current.observe(plot);
   }, [paired]);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [rangeSelection, setRangeSelection] = useState<{ ticker: string; range: Range }>({ ticker, range: DEFAULT_CHART_RANGE });
+  const [rangeSelection, setRangeSelection] = useState<{ ticker: string; range: ChartRange }>({ ticker, range: DEFAULT_CHART_RANGE });
   const [medianSelection, setMedianSelection] = useState<{ ticker: string; years: MedianYears }>({ ticker, years: 5 });
   const [dailyData, setDailyData] = useState<{ ticker: string; daily: DailyValuation[] } | null>(null);
   const [peData, setPeData] = useState<{ ticker: string; daily: AdjustedPeDay[] | null } | null>(null);
@@ -85,7 +85,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   useEffect(() => {
     if (!adjustedPe || !loadAdjustedHistory) return;
     const controller = new AbortController();
-    fetch(`/api/stock/${encodeURIComponent(ticker)}/adjusted-pe`, { signal: controller.signal })
+    fetch(`/api/stock/${encodeURIComponent(ticker)}/adjusted-pe`, { signal: controller.signal, cache: "no-cache" })
       .then(async (response) => {
         if (!response.ok) throw new Error("Adjusted P/E unavailable");
         const { daily } = await response.json() as { daily: AdjustedPeDay[] };
@@ -128,21 +128,20 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
     date, point: point ? { ...point, value: point.ev_nopat } : null,
   }));
   const dailyAvailable = dailyPoints.filter(({ point }) => point !== null).length >= 2;
-  let segmentId = 0;
-  const series = dailyAvailable ? dailyPoints.flatMap(({ date, point }, index) => {
-    if (!point) { segmentId++; return []; }
-    if (index > 0 && Date.parse(date) - Date.parse(dailyPoints[index - 1].date) > 7 * DAY_MS) segmentId++;
-    return [{ ...point, date, segmentId }];
-  }) : quarterly.map((point) => ({ ...point, value: point.ev_nopat, date: point.quarter, segmentId: 0 }));
-  const latestDate = Date.parse(series.at(-1)?.date ?? "");
-  const cutoffFor = (range: Range) => monthsBefore(new Date(latestDate), RANGE_MONTHS[range]).getTime();
-  const penultimateDate = Date.parse(series.at(-2)?.date ?? "");
-  const unavailableRanges = RANGE_OPTIONS.filter((range) => range !== "10Y" && penultimateDate < cutoffFor(range));
+  const lastDailyIndex = dailyPoints.findLastIndex(({ point }) => point !== null);
+  // Follow the latest run of usable values back to the first missing value or long trading gap.
+  const lastDailyBreak = dailyAvailable ? dailyPoints.slice(0, lastDailyIndex).findLastIndex(({ date, point }, index) =>
+    !point || Date.parse(dailyPoints[index + 1].date) - Date.parse(date) > 7 * DAY_MS) : -1;
+  const series = dailyAvailable ? dailyPoints.slice(lastDailyBreak + 1, lastDailyIndex + 1).flatMap(({ date, point }) =>
+    point ? [{ ...point, date }] : []) : quarterly.map((point) => ({ ...point, value: point.ev_nopat, date: point.quarter }));
+  const ranges = availableChartRanges(series.map(({ date }) => date), RANGE_OPTIONS, (preset) => RANGE_MONTHS[preset],
+    dailyAvailable ? (lastDailyBreak < 0 ? 4 : 0) : 7, dailyAvailable ? 0 : 7);
   const selectedRange = rangeSelection.ticker === ticker ? rangeSelection.range : DEFAULT_CHART_RANGE;
-  const range = unavailableRanges.includes(selectedRange) ? "10Y" : selectedRange;
-  const visibleSeries = range === "10Y" ? series : series.filter(({ date }) => Date.parse(date) >= cutoffFor(range));
+  const visibleRange = ranges.find(({ range }) => range === selectedRange) ?? ranges.at(-1);
+  const range = visibleRange?.range;
+  const visibleSeries = series.slice(visibleRange?.start ?? 0);
   const quarters = visibleSeries.map((point) => ({
-    quarter: point.date, financialQuarter: point.quarter, segmentId: point.segmentId,
+    quarter: point.date, financialQuarter: point.quarter,
     value: point.value, price: point.close,
     nopat: "nopat" in point ? point.nopat : null,
     adjustedEps: "adjustedEps" in point ? point.adjustedEps : null,
@@ -185,13 +184,16 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
       {snapshot.valuationDebtEstimate && " · Estimated debt"}
     </p>
   );
-  if (count < 2 || median == null) return (
+  const currentAdjustedEps = peDays.at(-1)?.adjustedEps;
+  if (!range || count < 2 || median == null) return (
     <article className={panelClass} aria-labelledby={id + "-title"}>
       <GapReporter gap={null} onGapChange={onGapChange} />
       <h3 id={id + "-title"}>{metric}</h3>
       <p className="valuation-caption" role="status">
         {adjustedPe ? peData?.ticker !== ticker ? "Loading adjusted P/E history…"
           : peData.daily == null ? "Adjusted P/E history couldn’t load."
+          : currentAdjustedEps != null && currentAdjustedEps <= 0
+            ? "P/E is unavailable because trailing 12-month adjusted EPS is zero or negative."
           : "Insufficient price or adjusted EPS history for this stock."
           : loading ? "Loading valuation history…" : "EV/NOPAT history is unavailable for this stock."}
       </p>
@@ -240,10 +242,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   const dateX = (date: number) => left + (right - left) * (date - firstDate) / dateSpan;
   const hoverWidth = review ? Math.min(step, (right - left) * 90 * DAY_MS / dateSpan) : step;
   const x = (index: number) => review ? dateX(dates[index]) : left + index * step;
-  const visibleGaps = dailyAvailable ? dailyPoints.flatMap(({ date, point }) =>
-    point || date < quarters[0].quarter || date > latest.quarter ? [] : [{
-      quarter: date, kind: "missing-data" as const, detail: "Valuation inputs were unavailable for this close.",
-    }]) : review ? (snapshot?.unavailableValuationQuarters ?? []).filter(({ quarter }) => {
+  const visibleGaps = !dailyAvailable && review ? (snapshot?.unavailableValuationQuarters ?? []).filter(({ quarter }) => {
     const date = Date.parse(quarter);
     return date >= firstDate && date <= chartEnd;
   }) : [];
@@ -264,9 +263,8 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   const segments: { start: number; end: number; path: string }[] = [];
   for (const [index, value] of values.entries()) {
     const segment = segments.at(-1);
-    const startsNewSegment = index > 0 && (dailyAvailable
-      ? quarters[index].segmentId !== quarters[index - 1].segmentId
-      : review && !isFiscalQuarterGap((dates[index] - dates[index - 1]) / DAY_MS));
+    const startsNewSegment = !dailyAvailable && review && index > 0 &&
+      !isFiscalQuarterGap((dates[index] - dates[index - 1]) / DAY_MS);
     if (!segment || startsNewSegment) {
       segments.push({ start: index, end: index, path: `M ${x(index)} ${y(value)}` });
     } else if (dailyAvailable) {
@@ -307,7 +305,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
             </span>
           </div>}
         </div>
-        <ChartRangeControl range={range} label={metric + " chart range"} unavailable={unavailableRanges} onChange={(item) => {
+        <ChartRangeControl range={range} options={ranges.map(({ range }) => range)} label={metric + " chart range"} onChange={(item) => {
           setHovered(null);
           setRangeSelection({ ticker, range: item });
         }} />
@@ -369,7 +367,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
           const date = new Date(firstDate + dateSpan * progress);
           return <text key={index} x={dateX(date.getTime())} y={dateLabelY} textAnchor={progress === 0 ? "start" : progress === 1 ? "end" : "middle"}>
             {dateSpan >= 4 * 365 * DAY_MS ? date.getUTCFullYear()
-              : range === "3M" || range === "6M" ? VALUATION_DAY_FORMAT.format(date)
+              : range === "3M" || range === "6M" || (range === "MAX" && dateSpan <= 180 * DAY_MS) ? VALUATION_DAY_FORMAT.format(date)
                 : VALUATION_MONTH_FORMAT.format(date)}
           </text>;
         }) : tickIndexes.map((index) => (

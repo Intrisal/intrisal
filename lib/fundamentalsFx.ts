@@ -1,4 +1,4 @@
-import type { EdgarFundamentals, QuarterlySeries } from "@/lib/edgar";
+import type { EdgarFundamentals, QuarterlySeries, ReportingCurrency } from "@/lib/edgar";
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 import { fredHistoryUrl, fredSeries, parseFredHistory } from "@/lib/fredExchangeRates.mjs";
 import exchangeRates from "@/data/fundamentals-fx.json";
@@ -43,19 +43,12 @@ async function withRecentRates(rates: RateHistory, series: string, through: numb
   }
 }
 
-export async function translateFundamentalsToUsd(
-  edgar: EdgarFundamentals, eps: QuarterlySeries | null, epsIsTrailing: boolean,
-) {
-  const currency = edgar.reportingCurrency;
-  if (!currency || currency === "USD") return null;
+export async function loadUsdFlowRates(currency: ReportingCurrency, dates: string[]) {
   const stored = rateHistory[currency];
   const source = fredSeries[currency];
   if (!source || !stored) return null;
 
-  const metrics = { revenue: edgar.revenue, operatingIncome: edgar.operatingIncome, fcf: edgar.freeCashFlow };
-  const ends = [...new Set([
-    ...Object.values(metrics).flatMap((series) => series.ends), ...(eps?.ends ?? []),
-  ])].map(dayNumber).filter(Number.isFinite).sort((a, b) => a - b);
+  const ends = [...new Set(dates)].map(dayNumber).filter(Number.isFinite).sort((a, b) => a - b);
   if (!ends.length) return null;
   const rates = await withRecentRates(stored, source[0], ends.at(-1)!);
   const previousEnd = new Map(ends.map((end, index) => [end, ends[index - 1]]));
@@ -82,6 +75,19 @@ export async function translateFundamentalsToUsd(
     if (months === 3) averages.set(end, rate);
     return rate;
   }
+  return usdPerLocal;
+}
+
+export async function translateFundamentalsToUsd(
+  edgar: EdgarFundamentals, eps: QuarterlySeries | null, epsIsTrailing: boolean,
+) {
+  const currency = edgar.reportingCurrency;
+  if (!currency || currency === "USD") return null;
+  const metrics = { revenue: edgar.revenue, operatingIncome: edgar.operatingIncome, fcf: edgar.freeCashFlow };
+  const usdPerLocal = await loadUsdFlowRates(currency, [
+    ...Object.values(metrics).flatMap((series) => series.ends), ...(eps?.ends ?? []),
+  ]);
+  if (!usdPerLocal) return null;
 
   function translate(series: QuarterlySeries, convert: (value: number, end: string) => number | null) {
     const result: QuarterlySeries = { ends: [], values: [] };

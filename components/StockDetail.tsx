@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatedPrice, useAnimatedNumber } from "@/components/AnimatedPrice";
 import { ChartReveal } from "@/components/ChartReveal";
-import { ChartRangeControl, monthsBefore, RANGE_MONTHS, type Range } from "@/components/ChartRangeControl";
+import { SignalDataWarning } from "@/components/SignalDataWarning";
+import { availableChartRanges, ChartRangeControl, monthsBefore, RANGE_MONTHS, RANGE_OPTIONS, type ChartRange } from "@/components/ChartRangeControl";
 import { fmt } from "@/lib/market";
 import { fittedChartAxis } from "@/lib/chartAxis";
 import type { CompanySnapshot } from "@/lib/companyData";
-import { trailingGrowth } from "@/lib/fiscalQuarter";
+import { DAY_MS, trailingGrowth } from "@/lib/fiscalQuarter";
 import { movingAverage, stockSignal, stockSignalClass } from "@/lib/stockSignal";
 import { useStockHistory } from "@/lib/useMarketData";
 import {
@@ -31,7 +32,13 @@ function formatChartMonthYear(date: Date) {
   return `${CHART_MONTH_FORMAT.format(date)} '${String(date.getUTCFullYear()).slice(-2)}`;
 }
 
-function chartDateTicks(range: Range, first: Date, last: Date) {
+function chartDateTicks(range: ChartRange, first: Date, last: Date) {
+  if (range === "MAX") {
+    const days = (last.getTime() - first.getTime()) / DAY_MS;
+    const intervals = Math.min(5, Math.max(1, days));
+    return Array.from({ length: intervals + 1 }, (_, index) =>
+      new Date(first.getTime() + Math.round(index * days / intervals) * DAY_MS));
+  }
   const ticks: Date[] = [];
   if (range === "3M") {
     const tick = new Date(last);
@@ -88,7 +95,7 @@ function PriceChart({
 }: {
   ticker: string;
   lines: number[][];
-  range: Range;
+  range: ChartRange;
   quickReveal: boolean;
   dates: string[];
   onScrub?: (index: number | null) => void;
@@ -108,7 +115,7 @@ function PriceChart({
   const left = Math.max(34, fmt(max, priceDecimals).length * 11 + 19);
   const timestamps = dates.map((date) => Date.parse(date + "T00:00:00Z"));
   const last = timestamps[timestamps.length - 1];
-  // Keep the full 10Y axis when the stored price series starts later.
+  // Keep the calendar ticks for a full 10Y range, even when the cutoff falls on a closed day.
   const first = range === "10Y"
     ? monthsBefore(new Date(last), RANGE_MONTHS[range]).getTime()
     : timestamps[0];
@@ -117,7 +124,9 @@ function PriceChart({
   const yAt = (value: number) => bottom - ((value - min) / (max - min)) * (bottom - top);
   const dateTicks = chartDateTicks(range, new Date(first), new Date(last));
   const formatTick = (date: Date) => {
-    if (range === "3M") return CHART_DAY_FORMAT.format(date);
+    if (range === "3M" || (range === "MAX" && first >= monthsBefore(new Date(last), 6).getTime())) {
+      return CHART_DAY_FORMAT.format(date);
+    }
     if (range === "6M") return CHART_MONTH_FORMAT.format(date);
     return formatChartMonthYear(date);
   };
@@ -245,35 +254,36 @@ function PriceChart({
   );
 }
 
-export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: CompanySnapshot | null }) {
-  const [selection, setSelection] = useState<{ range: Range; ticker: string } | null>(null);
+export function StockDetail({ ticker, snapshot, snapshotLoading }: {
+  ticker: string; snapshot: CompanySnapshot | null; snapshotLoading: boolean;
+}) {
+  const [selection, setSelection] = useState<{ range: ChartRange; ticker: string } | null>(null);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
-  const [valuationSide, setValuationSide] = useState<ValuationOverallSide | null>(null);
-  const range = selection?.range ?? "1Y";
+  const [valuationResult, setValuationResult] = useState<{
+    ticker: string; side: ValuationOverallSide | null;
+  } | null>(null);
   const { history, loading, error } = useStockHistory(ticker);
+  const valuationSnapshot = snapshot && !snapshot.isFund && !snapshot.valuationHidden &&
+    !snapshot.valuationHasNegativeOperatingIncome ? snapshot : null;
+  const valuationSide = valuationSnapshot && valuationResult?.ticker === ticker ? valuationResult.side : null;
 
   useEffect(() => {
-    setScrubIndex(null);
-  }, [ticker, range]);
-
-  useEffect(() => {
-    setValuationSide(null);
-    if (!snapshot || snapshot.isFund || snapshot.valuationHidden || snapshot.valuationHasNegativeOperatingIncome) {
-      return;
-    }
+    const snapshot = valuationSnapshot;
+    if (!snapshot) return;
     const canLoadEv = snapshot.valuationReview === true && snapshot.valuationAverageYears != null && snapshot.evNopatAvg != null;
     const controller = new AbortController();
-    async function loadValuationSide() {
+    async function loadValuationSide(snapshot: CompanySnapshot) {
       try {
         const [dailyRes, peRes] = await Promise.all([
           canLoadEv
-            ? fetch(`/api/stock/${encodeURIComponent(ticker)}/valuation-daily`, { signal: controller.signal })
+            ? fetch(`/api/stock/${encodeURIComponent(ticker)}/valuation-daily`, { cache: "no-cache", signal: controller.signal })
             : Promise.resolve(null),
-          fetch(`/api/stock/${encodeURIComponent(ticker)}/adjusted-pe`, { signal: controller.signal }),
+          fetch(`/api/stock/${encodeURIComponent(ticker)}/adjusted-pe`, { cache: "no-cache", signal: controller.signal }),
         ]);
         if (controller.signal.aborted) return;
+        if ((dailyRes && !dailyRes.ok) || !peRes.ok) throw new Error("Valuation inputs could not be refreshed");
 
-        let evCurrent: number | null = snapshot?.evNopat ?? null;
+        let evCurrent = snapshot.evNopat;
         if (dailyRes?.ok) {
           const { daily } = await dailyRes.json() as { daily: DailyValuation[] };
           evCurrent = [...daily].reverse().find(({ point }) => point)?.point?.ev_nopat ?? evCurrent;
@@ -283,19 +293,20 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
           : [];
         const overall = overallValuationFromSeries({
           evCurrent,
-          evQuarters: (snapshot?.valuationPoints ?? []).map(({ quarter, ev_nopat }) => ({
+          evQuarters: (snapshot.valuationPoints ?? []).map(({ quarter, ev_nopat }) => ({
             date: quarter, value: ev_nopat,
           })),
           peDays,
         });
-        if (!controller.signal.aborted) setValuationSide(overall?.side ?? null);
+        if (!controller.signal.aborted) setValuationResult({ ticker, side: overall?.side ?? null });
       } catch {
-        if (!controller.signal.aborted) setValuationSide(null);
+        if (!controller.signal.aborted) setValuationResult((previous) =>
+          previous?.ticker === ticker ? previous : { ticker, side: null });
       }
     }
-    void loadValuationSide();
+    void loadValuationSide(snapshot);
     return () => controller.abort();
-  }, [ticker, snapshot]);
+  }, [ticker, valuationSnapshot]);
 
   const chart = useMemo(() => {
     const closes = history?.closes ?? [];
@@ -319,6 +330,9 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
   const revenueGrowth = hasFilings && !snapshot.isFund
     ? trailingGrowth(snapshot.revenueHistory, snapshot.filingDates?.revenue) : null;
   const signal = stockSignal(revenueGrowth, history, valuationSide);
+  const valuationSettled = !valuationSnapshot || valuationResult?.ticker === ticker;
+  const showSignalWarning = signal !== null && !snapshotLoading && valuationSettled &&
+    (revenueGrowth === null || valuationSide === null);
 
   const year = chart.closes.slice(-252).filter((value) => value > 0 && Number.isFinite(value));
   const lowCandidate = history?.low52 && history.low52 > 0 ? history.low52 : null;
@@ -337,11 +351,14 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
     }
   }
 
-  const latestDate = chart.dates.at(-1);
-  const startDate = latestDate
-    ? monthsBefore(new Date(latestDate + "T00:00:00Z"), RANGE_MONTHS[range]).toISOString().slice(0, 10)
-    : "";
-  const rangeStart = Math.max(0, chart.dates.findIndex((date) => date >= startDate));
+  const ranges = availableChartRanges(chart.dates, RANGE_OPTIONS, (preset) => RANGE_MONTHS[preset]);
+  const preferredRange = selection?.ticker === ticker ? selection.range : "1Y";
+  const visibleRange = ranges.find(({ range }) => range === preferredRange) ?? ranges.at(-1);
+  const range = visibleRange?.range;
+  const rangeStart = visibleRange?.start ?? 0;
+  useEffect(() => {
+    setScrubIndex(null);
+  }, [ticker, range]);
   const rangeCloses = chart.closes.slice(rangeStart);
   const rangeDates = chart.dates.slice(rangeStart);
   const rangeShort = chart.shortSma.slice(rangeStart);
@@ -359,10 +376,10 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
     <section className="panel stock-detail" aria-label={ticker + " stock details"}>
       <article className="stock-chart-panel">
         <div className="stock-chart-header">
-          <ChartRangeControl range={range} onChange={(item) => {
+          {range && <ChartRangeControl range={range} options={ranges.map(({ range }) => range)} onChange={(item) => {
             setScrubIndex(null);
             setSelection({ range: item, ticker });
-          }} />
+          }} />}
           <div className={"stock-chart-return" + (scrubActive ? " is-scrubbing" : "")}>
             {scrubActive && scrubPrice !== null && scrubDate ? (
               <>
@@ -376,7 +393,7 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
               </>
             ) : (
               <>
-                <span className="stock-chart-return-label">{range} return</span>
+                {range && <span className="stock-chart-return-label">{range} return</span>}
                 {rangeCloses.length > 1 ? <AnimatedReturn value={rangeReturn} /> : <span className="stock-chart-return-label">Data unavailable</span>}
               </>
             )}
@@ -386,7 +403,7 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
           <div className="stock-chart-loading" role="status" aria-label="Loading closing prices">
             <span className="stock-chart-spinner" aria-hidden="true" />
           </div>
-        ) : rangeCloses.length > 1 ? (
+        ) : range && rangeCloses.length > 1 ? (
           <PriceChart
             ticker={ticker}
             range={range}
@@ -415,8 +432,9 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
         <dl>
           <div>
             <dt>Signal</dt>
-            <dd className={stockSignalClass(signal)}>
+            <dd className={["stock-signal-row", stockSignalClass(signal)].filter(Boolean).join(" ")}>
               {signal === "Buy" || signal === "Strong Buy" ? <SnapshotGlow label={signal} /> : signal ?? "Data unavailable"}
+              {showSignalWarning && <SignalDataWarning />}
             </dd>
           </div>
           <div>

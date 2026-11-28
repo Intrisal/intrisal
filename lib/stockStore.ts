@@ -22,8 +22,8 @@ export type AdjustedEpsRecord = {
   adjusted_ttm_eps: number | null;
   inputs: {
     periodStart: string; dilutedShares: number | null; equityGains: number | null;
-    taxRate: number; taxRateMethod: "effective" | "fallback"; sharesEstimated: boolean;
-    adjustmentSource?: string; annual: boolean;
+    taxRate: number | null; taxRateMethod: "effective" | "fallback" | null; sharesEstimated: boolean;
+    adjustmentSource?: string; annual: boolean; currency?: ReportingCurrency; quarterFx?: Record<string, number>;
   } | null;
 };
 type TickerIdentity = {
@@ -133,11 +133,12 @@ export function isStoredFund(row: TickerIdentity | undefined) {
     || /^(?:ProShares|iShares|SPDR|Vanguard|Direxion|Global X|ARK|WisdomTree|Avantis|PIMCO|Invesco|VanEck|Schwab|Fidelity)\b/i.test(row.name);
 }
 
-export async function hasStoredFund(ticker: string) {
+export async function readStoredStockKind(ticker: string): Promise<"company" | "fund" | null> {
   const [row] = await rest<TickerIdentity[]>("tickers", {
     select: "ticker,name,cik", ticker: "eq." + ticker, limit: "1",
   });
-  return isStoredFund(row);
+  if (row?.cik != null) return "company";
+  return isStoredFund(row) ? "fund" : null;
 }
 
 export async function readStoredTickerDirectory(): Promise<[string, string][]> {

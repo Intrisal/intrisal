@@ -15,14 +15,27 @@ type BatchState = {
   error: string | null;
 };
 
-/** Loads merged Marketstack + EDGAR snapshot (server-cached). */
-export function useCompanySnapshot(ticker: string): State {
+const SNAPSHOT_REFRESH_MS = 5 * 60_000;
+
+function recheckWhileVisible(load: () => Promise<void>) {
+  function refresh() {
+    if (document.visibilityState === "visible") void load();
+  }
+  const timer = window.setInterval(refresh, SNAPSHOT_REFRESH_MS);
+  document.addEventListener("visibilitychange", refresh);
+  return () => {
+    window.clearInterval(timer);
+    document.removeEventListener("visibilitychange", refresh);
+  };
+}
+
+/** Loads merged Marketstack + EDGAR data and optionally rechecks an open stock page. */
+export function useCompanySnapshot(ticker: string, refreshWhileVisible = false): State {
   const [snapshot, setSnapshot] = useState<CompanySnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
     const id = ticker.trim().toUpperCase();
     if (!id) {
       setSnapshot(null);
@@ -33,28 +46,37 @@ export function useCompanySnapshot(ticker: string): State {
     setLoading(true);
     setError(null);
 
-    fetch("/api/stock/" + encodeURIComponent(id), { cache: "no-store" })
-      .then(async (res) => {
+    const controller = new AbortController();
+    let inFlight = false;
+    async function load() {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const res = await fetch("/api/stock/" + encodeURIComponent(id), {
+          cache: "no-store", signal: controller.signal,
+        });
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || res.statusText);
-        return body as CompanySnapshot;
-      })
-      .then((data) => {
-        if (cancelled) return;
-        setSnapshot(data);
-        setLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setSnapshot(null);
-        setLoading(false);
+        if (controller.signal.aborted) return;
+        setSnapshot(body as CompanySnapshot);
+        setError(null);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setSnapshot((previous) => previous?.ticker === id ? previous : null);
         setError(err instanceof Error ? err.message : "Failed to load fundamentals");
-      });
+      } finally {
+        inFlight = false;
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
 
+    void load();
+    const stopRechecking = refreshWhileVisible ? recheckWhileVisible(load) : undefined;
     return () => {
-      cancelled = true;
+      controller.abort();
+      stopRechecking?.();
     };
-  }, [ticker]);
+  }, [ticker, refreshWhileVisible]);
 
   return { snapshot, loading, error };
 }
@@ -84,9 +106,12 @@ export function useCompanySnapshots(tickers: string[], includeWatchlistMetrics =
     setError(null);
 
     const controller = new AbortController();
+    let watchlistInFlight = false;
     async function load() {
       // Watchlist: one stored-metrics request. Other panels: small sequential batches.
       if (includeWatchlistMetrics) {
+        if (watchlistInFlight) return;
+        watchlistInFlight = true;
         try {
           const params = new URLSearchParams({ symbols: key, view: "watchlist" });
           const res = await fetch("/api/fundamentals?" + params, { signal: controller.signal });
@@ -94,6 +119,7 @@ export function useCompanySnapshots(tickers: string[], includeWatchlistMetrics =
           const { snapshots: next } = await res.json() as { snapshots: Record<string, CompanySnapshot> };
           if (!cancelled) {
             setSnapshots(next);
+            setError(null);
             setLoading(false);
           }
         } catch (err) {
@@ -101,6 +127,8 @@ export function useCompanySnapshots(tickers: string[], includeWatchlistMetrics =
             setError(err instanceof Error ? err.message : "Failed to load fundamentals");
             setLoading(false);
           }
+        } finally {
+          watchlistInFlight = false;
         }
         return;
       }
@@ -122,10 +150,12 @@ export function useCompanySnapshots(tickers: string[], includeWatchlistMetrics =
       if (!cancelled) setLoading(false);
     }
     void load();
+    const stopRechecking = includeWatchlistMetrics ? recheckWhileVisible(load) : undefined;
 
     return () => {
       cancelled = true;
       controller.abort();
+      stopRechecking?.();
     };
   }, [key, includeWatchlistMetrics]);
 

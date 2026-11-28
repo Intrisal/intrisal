@@ -16,7 +16,7 @@ import {
 import { Panels, StockAnalysis, type Section } from "@/components/Panels";
 import { StockDetail } from "@/components/StockDetail";
 import { Stars } from "@/components/Stars";
-import { displayCompanyName, exchangeOf, fmt, isCanadianFund, isKnownFund, nameOf, searchCatalog, searchMatchScore } from "@/lib/market";
+import { displayCompanyName, exchangeOf, fmt, isCanadianFund, isKnownFund, nameOf, normalizeTicker, searchCatalog, searchMatchScore } from "@/lib/market";
 import { SIM_DEFAULT, readStoredSimState, writeStoredSimState, type SimState } from "@/lib/portfolioSim";
 import { useCompanySnapshot } from "@/lib/useCompanyData";
 import { useQuotes } from "@/lib/useMarketData";
@@ -37,6 +37,8 @@ type ThemeChoice = "auto" | "light" | "dark";
 type MenuId = "profile" | "help";
 
 type NavItem = { id: Section; label: string; icon: ReactNode };
+
+const GRAPH_ONLY_COMPANIES = new Set(["BRK.A", "BRK.B", "BN", "PS"]);
 
 const NAV_ITEMS: NavItem[] = [
   { id: "home", label: "Home", icon: <HomeIcon /> },
@@ -449,11 +451,15 @@ export function Dashboard() {
   const hideSearch = section === "simulation";
   const selectedIsWatched = watchlist.includes(selected);
   const previewWatchlistRemoval = selectedIsWatched && watchlistRemovalPreview === selected;
-  const { snapshot, loading: snapshotLoading } = useCompanySnapshot(isStock ? selected : "");
+  const { snapshot, loading: snapshotLoading } = useCompanySnapshot(isStock ? selected : "", true);
   const selectedSnapshot = snapshot?.ticker === selected ? snapshot : null;
   const selectedSnapshotLoading = snapshotLoading || (snapshot !== null && selectedSnapshot === null);
   const selectedCompanyName = selectedSnapshot?.name || displayCompanyName(selected);
-  const canUseCompanyAnalysis = !isKnownFund(selected) && (
+  const isGraphOnlyCompany = GRAPH_ONLY_COMPANIES.has(normalizeTicker(selected));
+  const isFund = isKnownFund(selected) || selectedSnapshot?.isFund === true;
+  const analysisUnavailableReason = isFund ? "Unavailable for ETFs"
+    : isGraphOnlyCompany ? "Unavailable for holdings companies" : null;
+  const canUseCompanyAnalysis = !analysisUnavailableReason && (
     exchangeOf(selected) !== undefined || selectedSnapshot?.isFund === false
   );
   const stockAnalysis = canUseCompanyAnalysis ? analysis : "graph";
@@ -754,12 +760,21 @@ export function Dashboard() {
                   <button type="button" aria-pressed={fundamentalsInUsd} onClick={() => chooseFundamentalsCurrency(true)}>USD</button>
                 </div>}
                 <div className="stock-analysis-switch" role="group" aria-label="Stock analysis"
-                  data-analysis={stockAnalysis} data-graph-only={!canUseCompanyAnalysis}>
+                  data-analysis={stockAnalysis} data-graph-only={!canUseCompanyAnalysis && !analysisUnavailableReason}>
                   <button type="button" aria-pressed={stockAnalysis === "graph"} onClick={() => setAnalysis("graph")}>Graph Analysis</button>
-                  {canUseCompanyAnalysis && <>
-                    <button type="button" aria-pressed={stockAnalysis === "fundamental"} onClick={() => setAnalysis("fundamental")}>Fundamental</button>
-                    <button type="button" aria-pressed={stockAnalysis === "valuation"} onClick={() => setAnalysis("valuation")}>Valuation</button>
+                  {(canUseCompanyAnalysis || analysisUnavailableReason) && <>
+                    <button type="button" aria-pressed={stockAnalysis === "fundamental"}
+                      aria-disabled={Boolean(analysisUnavailableReason) || undefined}
+                      aria-describedby={analysisUnavailableReason ? "stock-analysis-unavailable" : undefined}
+                      onClick={canUseCompanyAnalysis ? () => setAnalysis("fundamental") : undefined}>Fundamental</button>
+                    <button type="button" aria-pressed={stockAnalysis === "valuation"}
+                      aria-disabled={Boolean(analysisUnavailableReason) || undefined}
+                      aria-describedby={analysisUnavailableReason ? "stock-analysis-unavailable" : undefined}
+                      onClick={canUseCompanyAnalysis ? () => setAnalysis("valuation") : undefined}>Valuation</button>
                   </>}
+                  {analysisUnavailableReason && <span className="stock-analysis-tooltip" id="stock-analysis-unavailable" role="tooltip">
+                    {analysisUnavailableReason}
+                  </span>}
                 </div>
               </div>
             ) : null}
@@ -767,7 +782,7 @@ export function Dashboard() {
               {section === "stock" && selected ? (
                 <>
                   <div className="stock-analysis-pane" hidden={stockAnalysis !== "graph"}>
-                    <StockDetail ticker={selected} snapshot={selectedSnapshot} />
+                    <StockDetail ticker={selected} snapshot={selectedSnapshot} snapshotLoading={selectedSnapshotLoading} />
                   </div>
                   {canUseCompanyAnalysis && <>
                     <div className="stock-analysis-pane" hidden={stockAnalysis !== "fundamental"}>

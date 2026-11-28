@@ -96,7 +96,7 @@ function userAgent() {
   return raw || "Intrisal contact@intrisal.com";
 }
 
-async function secFetch(url: string, allowMissing = false): Promise<Response> {
+export async function secFetch(url: string, allowMissing = false): Promise<Response> {
   const now = Date.now();
   const requestAt = Math.max(now, nextRequestAt);
   nextRequestAt = requestAt + MIN_GAP_MS;
@@ -267,6 +267,7 @@ export async function loadCompanyFacts(cik: number, refresh = false): Promise<Co
 
 export type FinancialFiling = { accession: string; date: string; document: string; filed?: string; amendment?: boolean };
 const PERIODIC_FORMS = /^(10-K|10-Q|20-F|40-F)(\/A)?$/;
+export const ASML_CIK = 937966;
 const DAILY_INDEX_ROOT = "https://www.sec.gov/Archives/edgar/daily-index/";
 const dailyIndexQuarter = (date: string) => date.slice(0, 4) + "/QTR" + Math.ceil(Number(date.slice(5, 7)) / 3);
 
@@ -292,7 +293,7 @@ export async function listIndexedEarnings(date: string) {
   }
   return body.split(/\r?\n/).flatMap((line) => {
     const [cik, , form, , file] = line.split("|");
-    if (!PERIODIC_FORMS.test(form ?? "")) return [];
+    if (!PERIODIC_FORMS.test(form ?? "") && !(Number(cik) === ASML_CIK && form === "6-K")) return [];
     const accession = file?.match(/(\d{10}-\d{2}-\d{6})\.txt\s*$/)?.[1];
     return accession && /^\d+$/.test(cik) ? [{ cik: Number(cik), accession }] : [];
   });
@@ -303,6 +304,20 @@ type SubmissionRows = {
   filingDate?: string[];
   isXBRL?: (number | boolean)[];
 };
+
+export async function listAsmlEarningsFilings(since: string): Promise<FinancialFiling[]> {
+  const response = await secFetch("https://data.sec.gov/submissions/CIK0000937966.json");
+  const { filings: { recent } } = await response.json() as { filings: { recent: SubmissionRows } };
+  return recent.form.flatMap((form, index) => {
+    const filed = recent.filingDate?.[index];
+    const document = recent.primaryDocument[index];
+    const accession = recent.accessionNumber[index];
+    const earnings = /quarterlyfilings|q[1-4]x?results/i.test(document) ||
+      (filed && filed < "2021-04-21" && document === "form6k.htm" && accession.startsWith("0000937966-"));
+    return form === "6-K" && filed && filed >= since && earnings
+      ? [{ accession, filed, date: recent.reportDate[index], document }] : [];
+  }).reverse();
+}
 
 export async function listFinancialFilings(cik: number, since: string, includeAmendments = false, options: {
   includeForeignAnnual?: boolean; recentOnly?: boolean;
@@ -651,7 +666,17 @@ function seriesFromQuarterMap(quarters: Map<string, number>): QuarterlySeries {
   return { ends, values: ends.map((end) => toBillions(quarters.get(end)!)) };
 }
 
-function revenueSeries(facts: CompanyFacts, currency: ReportingCurrency, preferTotalRevenue: boolean): QuarterlySeries {
+function revenueSeries(facts: CompanyFacts, currency: ReportingCurrency, ticker: string): QuarterlySeries {
+  // Mastercard tags gross revenue separately from consolidated net revenue.
+  if (ticker === "MA") {
+    const quarters = consolidatedQuarters(facts, ["Revenues", "SalesRevenueNet"], currency);
+    // The 2015 10-K restates all four 2014 net revenue quarters under SalesRevenueNet.
+    for (const [end, value] of consolidatedQuarters(facts, ["SalesRevenueNet"], currency)) {
+      if (end.startsWith("2014-")) quarters.set(end, value);
+    }
+    return seriesFromQuarterMap(quarters);
+  }
+
   const concepts = [
     "RevenueFromContractWithCustomerExcludingAssessedTax",
     "Revenues", "SalesRevenueNet", "Revenue",
@@ -667,7 +692,7 @@ function revenueSeries(facts: CompanyFacts, currency: ReportingCurrency, preferT
     "FinancialServicesRevenue",
   ];
   // These issuers separately tag sales from customer contracts inside total revenue.
-  if (preferTotalRevenue) concepts.unshift("Revenues");
+  if (ticker === "CP" || ticker === "ENB" || ticker === "BAM") concepts.unshift("Revenues");
   const quarters = consolidatedQuarters(facts, concepts, currency);
 
   const serviceByFiling = new Map<string, number>();
@@ -836,11 +861,10 @@ export async function fetchEdgarFundamentals(
   )) {
     throw new Error("The latest SEC filing is not yet indexed in Company Facts");
   }
-  const preferTotalRevenue = id === "CP" || id === "ENB" || id === "BAM";
   let reportingCurrency: ReportingCurrency = "USD";
-  let revenue = revenueSeries(facts, reportingCurrency, preferTotalRevenue);
+  let revenue = revenueSeries(facts, reportingCurrency, id);
   for (const currency of REPORTING_CURRENCIES.slice(1)) {
-    const candidate = revenueSeries(facts, currency, preferTotalRevenue);
+    const candidate = revenueSeries(facts, currency, id);
     if (candidate.ends.length >= 4 && candidate.ends.length > revenue.ends.length) {
       reportingCurrency = currency;
       revenue = candidate;
