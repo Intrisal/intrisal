@@ -18,7 +18,10 @@ import {
   type ValuationPoint,
 } from "@/lib/stockStore";
 import { canReviewValuation, prepareValuationReview, resolveValuationDisplay } from "@/lib/valuationReview";
+import { loadAdjustedPe } from "@/lib/adjustedPe";
+import { loadLatestDailyValuation } from "@/lib/dailyValuation";
 import { sanitizeHistory, stockSignal } from "@/lib/stockSignal";
+import { overallValuationFromSeries } from "@/lib/valuationSignal";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 const SUPPORTED_EPS_SPLIT_BASIS_VERSIONS = new Set([EPS_SPLIT_BASIS_VERSION, 4, 5]);
@@ -201,7 +204,7 @@ export async function loadWatchlistSnapshots(symbols: string[]): Promise<Record<
       const base = emptyWatchSnapshot(ticker, name, isFund, price, change, priceAsOf);
       // Funds and filing-less names still get an SMA signal from stored prices.
       const history = await readRecentPriceHistory(ticker, 252).catch(() => null);
-      const signal = stockSignal(null, history ? sanitizeHistory(history) : null);
+      const signal = stockSignal(null, history ? sanitizeHistory(history) : null, null);
       return [ticker, { ...base, signal }] as const;
     }
 
@@ -218,8 +221,30 @@ export async function loadWatchlistSnapshots(symbols: string[]): Promise<Record<
     const review = reviews[ticker] ?? { points: [], current: null };
     const valuation = valuationFields(ticker, edgar, review.points, review.current, price);
     const revenueGrowth = trailingGrowth(revenue.values, revenue.ends);
-    const history = await readRecentPriceHistory(ticker, 252).catch(() => null);
-    const signal = stockSignal(revenueGrowth, history ? sanitizeHistory(history) : null);
+    const [history, peDays, latestDaily] = await Promise.all([
+      readRecentPriceHistory(ticker, 252).catch(() => null),
+      loadAdjustedPe(ticker).catch(() => [] as Awaited<ReturnType<typeof loadAdjustedPe>>),
+      // Same current EV/NOPAT the Valuation tab badge uses (daily series), not stored current_point.
+      !valuation.valuationHidden
+        ? loadLatestDailyValuation(ticker).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    const evCurrent = latestDaily?.multiple
+      ?? (valuation.latestDailyValuation && !valuation.valuationHidden
+        ? valuation.latestDailyValuation.multiple
+        : null);
+    const overall = !valuation.valuationHidden
+      ? overallValuationFromSeries({
+        evCurrent,
+        evQuarters: review.points.map(({ quarter, ev_nopat }) => ({ date: quarter, value: ev_nopat })),
+        peDays,
+      })
+      : null;
+    const signal = stockSignal(
+      revenueGrowth,
+      history ? sanitizeHistory(history) : null,
+      overall?.side ?? null,
+    );
 
     const snapshot: CompanySnapshot = {
       ...emptyWatchSnapshot(ticker, name, false, price, change, priceAsOf),
@@ -233,6 +258,7 @@ export async function loadWatchlistSnapshots(symbols: string[]): Promise<Record<
         fcf: [],
       },
       signal,
+      overallValuation: overall,
       ...valuation,
     };
     return [ticker, snapshot] as const;

@@ -24,16 +24,26 @@ function multiple(value: number) {
   return `${fmt(value, 1)}x`;
 }
 
+/** Keeps the overall signal in sync with the badge gap this chart is currently showing. */
+function GapReporter({ gap, onGapChange }: { gap: number | null; onGapChange?: (gap: number | null) => void }) {
+  useEffect(() => {
+    onGapChange?.(gap);
+    return () => onGapChange?.(null);
+  }, [gap, onGapChange]);
+  return null;
+}
+
 const PLOT_WIDTH = 800;
 const DEFAULT_PLOT_HEIGHT = 278;
 
-export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false, paired = false, loadAdjustedHistory = true }: {
+export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false, paired = false, loadAdjustedHistory = true, onGapChange }: {
   ticker: string;
   snapshot: CompanySnapshot | null;
   loading: boolean;
   adjustedPe?: boolean;
   paired?: boolean;
   loadAdjustedHistory?: boolean;
+  onGapChange?: (gap: number | null) => void;
 }) {
   const id = useId();
   const panelClass = paired ? "valuation-history" : "panel valuation-history";
@@ -90,6 +100,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   if (!adjustedPe && !loading && snapshot?.valuationHasNegativeOperatingIncome) {
     return (
       <article className={panelClass} aria-labelledby={id + "-title"}>
+        <GapReporter gap={null} onGapChange={onGapChange} />
         <h3 id={id + "-title"}>EV/NOPAT</h3>
         <p className="valuation-caption" role="status">
           Can’t calculate data for this stock because trailing 12-month operating income was negative.
@@ -101,6 +112,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   if (!adjustedPe && !loading && snapshot?.valuationHidden) {
     return (
       <article className={panelClass} aria-labelledby={id + "-title"}>
+        <GapReporter gap={null} onGapChange={onGapChange} />
         <h3 id={id + "-title"}>{metric}</h3>
         <p className="valuation-caption" role="status">EV/NOPAT history is unavailable for this stock.</p>
       </article>
@@ -175,6 +187,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   );
   if (count < 2 || median == null) return (
     <article className={panelClass} aria-labelledby={id + "-title"}>
+      <GapReporter gap={null} onGapChange={onGapChange} />
       <h3 id={id + "-title"}>{metric}</h3>
       <p className="valuation-caption" role="status">
         {adjustedPe ? peData?.ticker !== ticker ? "Loading adjusted P/E history…"
@@ -200,6 +213,7 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
   const comparisonPercent = Number(difference.toFixed(10));
   const valuationSide = comparisonPercent < -FAIR_VALUE_PERCENT ? "below"
     : comparisonPercent > FAIR_VALUE_PERCENT ? "above" : "fair";
+  const showsBadge = adjustedPe ? currentComparison != null : dailyAvailable || !currentCannotCalculate;
   const tickIndexes = [...new Set(Array.from({ length: 5 }, (_, i) => Math.round(i * (count - 1) / 4)))];
 
   const { min, max, step: tickStep } = fittedChartAxis(Math.min(median, ...values), Math.max(median, ...values), 7);
@@ -281,10 +295,11 @@ export function ValuationHistory({ ticker, snapshot, loading, adjustedPe = false
 
   return (
     <article className={panelClass} aria-labelledby={id + "-title"}>
+      <GapReporter gap={showsBadge ? difference : null} onGapChange={onGapChange} />
       <div className="valuation-header">
         <div>
           <h3 id={id + "-title"}>{metric}</h3>
-          {(adjustedPe ? currentComparison != null : dailyAvailable || !currentCannotCalculate) && <div className="valuation-status-row" data-side={valuationSide}>
+          {showsBadge && <div className="valuation-status-row" data-side={valuationSide}>
             <div className="valuation-status">{VALUATION_STATUS[valuationSide]}</div>
             <span className="valuation-badge">
               {difference > 0 ? "+" : ""}

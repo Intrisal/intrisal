@@ -1,3 +1,5 @@
+import type { ValuationOverallSide } from "@/lib/valuationSignal";
+
 export type StockSignal = "Sell" | "Hold" | "Buy" | "Strong Buy";
 
 /** Strong Buy → Buy → Hold → Sell (lower = more bullish). Missing signals sort last. */
@@ -15,14 +17,55 @@ export function movingAverage(prices: number[], end: number, days: number) {
   return slice.reduce((sum, price) => sum + price, 0) / slice.length;
 }
 
-export function stockSignal(revenueGrowth: number | null, history: { price: number; closes: number[] } | null): StockSignal | null {
+/**
+ * Trend + valuation signal for Graph Analysis and Watchlist.
+ * Revenue growth under 5% TTM is always Sell.
+ * When overall valuation is missing, fall back to the SMA-only rulebook.
+ */
+export function stockSignal(
+  revenueGrowth: number | null,
+  history: { price: number; closes: number[] } | null,
+  valuation: ValuationOverallSide | null = null,
+): StockSignal | null {
   if (revenueGrowth !== null && Number(revenueGrowth.toFixed(10)) < 5) return "Sell";
   if (!history || history.closes.length < 2) return null;
 
   const { price, closes } = history;
-  if (price < movingAverage(closes, closes.length - 1, 200)) return "Strong Buy";
-  if (price < movingAverage(closes, closes.length - 1, 50)) return "Buy";
-  return "Hold";
+  const end = closes.length - 1;
+  const sma50 = movingAverage(closes, end, 50);
+  const sma200 = movingAverage(closes, end, 200);
+  const below50 = price < sma50;
+  const below200 = price < sma200;
+
+  // No overall valuation (missing EV/NOPAT or adjusted P/E) → SMA + revenue only.
+  // Above 50 / below 200 stays Hold (do not treat every below-200 print as Strong Buy).
+  if (valuation == null) {
+    if (below50 && below200) return "Strong Buy";
+    if (below50 && !below200) return "Buy";
+    return "Hold";
+  }
+
+  const growing = revenueGrowth !== null && Number(revenueGrowth.toFixed(10)) >= 5;
+
+  // Above both SMAs → Hold; Buy only if undervalued and growing.
+  if (!below50 && !below200) {
+    return valuation === "below" && growing ? "Buy" : "Hold";
+  }
+
+  // Below 50-day, above 200-day → Buy unless overvalued.
+  if (below50 && !below200) {
+    return valuation === "above" ? "Hold" : "Buy";
+  }
+
+  // Below both SMAs → Strong Buy / Buy / Hold by valuation.
+  if (below50 && below200) {
+    if (valuation === "above") return "Hold";
+    if (valuation === "below" && growing) return "Strong Buy";
+    return "Buy";
+  }
+
+  // Above 50-day, below 200-day → Hold; Buy if undervalued and growing.
+  return valuation === "below" && growing ? "Buy" : "Hold";
 }
 
 export function stockSignalClass(signal: StockSignal | null | undefined) {

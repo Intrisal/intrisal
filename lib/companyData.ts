@@ -11,6 +11,7 @@ import { canReviewValuation, prepareValuationReview, resolveValuationDisplay } f
 import { DAY_MS, isFiscalQuarterGap } from "@/lib/fiscalQuarter";
 import { translateFundamentalsToUsd } from "@/lib/fundamentalsFx";
 import type { StockSignal } from "@/lib/stockSignal";
+import type { ValuationOverallLabel, ValuationOverallSide } from "@/lib/valuationSignal";
 
 const EPS_SPLIT_CHECK_EXEMPT_TICKERS = new Set(["ASML", "CCEP", "FER", "NBIS", "PDD"]);
 // Stored backfills can use a newer adjustment than the EDGAR importer writes.
@@ -54,6 +55,12 @@ export type CompanySnapshot = {
   evNopat: number | null;
   latestDailyValuation?: { date: string; multiple: number } | null;
   signal?: StockSignal | null;
+  /** Watchlist / overall valuation: 70% EV/NOPAT gap + 30% adjusted P/E gap. */
+  overallValuation?: {
+    side: ValuationOverallSide;
+    gap: number;
+    label: ValuationOverallLabel;
+  } | null;
   /** Average of available quarterly multiples in the 5Y or 10Y window ending at the latest valuation quarter. */
   evNopatAvg: number | null;
   evNopatAverageQuarters?: number;

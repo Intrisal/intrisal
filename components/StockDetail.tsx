@@ -10,6 +10,12 @@ import type { CompanySnapshot } from "@/lib/companyData";
 import { trailingGrowth } from "@/lib/fiscalQuarter";
 import { movingAverage, stockSignal, stockSignalClass } from "@/lib/stockSignal";
 import { useStockHistory } from "@/lib/useMarketData";
+import {
+  overallValuationFromSeries,
+  type ValuationOverallSide,
+} from "@/lib/valuationSignal";
+import type { DailyValuation } from "@/lib/valuationReview";
+import type { AdjustedPeDay } from "@/lib/adjustedPe";
 
 const TICK_MONTHS = { "6M": 1, "1Y": 2, "5Y": 12, "10Y": 24 };
 const CLOSE_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
@@ -242,12 +248,54 @@ function PriceChart({
 export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: CompanySnapshot | null }) {
   const [selection, setSelection] = useState<{ range: Range; ticker: string } | null>(null);
   const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  const [valuationSide, setValuationSide] = useState<ValuationOverallSide | null>(null);
   const range = selection?.range ?? "1Y";
   const { history, loading, error } = useStockHistory(ticker);
 
   useEffect(() => {
     setScrubIndex(null);
   }, [ticker, range]);
+
+  useEffect(() => {
+    setValuationSide(null);
+    if (!snapshot || snapshot.isFund || snapshot.valuationHidden || snapshot.valuationHasNegativeOperatingIncome) {
+      return;
+    }
+    const canLoadEv = snapshot.valuationReview === true && snapshot.valuationAverageYears != null && snapshot.evNopatAvg != null;
+    const controller = new AbortController();
+    async function loadValuationSide() {
+      try {
+        const [dailyRes, peRes] = await Promise.all([
+          canLoadEv
+            ? fetch(`/api/stock/${encodeURIComponent(ticker)}/valuation-daily`, { signal: controller.signal })
+            : Promise.resolve(null),
+          fetch(`/api/stock/${encodeURIComponent(ticker)}/adjusted-pe`, { signal: controller.signal }),
+        ]);
+        if (controller.signal.aborted) return;
+
+        let evCurrent: number | null = snapshot?.evNopat ?? null;
+        if (dailyRes?.ok) {
+          const { daily } = await dailyRes.json() as { daily: DailyValuation[] };
+          evCurrent = [...daily].reverse().find(({ point }) => point)?.point?.ev_nopat ?? evCurrent;
+        }
+        const peDays = peRes.ok
+          ? (await peRes.json() as { daily: AdjustedPeDay[] }).daily
+          : [];
+        const overall = overallValuationFromSeries({
+          evCurrent,
+          evQuarters: (snapshot?.valuationPoints ?? []).map(({ quarter, ev_nopat }) => ({
+            date: quarter, value: ev_nopat,
+          })),
+          peDays,
+        });
+        if (!controller.signal.aborted) setValuationSide(overall?.side ?? null);
+      } catch {
+        if (!controller.signal.aborted) setValuationSide(null);
+      }
+    }
+    void loadValuationSide();
+    return () => controller.abort();
+  }, [ticker, snapshot]);
 
   const chart = useMemo(() => {
     const closes = history?.closes ?? [];
@@ -270,7 +318,7 @@ export function StockDetail({ ticker, snapshot }: { ticker: string; snapshot: Co
   const dividendYieldPercent = hasFilings ? snapshot.dividendYieldPercent : null;
   const revenueGrowth = hasFilings && !snapshot.isFund
     ? trailingGrowth(snapshot.revenueHistory, snapshot.filingDates?.revenue) : null;
-  const signal = stockSignal(revenueGrowth, history);
+  const signal = stockSignal(revenueGrowth, history, valuationSide);
 
   const year = chart.closes.slice(-252).filter((value) => value > 0 && Number.isFinite(value));
   const lowCandidate = history?.low52 && history.low52 > 0 ? history.low52 : null;

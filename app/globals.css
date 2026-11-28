@@ -852,6 +852,20 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       .watch-table thead button span { color: #edb460; }
       .watch-table small { display: block; margin-top: 4px; font-size: 11px; font-weight: 500; color: var(--ink-2); }
       .watch-table td { white-space: nowrap; font-weight: 650; }
+      .watch-valuation {
+        --valuation-below: #1f9d63;
+        --valuation-above: #d4523e;
+      }
+      [data-theme="dark"] .watch-valuation {
+        --valuation-below: #65d29f;
+        --valuation-above: #ff8c7c;
+      }
+      .watch-valuation[data-side="below"] { color: var(--valuation-below); }
+      .watch-valuation[data-side="above"] { color: var(--valuation-above); }
+      .watch-valuation[data-side="fair"] { color: #626b78; }
+      [data-theme="dark"] .watch-valuation[data-side="fair"] { color: #aab2c1; }
+      .watch-valuation strong { display: block; font-weight: 750; }
+      .watch-valuation small { color: inherit; opacity: 0.9; }
       .watch-table tbody tr:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
       .watch-table tbody tr:last-child > * { border-bottom: 0; }
       .watch-company { display: flex; align-items: center; gap: 10px; text-align: left; padding: 0; min-width: 125px; }
@@ -2127,6 +2141,84 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         padding: 0;
         min-height: 0;
       }
+      .valuation-overall {
+        --valuation-below: #1f9d63;
+        --valuation-above: #d4523e;
+        grid-column: 1 / -1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 14px 18px 16px;
+        text-align: center;
+        border-bottom: 1px solid var(--line);
+      }
+      [data-theme="dark"] .valuation-overall {
+        --valuation-below: #65d29f;
+        --valuation-above: #ff8c7c;
+      }
+      .valuation-overall[data-side="below"] { --valuation-side: var(--valuation-below); }
+      .valuation-overall[data-side="above"] { --valuation-side: var(--valuation-above); }
+      .valuation-overall[data-side="fair"] { --valuation-side: var(--ink); }
+      .valuation-overall-kicker {
+        margin: 0;
+        color: var(--ink-2);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .valuation-overall-row {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        column-gap: 14px;
+        width: 100%;
+      }
+      .valuation-overall-label {
+        grid-column: 2;
+        justify-self: center;
+        color: var(--valuation-side);
+        font: 750 clamp(36px, 5.2vw, 64px)/1.02 var(--font-display), sans-serif;
+        letter-spacing: -0.03em;
+      }
+      .valuation-overall[data-side="fair"] .valuation-overall-label { color: #626b78; }
+      [data-theme="dark"] .valuation-overall[data-side="fair"] .valuation-overall-label { color: #aab2c1; }
+      .valuation-overall-badge {
+        grid-column: 3;
+        justify-self: start;
+        color: var(--valuation-side);
+        background: color-mix(in srgb, var(--valuation-side) 13%, transparent);
+      }
+      .valuation-overall[data-side="fair"] .valuation-overall-badge {
+        color: #626b78;
+        background: color-mix(in srgb, #626b78 12%, transparent);
+      }
+      [data-theme="dark"] .valuation-overall[data-side="fair"] .valuation-overall-badge {
+        color: #aab2c1;
+        background: color-mix(in srgb, #aab2c1 14%, transparent);
+      }
+      .valuation-overall .stock-status-glow {
+        --status-glow-delay: 80ms;
+        color: var(--valuation-side);
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        .valuation-overall .stock-status-glow {
+          animation: valuation-overall-halo 4s ease-in-out var(--status-glow-delay) infinite;
+        }
+        .valuation-overall .stock-status-shimmer {
+          color: color-mix(in srgb, var(--valuation-side) 78%, white);
+          text-shadow: 0 0 3px var(--valuation-side), 0 0 9px var(--valuation-side);
+        }
+      }
+      @keyframes valuation-overall-halo {
+        0%, 34%, 100% { text-shadow: 0 0 2px transparent, 0 0 9px transparent; }
+        15% {
+          text-shadow: 0 0 3px color-mix(in srgb, var(--valuation-side) 55%, transparent),
+                       0 0 10px color-mix(in srgb, var(--valuation-side) 30%, transparent);
+        }
+      }
       [data-paired="true"] > .valuation-history + .valuation-history { border-top: 1px solid var(--line); }
       [data-paired="true"] .valuation-history h3 { font-size: clamp(16px, 1.5vw, 20px); }
       [data-paired="true"] .valuation-status { font-size: clamp(22px, 2vw, 28px); }
@@ -2134,6 +2226,9 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       @media (min-width: 980px) {
         .stock-analysis-panels[data-paired="true"] {
           grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        [data-paired="true"] > .valuation-overall {
+          padding: 16px 22px 18px;
         }
         [data-paired="true"] > .valuation-history + .valuation-history {
           border-top: 0;
@@ -2158,7 +2253,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         [data-paired="true"] .valuation-header .stock-ranges button { min-height: 30px; font-size: 12px; }
         [data-paired="true"] .valuation-status-row { grid-area: 2 / 1 / 3 / -1; margin-top: 0; }
         [data-paired="true"] .valuation-caption { margin: 5px 0; }
-        [data-paired="true"] .valuation-plot { height: clamp(160px, calc(100svh - 655px), 420px); }
+        [data-paired="true"] .valuation-plot { height: clamp(150px, calc(100svh - 720px), 400px); }
         [data-paired="true"] .valuation-plot text { font-size: 18px; }
         [data-paired="true"] .valuation-legend { margin: 6px 0; }
         [data-paired="true"] .valuation-summary {
@@ -2173,7 +2268,7 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         [data-paired="true"] .valuation-summary dd { font-size: 15px; margin-top: 3px; }
       }
       @media (min-width: 1320px) {
-        [data-paired="true"] .valuation-plot { height: clamp(160px, calc(100svh - 610px), 420px); }
+        [data-paired="true"] .valuation-plot { height: clamp(150px, calc(100svh - 680px), 400px); }
         [data-paired="true"] .valuation-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
         [data-paired="true"] .valuation-details[data-adjusted-pe] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       }

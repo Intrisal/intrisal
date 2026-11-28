@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AnimatedPrice } from "@/components/AnimatedPrice";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Fundamentals } from "@/components/Fundamentals";
 import { RemoveIcon } from "@/components/Icons";
 import { ValuationHistory } from "@/components/ValuationHistory";
+import { ValuationOverallSignal } from "@/components/ValuationOverallSignal";
 import type { CompanySnapshot } from "@/lib/companyData";
 import { trailingGrowth } from "@/lib/fiscalQuarter";
 import { SimulationPanels } from "@/components/Simulation";
@@ -73,7 +74,7 @@ export function LineChart({ data, w, h, pad, label }: { data: number[]; w: numbe
   );
 }
 
-const watchMetrics = { revenue: "Revenue growth", eps: "EPS growth", value: "EV/NOPAT" } as const;
+const watchMetrics = { revenue: "Revenue growth", eps: "EPS growth", value: "Valuation" } as const;
 type WatchSortKey = "signal" | keyof typeof watchMetrics;
 
 function WatchPanel({
@@ -93,13 +94,10 @@ function WatchPanel({
   const [sort, setSort] = useState<{ key: WatchSortKey; descending: boolean }>({ key: "value", descending: false });
   const rows = watchlist.map(tk => {
     const snap = snapshots[tk.toUpperCase()];
-    const daily = snap?.latestDailyValuation;
-    const current = daily?.multiple;
-    const avg = snap?.evNopatAvg;
-    const value = !snap?.isFund && !snap?.valuationHidden && !snap?.valuationHasNegativeOperatingIncome &&
-      snap?.valuationAverageYears && current != null && current > 0 && avg != null && avg > 0 ? (current / avg - 1) * 100 : null;
+    const overall = snap?.overallValuation ?? null;
+    const value = overall && Number.isFinite(overall.gap) ? overall.gap : null;
     return {
-      tk, snap, daily, value,
+      tk, snap, overall, value,
       signal: stockSignalRank(snap?.signal),
       revenue: snap && !snap.isFund ? trailingGrowth(snap.revenueHistory, snap.filingDates?.revenue) : null,
       eps: snap && !snap.isFund ? trailingGrowth(snap.epsHistory, snap.filingDates?.eps) : null,
@@ -115,7 +113,7 @@ function WatchPanel({
   function toggleSort(key: WatchSortKey) {
     setSort((prev) => ({
       key,
-      // Signal defaults to Strong Buy → Sell; growth to high→low; EV/NOPAT to under→over.
+      // Signal defaults to Strong Buy → Sell; growth to high→low; valuation to under→over.
       descending: prev.key === key ? !prev.descending : key === "revenue" || key === "eps",
     }));
   }
@@ -148,10 +146,10 @@ function WatchPanel({
                 <th scope="col" key={key} aria-sort={key !== sort.key ? "none" : sort.descending ? "descending" : "ascending"}>
                   <button type="button" onClick={() => toggleSort(key)}>
                     {watchMetrics[key]} <span aria-hidden="true">{key !== sort.key ? "↕" : sort.descending ? "↓" : "↑"}</span>
-                  </button><small>{key === "value" ? "daily vs 10Y avg" : "TTM year over year"}</small>
+                  </button><small>{key === "value" ? "70% EV/NOPAT · 30% adj. P/E" : "TTM year over year"}</small>
                 </th>)}
             </tr></thead>
-            <tbody>{rows.map(({ tk, snap, daily, value, revenue, eps }) => {
+            <tbody>{rows.map(({ tk, snap, overall, value, revenue, eps }) => {
               const quote = quotes[tk]?.source === "marketstack" ? quotes[tk] : null;
               const name = names[tk] ?? snap?.name ?? nameOf(tk);
               const missing = loading && !snap ? "…" : "—";
@@ -173,9 +171,9 @@ function WatchPanel({
                 {[revenue, eps].map((growth, i) => <td key={i} className={growth == null || growth === 0 ? "" : growth > 0 ? "chg-up" : "chg-dn"}>
                   {growth == null ? missing : (growth > 0 ? "+" : "") + fmt(growth, 1) + "%"}
                 </td>)}
-                <td title={daily ? "Daily EV/NOPAT as of " + daily.date : undefined}>{value != null && snap && daily ? <>
-                  <strong className={value < 0 ? "chg-up" : value > 0 ? "chg-dn" : ""}>{fmt(Math.abs(value), 1)}% {value < 0 ? "under" : value > 0 ? "over" : "at avg"}</strong>
-                  <small>{fmt(daily.multiple, 1)}× vs {fmt(snap.evNopatAvg!, 1)}× · {snap.valuationAverageYears}Y</small>
+                <td className="watch-valuation" data-side={overall?.side}>{overall && value != null ? <>
+                  <strong>{overall.label}</strong>
+                  <small>{value > 0 ? "+" : ""}{fmt(value, 1)}%</small>
                 </> : missing}</td>
               </tr>;
             })}</tbody>
@@ -358,7 +356,7 @@ function LearnPanels() {
           <strong>Forward P/E</strong> prices the stock against next year&apos;s expected earnings instead of last year&apos;s. Paired with EV/NOPAT, it shows both what the market expects and what the business has actually delivered.
         </p>
         <p>
-          <strong>The 50/200-day lines</strong> on the chart view show trend: price above both moving averages is an uptrend; a 50-day crossing the 200-day either way is the classic golden/death cross signal.
+          <strong>The signal</strong> blends the 50/200-day trend with overall valuation (70% EV/NOPAT gap + 30% adjusted P/E gap) and revenue growth. Revenue growth under 5% TTM is always Sell. If overall valuation can’t be determined, it falls back to SMA trend alone: below both → Strong Buy, below 50 above 200 → Buy, otherwise Hold (including above 50 / below 200).
         </p>
         <div className="foot">Educational only — not financial advice.</div>
       </article>,
@@ -373,6 +371,16 @@ export function StockAnalysis({ mode, selected, snapshot, loading, showUsd, acti
   showUsd?: boolean;
   active?: boolean;
 }) {
+  const [evGap, setEvGap] = useState<number | null>(null);
+  const [peGap, setPeGap] = useState<number | null>(null);
+  const onEvGap = useCallback((gap: number | null) => setEvGap(gap), []);
+  const onPeGap = useCallback((gap: number | null) => setPeGap(gap), []);
+
+  useEffect(() => {
+    setEvGap(null);
+    setPeGap(null);
+  }, [selected]);
+
   if (mode === "fundamental") return (
     <section className="panels stock-analysis-panels" data-analysis={mode} aria-label="Stock fundamentals">
       <Fundamentals ticker={selected} snapshot={snapshot} loading={loading} showUsd={showUsd} />
@@ -380,8 +388,9 @@ export function StockAnalysis({ mode, selected, snapshot, loading, showUsd, acti
   );
   return (
     <section className="panel panels stock-analysis-panels" data-analysis={mode} data-paired="true" aria-label="Stock valuation">
-      <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} paired />
-      <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} paired adjustedPe loadAdjustedHistory={active} />
+      <ValuationOverallSignal evGap={evGap} peGap={peGap} />
+      <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} paired onGapChange={onEvGap} />
+      <ValuationHistory ticker={selected} snapshot={snapshot} loading={loading} paired adjustedPe loadAdjustedHistory={active} onGapChange={onPeGap} />
     </section>
   );
 }
