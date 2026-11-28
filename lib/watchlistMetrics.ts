@@ -183,10 +183,14 @@ export async function loadWatchlistSnapshots(symbols: string[]): Promise<Record<
   const tickers = [...new Set(symbols.map(normalizeTicker).filter(Boolean))];
   if (!tickers.length || !hasStockStore()) return {};
 
+  type WatchlistReviews = Awaited<ReturnType<typeof readValuationReviews>>;
+  type WatchlistQuotes = Awaited<ReturnType<typeof readStoredQuotes>>;
+  const emptyReviews: WatchlistReviews = {};
+  const emptyQuotes: WatchlistQuotes = { quotes: {}, names: {} };
   const [storedRows, reviews, quotes] = await Promise.all([
     readTickers(tickers),
-    readValuationReviews(tickers).catch(() => ({})),
-    readStoredQuotes(tickers).catch(() => ({ quotes: {}, names: {} as Record<string, string> })),
+    readValuationReviews(tickers).catch(() => emptyReviews),
+    readStoredQuotes(tickers).catch(() => emptyQuotes),
   ]);
   const byTicker = new Map(storedRows.map((row) => [row.ticker, row]));
 
@@ -218,7 +222,7 @@ export async function loadWatchlistSnapshots(symbols: string[]): Promise<Record<
         : rollingTtm(epsSeries, requireConsecutive))
       : { ends: [] as string[], values: [] as number[] };
 
-    const review = reviews[ticker] ?? { points: [], current: null };
+    const review = reviews[ticker] ?? { points: [] as ValuationPoint[], current: null as CurrentValuation | null };
     const valuation = valuationFields(ticker, edgar, review.points, review.current, price);
     const revenueGrowth = trailingGrowth(revenue.values, revenue.ends);
     const [history, peDays, latestDaily] = await Promise.all([
@@ -236,7 +240,7 @@ export async function loadWatchlistSnapshots(symbols: string[]): Promise<Record<
     const overall = !valuation.valuationHidden
       ? overallValuationFromSeries({
         evCurrent,
-        evQuarters: review.points.map(({ quarter, ev_nopat }) => ({ date: quarter, value: ev_nopat })),
+        evQuarters: review.points.map((point: ValuationPoint) => ({ date: point.quarter, value: point.ev_nopat })),
         peDays,
       })
       : null;
