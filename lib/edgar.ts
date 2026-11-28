@@ -265,13 +265,14 @@ export async function loadCompanyFacts(cik: number, refresh = false): Promise<Co
   return body;
 }
 
-export type FinancialFiling = { accession: string; date: string; document: string; filed?: string };
+export type FinancialFiling = { accession: string; date: string; document: string; filed?: string; amendment?: boolean };
 type SubmissionRows = {
   form: string[]; accessionNumber: string[]; reportDate: string[]; primaryDocument: string[];
   filingDate?: string[];
+  isXBRL?: (number | boolean)[];
 };
 
-export async function listFinancialFilings(cik: number, since: string): Promise<FinancialFiling[]> {
+export async function listFinancialFilings(cik: number, since: string, includeAmendments = false): Promise<FinancialFiling[]> {
   const root = "https://data.sec.gov/submissions/";
   const response = await secFetch(root + "CIK" + String(cik).padStart(10, "0") + ".json");
   const { filings } = await response.json() as {
@@ -283,8 +284,11 @@ export async function listFinancialFilings(cik: number, since: string): Promise<
   }
   return pages.flatMap((page) => page.form.flatMap((form, index) => {
     const date = page.reportDate[index];
-    return /^(10-K|10-Q)$/.test(form) && date >= since && page.primaryDocument[index]
-      ? [{ accession: page.accessionNumber[index], date, document: page.primaryDocument[index], filed: page.filingDate?.[index] }] : [];
+    const periodic = /^(10-K|10-Q)$/.test(form) ||
+      (includeAmendments && /^(10-K|10-Q)\/A$/.test(form) && page.isXBRL?.[index] !== 0 && page.isXBRL?.[index] !== false);
+    return periodic && date >= since && page.primaryDocument[index]
+      ? [{ accession: page.accessionNumber[index], date, document: page.primaryDocument[index],
+        filed: page.filingDate?.[index], amendment: form.endsWith("/A") }] : [];
   }));
 }
 

@@ -10,6 +10,22 @@ export type ValuationPoint = {
 };
 export type CurrentValuation = ValuationPoint & { priceAsOf: string };
 type StoredValuation = { points: ValuationPoint[]; current: CurrentValuation | null };
+export type AdjustedEpsRecord = {
+  ticker: string;
+  source_accession: string;
+  filed_on: string;
+  source_quarter: string;
+  ttm_quarter: string;
+  reported_quarter_eps: number | null;
+  adjusted_quarter_eps: number | null;
+  reported_ttm_eps: number | null;
+  adjusted_ttm_eps: number | null;
+  inputs: {
+    periodStart: string; dilutedShares: number | null; equityGains: number | null;
+    taxRate: number; taxRateMethod: "effective" | "fallback"; sharesEstimated: boolean;
+    adjustmentSource?: string; annual: boolean;
+  } | null;
+};
 type TickerIdentity = {
   ticker: string;
   name?: string | null;
@@ -55,6 +71,19 @@ async function upsert(table: string, key: string, rows: object[]) {
   for (let offset = 0; offset < rows.length; offset += 500) {
     await rest(table, { on_conflict: key }, rows.slice(offset, offset + 500));
   }
+}
+
+export function readAdjustedEps(ticker: string) {
+  return rest<Pick<AdjustedEpsRecord, "source_accession" | "filed_on" | "ttm_quarter" | "reported_ttm_eps" | "adjusted_ttm_eps">[]>(
+    "adjusted_eps_history", {
+      select: "source_accession,filed_on,ttm_quarter,reported_ttm_eps,adjusted_ttm_eps",
+      ticker: "eq." + ticker, order: "filed_on.asc,source_quarter.asc,source_accession.asc",
+    },
+  );
+}
+
+export function saveAdjustedEps(rows: AdjustedEpsRecord[]) {
+  return upsert("adjusted_eps_history", "ticker,source_accession", rows);
 }
 
 export async function readTicker(ticker: string) {
