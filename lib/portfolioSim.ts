@@ -32,39 +32,83 @@ export const SIM_DEFAULT: SimState = {
   showSpy: false,
 };
 
+/** Three named simulation slots the user can jump between. */
+export const SIM_PRESET_COUNT = 3;
+export type SimPresetIndex = 0 | 1 | 2;
+
+export type SimPresetsState = {
+  active: SimPresetIndex;
+  slots: [SimState | null, SimState | null, SimState | null];
+};
+
 const SIM_STORAGE_KEY = "intrisal-simulation";
+const SIM_PRESETS_KEY = "intrisal-simulation-presets";
 
 function isSimRange(value: unknown): value is SimRange {
   return typeof value === "string" && (SIM_RANGES as string[]).includes(value);
 }
 
+function isSimPresetIndex(value: unknown): value is SimPresetIndex {
+  return value === 0 || value === 1 || value === 2;
+}
+
+/** Empty workspace: default capital/range, no holdings. */
+export function emptySimWorkspace(): SimState {
+  return {
+    capital: SIM_DEFAULT.capital,
+    holdings: [],
+    range: SIM_DEFAULT.range,
+    showSpy: false,
+  };
+}
+
+export function cloneSimState(state: SimState): SimState {
+  return {
+    capital: state.capital,
+    range: state.range,
+    showSpy: state.showSpy,
+    holdings: state.holdings.map((row) => ({ ticker: row.ticker, amount: row.amount })),
+  };
+}
+
+/** Presets with no holdings are treated as empty slots. */
+export function canSaveSimPreset(state: SimState) {
+  return state.holdings.some((row) => row.amount > 0);
+}
+
+function parseSimHoldings(value: unknown): SimHolding[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((row) => {
+      const ticker = typeof row?.ticker === "string" ? row.ticker.trim().toUpperCase() : "";
+      const amount = Number(row?.amount);
+      if (!/^[A-Z][A-Z0-9]{0,7}(?:[.-][A-Z0-9]{1,3})?$/.test(ticker)) return null;
+      if (!Number.isFinite(amount) || amount < 0) return null;
+      return { ticker, amount: Math.round(amount * 100) / 100 };
+    })
+    .filter((row): row is SimHolding => row != null);
+}
+
+function parseSimState(value: unknown): SimState {
+  const parsed = (value && typeof value === "object" ? value : {}) as Partial<SimState>;
+  const capital = Number(parsed.capital);
+  return {
+    capital: Number.isFinite(capital) && capital >= 0 ? Math.round(capital * 100) / 100 : SIM_DEFAULT.capital,
+    holdings: parseSimHoldings(parsed.holdings),
+    range: isSimRange(parsed.range) ? parsed.range : SIM_DEFAULT.range,
+    showSpy: Boolean(parsed.showSpy),
+  };
+}
+
 /** Restore a previously edited simulation from this browser tab, or fall back to defaults. */
 export function readStoredSimState(): SimState {
-  if (typeof window === "undefined") return { ...SIM_DEFAULT, holdings: [] };
+  if (typeof window === "undefined") return emptySimWorkspace();
   try {
     const raw = sessionStorage.getItem(SIM_STORAGE_KEY);
-    if (!raw) return { ...SIM_DEFAULT, holdings: [] };
-    const parsed = JSON.parse(raw) as Partial<SimState>;
-    const capital = Number(parsed.capital);
-    const holdings = Array.isArray(parsed.holdings)
-      ? parsed.holdings
-          .map((row) => {
-            const ticker = typeof row?.ticker === "string" ? row.ticker.trim().toUpperCase() : "";
-            const amount = Number(row?.amount);
-            if (!/^[A-Z][A-Z0-9]{0,7}(?:[.-][A-Z0-9]{1,3})?$/.test(ticker)) return null;
-            if (!Number.isFinite(amount) || amount < 0) return null;
-            return { ticker, amount: Math.round(amount * 100) / 100 };
-          })
-          .filter((row): row is SimHolding => row != null)
-      : [];
-    return {
-      capital: Number.isFinite(capital) && capital >= 0 ? Math.round(capital * 100) / 100 : SIM_DEFAULT.capital,
-      holdings,
-      range: isSimRange(parsed.range) ? parsed.range : SIM_DEFAULT.range,
-      showSpy: Boolean(parsed.showSpy),
-    };
+    if (!raw) return emptySimWorkspace();
+    return parseSimState(JSON.parse(raw));
   } catch {
-    return { ...SIM_DEFAULT, holdings: [] };
+    return emptySimWorkspace();
   }
 }
 
@@ -75,6 +119,53 @@ export function writeStoredSimState(state: SimState) {
   } catch {
     /* private mode / quota */
   }
+}
+
+function emptyPresetSlots(): SimPresetsState["slots"] {
+  return [null, null, null];
+}
+
+/** Saved simulation presets in this browser (localStorage). */
+export function readSimPresets(): SimPresetsState {
+  if (typeof window === "undefined") {
+    return { active: 0, slots: emptyPresetSlots() };
+  }
+  try {
+    const raw = localStorage.getItem(SIM_PRESETS_KEY);
+    if (!raw) return { active: 0, slots: emptyPresetSlots() };
+    const parsed = JSON.parse(raw) as { active?: unknown; slots?: unknown };
+    const rawSlots = Array.isArray(parsed.slots) ? parsed.slots : [];
+    const slots = emptyPresetSlots();
+    for (let i = 0; i < SIM_PRESET_COUNT; i++) {
+      const entry = rawSlots[i];
+      if (entry == null) continue;
+      const state = parseSimState(entry);
+      slots[i] = canSaveSimPreset(state) ? state : null;
+    }
+    return {
+      active: isSimPresetIndex(parsed.active) ? parsed.active : 0,
+      slots,
+    };
+  } catch {
+    return { active: 0, slots: emptyPresetSlots() };
+  }
+}
+
+export function writeSimPresets(state: SimPresetsState) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(SIM_PRESETS_KEY, JSON.stringify({
+      active: state.active,
+      slots: state.slots.map((slot) => (slot && canSaveSimPreset(slot) ? cloneSimState(slot) : null)),
+    }));
+  } catch {
+    /* private mode / quota */
+  }
+}
+
+/** Resolve a preset slot to the workspace state it should load. */
+export function simStateFromPreset(slot: SimState | null): SimState {
+  return slot && canSaveSimPreset(slot) ? cloneSimState(slot) : emptySimWorkspace();
 }
 
 const MS_PER_YEAR = 365.25 * 86_400_000;

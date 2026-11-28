@@ -4,22 +4,32 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { BrandLogo } from "@/components/BrandLogo";
 import { ChartReveal } from "@/components/ChartReveal";
 import {
+  SIM_PRESET_COUNT,
   SIM_RANGES,
   allocatedAmount,
   buildBenchmarkPath,
   buildPortfolioPath,
+  canSaveSimPreset,
   cashAmount,
+  cloneSimState,
   evenCapitalAmounts,
   hasTenYearPriceHistory,
   niceAxisTicks,
+  readSimPresets,
+  simStateFromPreset,
   statsFromScaledPath,
+  writeSimPresets,
   type PriceSeries,
   type SimHolding,
+  type SimPresetIndex,
+  type SimPresetsState,
   type SimRange,
   type SimState,
 } from "@/lib/portfolioSim";
 import { fmt, normalizeTicker } from "@/lib/market";
 import type { StockHistory } from "@/lib/useMarketData";
+
+const PRESET_LABELS = ["I", "II", "III"] as const;
 
 function sanitizeSeries(history: StockHistory): PriceSeries {
   const dates: string[] = [];
@@ -428,6 +438,10 @@ export function SimulationPanels({
   const [importingWatchlist, setImportingWatchlist] = useState(false);
   const [watchlistAdded, setWatchlistAdded] = useState(false);
   const [capitalDraft, setCapitalDraft] = useState(formatCapitalValue(sim.capital));
+  const [presets, setPresets] = useState<SimPresetsState>({ active: 0, slots: [null, null, null] });
+  const [presetsReady, setPresetsReady] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveFlash, setSaveFlash] = useState<SimPresetIndex | null>(null);
 
   useEffect(() => {
     setCapitalDraft(formatCapitalValue(sim.capital));
@@ -436,6 +450,70 @@ export function SimulationPanels({
   useEffect(() => {
     setWatchlistAdded(false);
   }, [watchlist]);
+
+  useEffect(() => {
+    const stored = readSimPresets();
+    setPresets(stored);
+    setPresetsReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!presetsReady) return;
+    writeSimPresets(presets);
+  }, [presets, presetsReady]);
+
+  useEffect(() => {
+    if (saveFlash == null) return;
+    const timer = window.setTimeout(() => setSaveFlash(null), 1600);
+    return () => window.clearTimeout(timer);
+  }, [saveFlash]);
+
+  useEffect(() => {
+    if (!saveOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".sim-presets")) return;
+      setSaveOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setSaveOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [saveOpen]);
+
+  function selectPreset(index: SimPresetIndex) {
+    setSaveOpen(false);
+    setAddError(null);
+    setAddNote(null);
+    setWatchlistAdded(false);
+    setDraftTicker("");
+    setPresets((prev) => ({ ...prev, active: index }));
+    onSim(simStateFromPreset(presets.slots[index]));
+  }
+
+  function saveToPreset(index: SimPresetIndex) {
+    if (!canSaveSimPreset(sim)) {
+      setAddError("Add holdings before saving a preset.");
+      setSaveOpen(false);
+      return;
+    }
+    const snapshot = cloneSimState(sim);
+    setPresets((prev) => {
+      const slots = [...prev.slots] as SimPresetsState["slots"];
+      slots[index] = snapshot;
+      return { active: index, slots };
+    });
+    setSaveOpen(false);
+    setSaveFlash(index);
+    setAddError(null);
+    setAddNote(null);
+  }
 
   const tickers = sim.holdings.map((row) => row.ticker);
   const { series, loading, errors } = usePriceSeries(tickers);
@@ -642,16 +720,90 @@ export function SimulationPanels({
     sim.holdings.map((row) => row.ticker + ":" + row.amount).join(","),
   ].join("|");
 
+  const canSave = canSaveSimPreset(sim);
+
   return (
     <article className="panel sim sim-workspace">
       <header className="sim-top">
         <h2>Simulation</h2>
-        <div className="range-row sim-ranges" role="group" aria-label="Simulation range">
-          {SIM_RANGES.map((item) => (
-            <button key={item} type="button" aria-pressed={item === sim.range} onClick={() => setRange(item)}>
-              {item}
-            </button>
-          ))}
+        <div className="sim-top-tools">
+          <div className="sim-presets" data-save-open={saveOpen || undefined}>
+            <div className="sim-preset-cluster" role="group" aria-label="Simulation presets">
+              <div className="sim-preset-row">
+                {Array.from({ length: SIM_PRESET_COUNT }, (_, index) => {
+                  const slot = index as SimPresetIndex;
+                  const filled = presets.slots[slot] != null;
+                  const active = presets.active === slot;
+                  const holdings = presets.slots[slot]?.holdings ?? [];
+                  const preview = holdings.length
+                    ? holdings.slice(0, 3).map((row) => row.ticker).join(" · ")
+                      + (holdings.length > 3 ? " +" + (holdings.length - 3) : "")
+                    : "Empty — no holdings";
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      className="sim-preset"
+                      data-filled={filled || undefined}
+                      data-flash={saveFlash === slot || undefined}
+                      aria-pressed={active}
+                      aria-label={"Preset " + PRESET_LABELS[slot] + (filled ? "" : ", empty")}
+                      title={preview}
+                      onClick={() => selectPreset(slot)}
+                    >
+                      <span className="sim-preset-mark" aria-hidden="true">{PRESET_LABELS[slot]}</span>
+                      <span className="sim-preset-dot" aria-hidden="true" />
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="sim-preset-divider" aria-hidden="true" />
+              <div className="sim-preset-save-wrap">
+                <button
+                  type="button"
+                  className="sim-preset-save"
+                  aria-expanded={saveOpen}
+                  aria-controls="sim-preset-save-menu"
+                  disabled={!canSave}
+                  title={canSave ? "Save current holdings into I, II, or III" : "Add holdings to save a preset"}
+                  onClick={() => setSaveOpen((open) => !open)}
+                >
+                  Save
+                </button>
+                {saveOpen ? (
+                  <div id="sim-preset-save-menu" className="sim-preset-save-menu" role="menu" aria-label="Choose preset slot">
+                    <p className="sim-preset-save-hint">Save into</p>
+                    <div className="sim-preset-save-options">
+                      {Array.from({ length: SIM_PRESET_COUNT }, (_, index) => {
+                        const slot = index as SimPresetIndex;
+                        const filled = presets.slots[slot] != null;
+                        return (
+                          <button
+                            key={slot}
+                            type="button"
+                            role="menuitem"
+                            className="sim-preset-save-option"
+                            data-filled={filled || undefined}
+                            onClick={() => saveToPreset(slot)}
+                          >
+                            <strong>{PRESET_LABELS[slot]}</strong>
+                            <small>{filled ? "Replace" : "Empty"}</small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+          <div className="range-row sim-ranges" role="group" aria-label="Simulation range">
+            {SIM_RANGES.map((item) => (
+              <button key={item} type="button" aria-pressed={item === sim.range} onClick={() => setRange(item)}>
+                {item}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 

@@ -1033,6 +1033,168 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
         letter-spacing: 0.14em;
         text-transform: uppercase;
       }
+      .sim-top-tools {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px 14px;
+        min-width: 0;
+      }
+      .sim-presets {
+        position: relative;
+      }
+      .sim-preset-cluster {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        padding: 3px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--panel) 88%, var(--ink) 4%);
+      }
+      .sim-preset-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+      }
+      .sim-preset-divider {
+        width: 1px;
+        height: 16px;
+        margin: 0 3px;
+        background: color-mix(in srgb, var(--line) 85%, var(--ink) 15%);
+        flex: none;
+      }
+      .sim-preset {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 34px;
+        height: 28px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--ink-2);
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: 0.08em;
+        cursor: pointer;
+        transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+      }
+      .sim-preset:hover {
+        color: var(--ink);
+        background: color-mix(in srgb, var(--ink) 6%, transparent);
+      }
+      .sim-preset[aria-pressed="true"] {
+        background: var(--btn-bg);
+        color: var(--btn-ink);
+        box-shadow: 0 1px 0 color-mix(in srgb, var(--btn-bg) 35%, transparent);
+      }
+      .sim-preset-mark { line-height: 1; }
+      .sim-preset-dot {
+        position: absolute;
+        top: 5px;
+        right: 6px;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: transparent;
+      }
+      .sim-preset[data-filled] .sim-preset-dot {
+        background: color-mix(in srgb, var(--ink) 45%, transparent);
+      }
+      .sim-preset[aria-pressed="true"][data-filled] .sim-preset-dot {
+        background: color-mix(in srgb, var(--btn-ink) 75%, transparent);
+      }
+      .sim-preset[data-flash] {
+        animation: sim-preset-flash 1.4s ease;
+      }
+      @keyframes sim-preset-flash {
+        0%, 100% { box-shadow: none; }
+        25%, 55% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 14%, transparent); }
+      }
+      .sim-preset-save-wrap { position: relative; }
+      .sim-preset-save {
+        height: 28px;
+        padding: 0 11px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--ink-2);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        transition: color 160ms ease, background 160ms ease;
+      }
+      .sim-preset-save:hover:not(:disabled) {
+        color: var(--ink);
+        background: color-mix(in srgb, var(--ink) 6%, transparent);
+      }
+      .sim-preset-save:disabled {
+        opacity: 0.42;
+        cursor: not-allowed;
+      }
+      .sim-preset-save[aria-expanded="true"] {
+        color: var(--ink);
+        background: color-mix(in srgb, var(--ink) 8%, transparent);
+      }
+      .sim-preset-save-menu {
+        position: absolute;
+        top: calc(100% + 10px);
+        right: 0;
+        z-index: 8;
+        width: min(248px, calc(100vw - 48px));
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        box-shadow: 0 12px 32px color-mix(in srgb, var(--ink) 12%, transparent);
+      }
+      .sim-preset-save-hint {
+        margin: 0 0 8px;
+        color: var(--ink-2);
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .sim-preset-save-options {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+      }
+      .sim-preset-save-option {
+        display: grid;
+        gap: 2px;
+        justify-items: center;
+        padding: 10px 6px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: color-mix(in srgb, var(--panel) 92%, var(--ink) 3%);
+        color: var(--ink);
+        cursor: pointer;
+        transition: border-color 160ms ease, background 160ms ease;
+      }
+      .sim-preset-save-option:hover {
+        border-color: color-mix(in srgb, var(--ink) 30%, var(--line));
+        background: color-mix(in srgb, var(--ink) 5%, var(--panel));
+      }
+      .sim-preset-save-option strong {
+        font-size: 13px;
+        font-weight: 750;
+        letter-spacing: 0.08em;
+      }
+      .sim-preset-save-option small {
+        color: var(--ink-3);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .sim-preset-save-option[data-filled] small { color: var(--ink-2); }
       .sim-ranges { margin-top: 0; flex-shrink: 0; }
 
       .sim-body {
@@ -1674,9 +1836,13 @@ button, [role="button"], select, summary, input:not([type="checkbox"], [type="ra
       }
 
       .layout.simulation .search-dock { max-width: 680px; }
+      .layout.simulation .wordmark { margin-bottom: 8px; }
+      .layout.simulation .panels { margin-top: 12px; }
 
       @media (max-width: 900px) {
         .sim-workspace { padding: 14px 14px 12px; }
+        .sim-top-tools { width: 100%; justify-content: space-between; }
+        .sim-preset-save-menu { right: auto; left: 0; }
         .sim-stage { grid-template-columns: 1fr; }
         .sim-main {
           padding: 12px 0;
